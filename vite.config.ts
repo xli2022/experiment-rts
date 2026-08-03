@@ -12,5 +12,9 @@ export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
     environment: 'node',
+    // The determinism tests simulate thousands of ticks twice over and compare
+    // every one. That is genuinely heavy work, not a hang, and shortening it to
+    // fit a 5s default would cost exactly the coverage that makes it valuable.
+    testTimeout: 60000,
   },
 });
