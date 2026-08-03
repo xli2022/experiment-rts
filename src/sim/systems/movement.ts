@@ -51,7 +51,49 @@ export function movementSystem(world: World, astar: AStar, fields: FlowFieldCach
   servePathRequests(world, astar);
   followFlowFields(world, fields);
   followPaths(world);
+  engageNearby(world);
   separate(world);
+}
+
+/**
+ * Idle units step up to something they have already picked a fight with.
+ *
+ * Combat acquires a target within sight and then only shoots if it is already
+ * in weapon range; nothing ever closed the gap. For a rifleman that is
+ * invisible — its range covers everything it can see nearby — but a brawler
+ * reaches 1.3 tiles and so stood still while an enemy two tiles away shot it,
+ * which reads as melee units simply not fighting.
+ *
+ * Deliberately a short leash rather than a chase: a unit walks the last few
+ * tiles onto a target and no further, so an idle army holds its ground instead
+ * of being drawn across the map one straggler at a time. `Hold` never moves at
+ * all — that is what it is for.
+ */
+function engageNearby(world: World): void {
+  const pool = world.pool;
+
+  for (let i = 0; i < pool.count; i++) {
+    if (pool.alive[i] !== 1) continue;
+    const def = defOf(pool.type[i]! as EntityType);
+    if (def.isBuilding || def.speedPerTick === 0 || def.attackRange === 0) continue;
+    if (pool.order[i] !== Order.None) continue;
+
+    const targetId = pool.combatTarget[i]!;
+    if (targetId === NO_ENTITY || !pool.isAlive(targetId)) continue;
+
+    const ti = idIndex(targetId);
+    const dx = pool.posX[ti]! - pool.posX[i]!;
+    const dy = pool.posY[ti]! - pool.posY[i]!;
+    const distSq = vecLenSqRaw(dx, dy);
+
+    // Combat measures to the target's edge, so this has to agree with it or the
+    // unit creeps forward for one more tick after it can already shoot.
+    const reach = def.attackRange + defOf(pool.type[ti]! as EntityType).radius;
+    if (distSq <= sqRange(reach)) continue;
+    if (distSq > sqRange(reach + ENGAGE_LEASH)) continue;
+
+    stepToward(world, i, pool.posX[ti]!, pool.posY[ti]!, def.speedPerTick, def.turnPerTick);
+  }
 }
 
 /**
@@ -239,6 +281,14 @@ function servePathRequests(world: World, astar: AStar): void {
   // Compact the queue in place, preserving order for anything still pending.
   if (read > 0) queue.splice(0, read);
 }
+
+/**
+ * How far past its weapon range a unit will walk to reach something.
+ *
+ * Short on purpose. Long enough that a melee unit engages anything that comes
+ * to it, short enough that an idle line does not unravel into a chase.
+ */
+const ENGAGE_LEASH = fromInt(5);
 
 function followPaths(world: World): void {
   const pool = world.pool;
