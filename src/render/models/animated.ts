@@ -65,13 +65,15 @@ export interface AnimatedModel {
    */
   lowestY: number;
   /**
-   * Standing height, from the bind pose.
+   * Size of the bind pose in world units, per axis.
    *
-   * Deliberately not the extent across every frame: the attack clip swings the
-   * sword overhead, so measuring that way scales the model by its weapon and
-   * leaves the body half the size it should be.
+   * Deliberately the bind pose rather than the extent across every frame: an
+   * attack clip that swings a sword overhead would otherwise scale the unit by
+   * its weapon and leave the body half the size it should be. Which axis a model
+   * is fitted on is the caller's choice — a walker is sized by its height, an
+   * aircraft by its wingspan.
    */
-  height: number;
+  bindSize: THREE.Vector3;
 }
 
 /**
@@ -174,14 +176,8 @@ export async function loadAnimatedModel(url: string): Promise<AnimatedModel> {
     clips,
     bounds,
     lowestY: extent.lowestY,
-    height: bindHeight(bounds, nodeMatrix),
+    bindSize: bounds.clone().applyMatrix4(nodeMatrix).getSize(new THREE.Vector3()),
   };
-}
-
-/** Standing height of the bind pose, once the asset's node transform applies. */
-function bindHeight(bounds: THREE.Box3, nodeMatrix: THREE.Matrix4): number {
-  const box = bounds.clone().applyMatrix4(nodeMatrix);
-  return Math.max(0.001, box.max.y - box.min.y);
 }
 
 /**

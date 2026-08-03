@@ -66,7 +66,7 @@ export class EntityRenderer {
    */
   private readonly animated = new Map<
     EntityType,
-    { model: AnimatedModel; scale: number; groundOffset: number }
+    { model: AnimatedModel; scale: number; groundOffset: number; height: number }
   >();
   private readonly animatedPools = new Map<string, AnimatedUnitPool>();
 
@@ -151,7 +151,14 @@ export class EntityRenderer {
     // Lift the model so the lowest point of its animation rests on the ground
     // rather than the lowest point of its bind pose, which a run cycle dips well
     // below.
-    this.animated.set(type, { model, scale, groundOffset: -model.lowestY * scale });
+    this.animated.set(type, {
+      model,
+      scale,
+      groundOffset: -model.lowestY * scale,
+      // The authored model is rarely the exact height of the primitive it
+      // replaces, and the health bar hangs off the top of whatever is drawn.
+      height: model.bindSize.y * scale,
+    });
 
     for (const owner of [0, 1]) {
       const material = new THREE.MeshLambertMaterial({
@@ -389,7 +396,7 @@ export class EntityRenderer {
         barRight.set(1, 0, 0).applyQuaternion(camera.quaternion);
         barUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
 
-        const headY = spec.height + altitude;
+        const headY = (animated ? animated.height : spec.height) + altitude;
         // Depth along the view axis, which is what perspective divides by.
         const viewDepth =
           (x - camera.position.x) * barForward.x +
