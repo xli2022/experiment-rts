@@ -1,0 +1,70 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [master]
+  # Lets you redeploy from the Actions tab without pushing a commit.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  # Required by actions/deploy-pages to mint its OIDC token.
+  id-token: write
+
+# Never let two deploys race. `cancel-in-progress: false` so an in-flight deploy
+# finishes rather than leaving Pages serving a half-published build.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Gate the deploy on the test suite. This project's whole premise is that
+      # two machines simulate identically, and a build that desyncs is worse
+      # than no build — it fails silently, minutes into a match.
+      - name: Test
+        run: npm test
+
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v5
+        with:
+          # Turns Pages on the first time this runs, so there is no manual
+          # setup step before the first deploy.
+          enablement: true
+
+      - name: Build
+        run: npm run build
+        env:
+          # A project site lives under /<repo>/, so the bundle has to be built
+          # with that prefix or every asset URL misses. Taking it from the
+          # configure-pages output means a custom domain works too, without
+          # editing anything.
+          BASE_PATH: ${{ steps.pages.outputs.base_path }}
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

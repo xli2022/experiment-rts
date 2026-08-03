@@ -3,6 +3,8 @@
 A 3D real-time strategy game that runs in the browser, with online multiplayer
 and **no server to deploy**.
 
+**▶ [Play it](https://xli2022.github.io/experiment-rts/)**
+
 Gather minerals, build a base, train an army, and destroy every enemy structure.
 Play against the AI, against someone in a second tab, or against a friend
 anywhere — peer-to-peer over WebRTC.
@@ -11,6 +13,9 @@ anywhere — peer-to-peer over WebRTC.
 npm install
 npm run dev          # http://localhost:5173
 ```
+
+Every push to `master` builds and publishes to GitHub Pages, gated on the test
+suite — see [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml).
 
 ## Playing
 
