@@ -22,6 +22,7 @@ import { EntityRenderer } from './render/entities.js';
 import { RtsCamera } from './render/camera.js';
 import { TerrainRenderer } from './render/terrain.js';
 import { ProceduralModelProvider } from './render/models/procedural.js';
+import { ProjectileRenderer } from './render/projectiles.js';
 import { groundPointAt, pickAt, pickInBox, Selection } from './input/selection.js';
 import { Hud, type CommandButton } from './ui/hud.js';
 import { showLobby, type MatchSetup } from './ui/lobby.js';
@@ -40,6 +41,7 @@ class Game {
   private readonly provider = new ProceduralModelProvider();
   private readonly entities: EntityRenderer;
   private readonly terrain: TerrainRenderer;
+  private readonly projectiles = new ProjectileRenderer();
   private readonly selection: Selection;
   private readonly hud: Hud;
   private readonly runner: LockstepRunner;
@@ -81,7 +83,7 @@ class Game {
     this.camera = new RtsCamera(canvas, MAP_SIZE);
     this.terrain = new TerrainRenderer(this.sim.world.map);
     this.entities = new EntityRenderer(this.provider, this.sim.world);
-    this.scene.add(this.terrain.group, this.entities.group);
+    this.scene.add(this.terrain.group, this.entities.group, this.projectiles.group);
     this.addLights();
 
     this.ghost = this.makeGhost();
@@ -443,10 +445,14 @@ class Game {
     // interval to nothing and make movement stutter.
     if (this.sim.world.tick !== this.lastTick) {
       this.entities.captureSnapshot(this.sim.world);
+      // Shots are cleared at the start of the next step, so they have to be
+      // read here, on the same frame the tick landed.
+      this.projectiles.spawnFromEvents(this.sim.world);
       this.lastTick = this.sim.world.tick;
     }
 
     this.camera.update(dtMs / 1000);
+    this.projectiles.update(dtMs);
     this.selection.prune(this.sim.world);
 
     this.entities.update(this.sim.world, alpha, this.selection.indices, this.camera.camera);

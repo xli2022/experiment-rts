@@ -11,7 +11,7 @@
  */
 
 import { fromFloat, type Fix } from '../sim/fixed.js';
-import { EntityType, seconds, TICKS_PER_SECOND } from '../sim/types.js';
+import { EntityType, Order, seconds, TICKS_PER_SECOND } from '../sim/types.js';
 
 /** Author a speed in units/second, store it as movement per tick. */
 function speed(unitsPerSecond: number): Fix {
@@ -240,8 +240,8 @@ export const PATCHES_PER_BASE = 8;
 export const MAX_PRODUCTION_QUEUE = 5;
 
 /**
- * Slack added to the two radii when deciding whether a worker can reach a site,
- * a patch, or a drop-off.
+ * Slack added to the two radii when deciding whether a worker can reach a
+ * *construction site*.
  *
  * Radii are circles but building footprints are squares, so a worker standing
  * against the corner of a 3x3 barracks is further from its centre than the
@@ -249,6 +249,27 @@ export const MAX_PRODUCTION_QUEUE = 5;
  * build range, unable to work and unable to path closer.
  */
 export const BUILD_REACH = fromFloat(1.7);
+
+/**
+ * Slack for mining a patch and for delivering to a drop-off.
+ *
+ * Much tighter than BUILD_REACH, and deliberately so: sharing the construction
+ * value meant a worker could mine from nearly two units clear of the crystals,
+ * so it never visibly walked to the patch at all and the whole gather cycle read
+ * as broken. Workers should have to travel — that trip is the economy.
+ */
+export const HARVEST_REACH = fromFloat(0.35);
+
+/**
+ * How much slack an order gets when deciding "am I close enough yet".
+ *
+ * Movement and the economy systems must agree on this exactly. If movement
+ * thought a worker had arrived while harvesting still considered it too far, the
+ * worker would stand still forever next to a patch it refused to mine.
+ */
+export function reachSlackFor(order: Order): Fix {
+  return order === Order.Build ? BUILD_REACH : HARVEST_REACH;
+}
 
 /**
  * A* requests served per tick. Excess requests wait in a deterministic FIFO —

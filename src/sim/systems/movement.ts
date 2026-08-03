@@ -10,10 +10,10 @@
  */
 
 import {
-  BUILD_REACH,
   PATH_BUDGET_PER_TICK,
   SEPARATION_STRENGTH,
   defOf,
+  reachSlackFor,
 } from '../../config/rules.js';
 import type { FlowFieldCache } from '../pathing/flowfield.js';
 import { idIndex, MAX_PATH } from '../entities.js';
@@ -298,7 +298,8 @@ function closeOnTarget(world: World, index: number, def: EntityDef): void {
   const ti = idIndex(targetId);
   const dx = pool.posX[ti]! - pool.posX[index]!;
   const dy = pool.posY[ti]! - pool.posY[index]!;
-  const reach = def.radius + defOf(pool.type[ti]! as EntityType).radius + BUILD_REACH;
+  const reach =
+    def.radius + defOf(pool.type[ti]! as EntityType).radius + reachSlackFor(order);
   const distSq = vecLenSqRaw(dx, dy);
   if (distSq <= sqRange(reach)) return; // already there
 
@@ -343,7 +344,7 @@ function maybeRepathToward(world: World, index: number, tx: Fix, ty: Fix): void 
     const reach =
       defOf(pool.type[index]! as EntityType).radius +
       defOf(pool.type[ti]! as EntityType).radius +
-      BUILD_REACH;
+      reachSlackFor(pool.order[index]! as Order);
     const dx = pool.posX[ti]! - pool.posX[index]!;
     const dy = pool.posY[ti]! - pool.posY[index]!;
     if (vecLenSqRaw(dx, dy) <= sqRange(reach)) {

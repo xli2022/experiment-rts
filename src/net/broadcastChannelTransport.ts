@@ -9,19 +9,20 @@
  * It is also a genuinely useful way to play: two people at one keyboard, or a
  * developer checking a change against a second tab in seconds.
  *
- * The join protocol is deliberately tiny. One peer announces itself as host and
- * owns the seed; the other takes the remaining slot. There is no matchmaking
- * because there is nothing to match — both tabs are already on the same machine.
+ * The join protocol is deliberately tiny: each tab announces itself, and once
+ * both ids are known, both derive the same slot assignment independently. There
+ * is no matchmaking because there is nothing to match — both tabs are already on
+ * the same machine.
  */
 
 import type { PlayerId } from '../sim/types.js';
+import { slotFromPeerIds } from './trysteroTransport.js';
 import type { Packet, Transport } from './transport.js';
 
 const CHANNEL_PREFIX = 'experiment-rts:';
 
 type Envelope =
-  | { kind: 'hello'; from: string; wantsHost: boolean }
-  | { kind: 'welcome'; from: string; to: string; seed: number; slot: PlayerId }
+  | { kind: 'hello'; from: string; seed: number; reply: boolean }
   | { kind: 'packet'; from: string; packet: Packet }
   | { kind: 'bye'; from: string };
 
@@ -34,9 +35,10 @@ export interface LobbyResult {
 /**
  * Join (or create) a two-player room on this machine.
  *
- * Resolves once both tabs are present. The first tab to arrive becomes the host
- * and picks the seed; the second adopts it, which is what guarantees both start
- * from an identical world.
+ * Resolves once both tabs are present. Slots and the seed are both *derived*
+ * from the two tab ids rather than negotiated: whoever greets whom first is a
+ * race, and resolving it by "the receiver hosts" makes both tabs claim slot 0
+ * whenever they open close together. See `slotFromPeerIds`.
  */
 export function joinLocalRoom(
   room: string,
@@ -48,7 +50,6 @@ export function joinLocalRoom(
 
   return new Promise((resolve, reject) => {
     let settled = false;
-    let peerId: string | null = null;
 
     const finish = (seed: number, slot: PlayerId, peer: string): void => {
       if (settled) return;
@@ -65,28 +66,33 @@ export function joinLocalRoom(
     const onMessage = (event: MessageEvent<Envelope>): void => {
       const msg = event.data;
       if (!msg || msg.from === selfId) return;
+      if (msg.kind !== 'hello') return;
 
-      if (msg.kind === 'hello') {
-        // Someone else is here. We were first, so we host and assign them the
-        // second slot.
-        peerId = msg.from;
+      // A tab that joined before us never saw our greeting, so answer once so
+      // both sides end up knowing both ids and both seeds.
+      if (msg.reply) {
         channel.postMessage({
-          kind: 'welcome',
+          kind: 'hello',
           from: selfId,
-          to: msg.from,
           seed: seedIfHost,
-          slot: 1,
+          reply: false,
         } satisfies Envelope);
-        finish(seedIfHost, 0, msg.from);
-      } else if (msg.kind === 'welcome' && msg.to === selfId) {
-        // Someone was already here and is hosting; adopt their seed.
-        peerId = msg.from;
-        finish(msg.seed, msg.slot, msg.from);
       }
+
+      const slot = slotFromPeerIds(selfId, msg.from);
+      // Both tabs now hold both seeds and agree on who is slot 0, so both pick
+      // the same one without anyone having to be "the host".
+      const seed = slot === 0 ? seedIfHost : msg.seed;
+      finish(seed, slot, msg.from);
     };
 
     channel.addEventListener('message', onMessage);
-    channel.postMessage({ kind: 'hello', from: selfId, wantsHost: true } satisfies Envelope);
+    channel.postMessage({
+      kind: 'hello',
+      from: selfId,
+      seed: seedIfHost,
+      reply: true,
+    } satisfies Envelope);
 
     const timer = setTimeout(() => {
       if (settled) return;
@@ -95,8 +101,6 @@ export function joinLocalRoom(
       channel.close();
       reject(new Error('no second player joined'));
     }, timeoutMs);
-
-    void peerId;
   });
 }
 

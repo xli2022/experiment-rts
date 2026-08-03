@@ -21,7 +21,7 @@ suite — see [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml).
 
 | | |
 |---|---|
-| Pan | `WASD`, arrow keys, screen edges, or middle-drag |
+| Pan | Arrow keys, screen edges, middle-drag, or the minimap |
 | Zoom | mouse wheel |
 | Select | click, or drag a box |
 | Add to selection | `Shift` + click |

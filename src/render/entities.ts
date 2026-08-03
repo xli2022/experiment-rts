@@ -85,20 +85,29 @@ export class EntityRenderer {
     this.group.add(this.selectionRings);
     this.disposables.push(ringGeo, ringMat);
 
+    // The bar quad is anchored at its LEFT edge, not its centre. Scaling a
+    // centre-anchored quad shrinks it toward the middle, so a damaged bar would
+    // pull away from both ends instead of draining from the right.
     const barGeo = new THREE.PlaneGeometry(1, 1);
+    barGeo.translate(0.5, 0, 0);
+
     const bgMat = new THREE.MeshBasicMaterial({ color: 0x11151c, depthTest: false });
-    const fillMat = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      depthTest: false,
-      vertexColors: true,
-    });
+    // No `vertexColors` here. That flag makes three.js look for a per-vertex
+    // colour attribute which a PlaneGeometry does not have; per-*instance*
+    // colours from setColorAt are a different code path that needs no flag. With
+    // it set, the fill rendered a meaningless colour and the bar never appeared
+    // to track health at all.
+    const fillMat = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false });
+
     this.healthBg = new THREE.InstancedMesh(barGeo, bgMat, POOL_CAPACITY);
     this.healthFill = new THREE.InstancedMesh(barGeo, fillMat, POOL_CAPACITY);
-    for (const m of [this.healthBg, this.healthFill]) {
-      m.frustumCulled = false;
-      m.renderOrder = 11;
-      this.group.add(m);
-    }
+    this.healthBg.frustumCulled = false;
+    this.healthFill.frustumCulled = false;
+    // Distinct render orders: with depth testing off, equal orders leave it to
+    // scene order whether the fill draws over the background or under it.
+    this.healthBg.renderOrder = 11;
+    this.healthFill.renderOrder = 12;
+    this.group.add(this.healthBg, this.healthFill);
     this.disposables.push(barGeo, bgMat, fillMat);
 
     this.captureSnapshot(world);
@@ -262,17 +271,24 @@ export class EntityRenderer {
       const damaged = pool.hp[i]! < def.maxHp;
       if ((damaged || selected.has(i)) && barCount < POOL_CAPACITY && def.maxHp > 1) {
         const frac = Math.max(0, Math.min(1, pool.hp[i]! / def.maxHp));
-        const width = def.isBuilding ? 2.0 : 0.8;
+        const width = def.isBuilding ? 2.0 : 0.9;
         const y = spec.height + 0.35;
 
-        this.position.set(x, y, z);
-        this.scale.set(width, 0.13, 1);
+        // Billboard the bar, then step half its width along the camera's own
+        // right vector to place the left edge. Offsetting in world X instead
+        // only happens to look right while the camera faces one direction.
+        barRight.set(1, 0, 0).applyQuaternion(camera.quaternion);
+        const leftEdgeX = x - barRight.x * (width / 2);
+        const leftEdgeY = y - barRight.y * (width / 2);
+        const leftEdgeZ = z - barRight.z * (width / 2);
+
+        this.position.set(leftEdgeX, leftEdgeY, leftEdgeZ);
+        this.scale.set(width, 0.14, 1);
         this.matrix.compose(this.position, camera.quaternion, this.scale);
         this.healthBg.setMatrixAt(barCount, this.matrix);
 
-        // Fill shrinks from the right by offsetting as it narrows.
-        this.position.set(x - (width * (1 - frac)) / 2, y, z);
-        this.scale.set(width * frac * 0.92, 0.09, 1);
+        // Same left edge; only the width changes, so the bar drains rightward.
+        this.scale.set(Math.max(0.0001, width * frac), 0.14, 1);
         this.matrix.compose(this.position, camera.quaternion, this.scale);
         this.healthFill.setMatrixAt(barCount, this.matrix);
 
@@ -310,6 +326,8 @@ export class EntityRenderer {
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
+/** Scratch for the camera-space right vector used to anchor health bars. */
+const barRight = new THREE.Vector3();
 const IDENTITY = new THREE.Quaternion();
 
 function poolKey(type: EntityType, part: number, owner: number): string {

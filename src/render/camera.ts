@@ -72,10 +72,17 @@ export class RtsCamera {
     let dx = 0;
     let dz = 0;
 
-    if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) dz -= 1;
-    if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) dz += 1;
-    if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) dx -= 1;
-    if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) dx += 1;
+    // Arrow keys only — deliberately not WASD.
+    //
+    // A, S and H are unit commands (attack-move, stop, hold), and those letters
+    // are close to sacred in this genre. Panning on the same keys meant every
+    // attempt to scroll left also ordered an attack-move, which is worse than
+    // having one fewer way to move the camera. Edge scroll, middle-drag and the
+    // minimap all still work.
+    if (this.keys.has('ArrowUp')) dz -= 1;
+    if (this.keys.has('ArrowDown')) dz += 1;
+    if (this.keys.has('ArrowLeft')) dx -= 1;
+    if (this.keys.has('ArrowRight')) dx += 1;
 
     // Edge scrolling, the RTS convention. Disabled over the HUD so reaching for
     // a button does not send the camera flying.

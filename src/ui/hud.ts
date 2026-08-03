@@ -77,7 +77,7 @@ export class Hud {
 
       <div class="panel" id="banner"></div>
       <div id="marquee"></div>
-      <div class="hint">WASD / edge pan &nbsp;·&nbsp; wheel zoom &nbsp;·&nbsp; drag select &nbsp;·&nbsp; right-click order &nbsp;·&nbsp; Ctrl+1-9 groups</div>
+      <div class="hint">Arrows / edge pan &nbsp;·&nbsp; wheel zoom &nbsp;·&nbsp; drag select &nbsp;·&nbsp; right-click order &nbsp;·&nbsp; A attack &nbsp;·&nbsp; S stop &nbsp;·&nbsp; Ctrl+1-9 groups</div>
       <div id="overlay" class="hidden"></div>
     `;
 

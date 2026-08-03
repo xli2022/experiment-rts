@@ -10,6 +10,7 @@
 import {
   BUILD_REACH,
   defOf,
+  HARVEST_REACH,
   HARVEST_TICKS,
   MINERALS_PER_TRIP,
 } from '../../config/rules.js';
@@ -65,7 +66,7 @@ function gatherFromPatch(world: World, i: number): void {
   const pi = idIndex(patchId);
   pool.orderTarget[i] = patchId;
 
-  if (!inReach(world, i, pi, BUILD_REACH)) {
+  if (!inReach(world, i, pi, HARVEST_REACH)) {
     pool.harvestTimer[i] = 0;
     return;
   }
@@ -97,7 +98,7 @@ function deliverLoad(world: World, i: number): void {
 
   pool.orderTarget[i] = pool.idAt(depot);
 
-  if (!inReach(world, i, depot, BUILD_REACH)) return;
+  if (!inReach(world, i, depot, HARVEST_REACH)) return;
 
   world.player(owner).minerals += pool.carrying[i]!;
   pool.carrying[i] = 0;

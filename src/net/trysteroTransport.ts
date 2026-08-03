@@ -27,7 +27,7 @@
  * two home broadband lines than it would against a datacentre.
  */
 
-import { joinRoom, type DataPayload, type MessageAction, type Room } from 'trystero/nostr';
+import { joinRoom, selfId, type DataPayload, type MessageAction, type Room } from 'trystero/nostr';
 import type { PlayerId } from '../sim/types.js';
 import type { Packet, Transport } from './transport.js';
 
@@ -60,8 +60,23 @@ export interface JoinResult {
 interface Handshake {
   protocol: number;
   seed: number;
-  /** The host assigns slots; whoever created the room takes 0. */
-  slot: PlayerId;
+}
+
+/**
+ * Decide which player slot we take, from the two peer ids alone.
+ *
+ * This has to be derived rather than negotiated. The obvious "whoever sees the
+ * other arrive is the host" rule looks fine and is broken: peer discovery is
+ * symmetric, so *both* sides observe the other joining and both claim slot 0.
+ * Each then sits waiting forever for commands from a player 1 that does not
+ * exist — which is exactly how it failed, with both screens showing
+ * "waiting for player 1".
+ *
+ * Comparing the two ids gives both peers the same answer with no messages, no
+ * ordering assumptions, and no race.
+ */
+export function slotFromPeerIds(localId: string, remoteId: string): PlayerId {
+  return localId < remoteId ? 0 : 1;
 }
 
 /**
@@ -96,7 +111,7 @@ export function joinOnlineRoom(config: HostConfig, timeoutMs = 90000): Promise<J
   return new Promise((resolve, reject) => {
     let settled = false;
     let localPlayer: PlayerId | null = null;
-    let agreedSeed = seed;
+    const agreedSeed = seed;
     let peerId: string | null = null;
 
     const transport = new TrysteroTransport(
@@ -106,33 +121,36 @@ export function joinOnlineRoom(config: HostConfig, timeoutMs = 90000): Promise<J
     );
     packetAction.onMessage = (data) => transport.receive(data as unknown as Packet);
 
-    const finish = (slot: PlayerId, s: number): void => {
+    /**
+     * Settle on a slot once we know who the other peer is.
+     *
+     * Safe to call from both the join callback and the handshake handler,
+     * whichever happens first — the answer does not depend on the order.
+     */
+    const resolveWith = (remoteId: string): void => {
       if (settled) return;
+      peerId = remoteId;
+      const slot = slotFromPeerIds(selfId, remoteId);
       settled = true;
       clearTimeout(timer);
       localPlayer = slot;
-      agreedSeed = s;
       transport.markReady();
       onStatus?.('Connected.');
       resolve({ transport, seed: agreedSeed, localPlayer: slot });
     };
 
-    // A peer arrived. We were here first, so we host: we take slot 0 and tell
-    // them the seed and their slot.
     room.onPeerJoin = (id: string) => {
-      peerId = id;
       onStatus?.('Peer found, agreeing on the map…');
-      if (localPlayer === null) {
-        const hello: Handshake = { protocol: PROTOCOL_VERSION, seed, slot: 1 };
-        void handshakeAction.send(hello as unknown as DataPayload, { target: id });
-        finish(0, seed);
-      }
+      // The handshake is only a version check now; the slot needs no
+      // negotiation, and the seed is already derived from the room code by both
+      // sides independently.
+      const hello: Handshake = { protocol: PROTOCOL_VERSION, seed };
+      void handshakeAction.send(hello as unknown as DataPayload, { target: id });
+      resolveWith(id);
     };
 
-    // We arrived second: adopt whatever the host tells us.
     handshakeAction.onMessage = (data, context) => {
       const msg = data as unknown as Handshake;
-      peerId = context.peerId;
       if (msg.protocol !== PROTOCOL_VERSION) {
         settled = true;
         clearTimeout(timer);
@@ -145,7 +163,7 @@ export function joinOnlineRoom(config: HostConfig, timeoutMs = 90000): Promise<J
         );
         return;
       }
-      if (localPlayer === null) finish(msg.slot, msg.seed);
+      resolveWith(context.peerId);
     };
 
     room.onPeerLeave = (id: string) => {
