@@ -30,6 +30,7 @@
  */
 
 import type { GameMap } from '../map.js';
+import { nearestWalkable } from './astar.js';
 
 const COST_STRAIGHT = 10;
 const COST_DIAGONAL = 14;
@@ -97,8 +98,22 @@ export class FlowField {
     const w = map.width;
     const h = map.height;
 
-    this.dist[goalTile] = 0;
-    this.buckets[0]!.push(goalTile);
+    // Seed from a walkable tile, even when asked for an unwalkable one.
+    //
+    // Attack-move targets a building's *centre*, which is occupied — and for
+    // anything bigger than 2x2 every neighbour of that centre is inside the
+    // same footprint. The sweep would then never escape the building and would
+    // report the entire map unreachable, so every unit ordered to attack a
+    // Command Post immediately cancelled and stood still. Armies grew to
+    // hundreds without a single shot fired.
+    let seed = goalTile;
+    if (!map.isWalkable(goalTile % w, (goalTile / w) | 0)) {
+      seed = nearestWalkable(map, goalTile % w, (goalTile / w) | 0);
+      if (seed < 0) return;
+    }
+
+    this.dist[seed] = 0;
+    this.buckets[0]!.push(seed);
     let queued = 1;
     let cost = 0;
 

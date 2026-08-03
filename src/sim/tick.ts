@@ -16,6 +16,7 @@
  * should be a deliberate decision rather than a drive-by edit.
  */
 
+import { generateBotCommands } from '../ai/bot.js';
 import { sortCommands, type Command } from './commands.js';
 import { AStar } from './pathing/astar.js';
 import { FlowFieldCache } from './pathing/flowfield.js';
@@ -24,6 +25,7 @@ import { economySystem } from './systems/economy.js';
 import { movementSystem } from './systems/movement.js';
 import { executeCommand } from './systems/orders.js';
 import { victorySystem } from './systems/victory.js';
+import type { PlayerId } from './types.js';
 import { setupMatch, World } from './world.js';
 
 /**
@@ -43,6 +45,16 @@ export class Simulation {
    */
   private readonly fields: FlowFieldCache;
 
+  /**
+   * Player slots driven by the AI.
+   *
+   * The bot is deterministic, so it runs here — inside the simulation, on every
+   * peer — rather than on one machine that broadcasts its orders. That costs no
+   * bandwidth, needs no host, and makes single-player and multiplayer the same
+   * code path.
+   */
+  readonly botPlayers = new Set<PlayerId>();
+
   constructor(seed: number, mapSize?: number) {
     this.world = new World(seed, mapSize);
     setupMatch(this.world);
@@ -58,10 +70,25 @@ export class Simulation {
     world.events.deaths.length = 0;
     world.events.completed.length = 0;
 
+    // Bot commands are generated locally rather than received, but are
+    // otherwise indistinguishable from a human's — same type, same validation,
+    // same ordering.
+    let all = commands;
+    if (this.botPlayers.size > 0) {
+      all = commands.slice();
+      // Iterate the slots in ascending numeric order; Set iteration order is
+      // insertion order, which callers could vary between peers.
+      for (let p = 0; p < world.players.length; p++) {
+        if (!this.botPlayers.has(p)) continue;
+        const botCmds = generateBotCommands(world, p);
+        for (let i = 0; i < botCmds.length; i++) all.push(botCmds[i]!);
+      }
+    }
+
     // Commands arrive from several sources and in arbitrary packet order, so
     // impose a canonical order before applying any of them.
-    if (commands.length > 0) {
-      const ordered = sortCommands(commands.slice());
+    if (all.length > 0) {
+      const ordered = sortCommands(all.slice());
       for (let i = 0; i < ordered.length; i++) {
         executeCommand(world, ordered[i]!);
       }

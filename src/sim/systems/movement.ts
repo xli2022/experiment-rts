@@ -30,6 +30,7 @@ import {
   type Fix,
 } from '../fixed.js';
 import { AStar, nearestWalkable } from '../pathing/astar.js';
+import type { EntityDef } from '../../config/rules.js';
 import { EntityType, NO_ENTITY, Order } from '../types.js';
 import type { World } from '../world.js';
 
@@ -217,7 +218,16 @@ function followPaths(world: World): void {
     }
 
     const len = pool.pathLen[i]!;
-    if (len === 0) continue;
+    if (len === 0) {
+      // No path, but we may still have somewhere to be. When a unit is chasing
+      // an entity and is only a tile or two short, A* is both unnecessary and
+      // actively harmful: the nearest walkable tile to a building footprint is
+      // often the one the unit is already standing on, so the search returns an
+      // empty path, gets treated as a failure, and the unit parks just outside
+      // build range forever. Close the last leg by steering straight at it.
+      closeOnTarget(world, i, def);
+      continue;
+    }
 
     let cursor = pool.pathCursor[i]!;
     if (cursor >= len) {
@@ -268,6 +278,42 @@ function followPaths(world: World): void {
       if (order === Order.Move || order === Order.AttackMove) pool.order[i] = Order.None;
     }
   }
+}
+
+/**
+ * Walk the final short distance to an entity target without pathfinding.
+ *
+ * Only used when the unit already has no path and is close enough that
+ * obstacles are unlikely to matter. `clampToMap` ejects anything that ends up
+ * inside a footprint, so the worst case self-corrects.
+ */
+function closeOnTarget(world: World, index: number, def: EntityDef): void {
+  const pool = world.pool;
+  const order = pool.order[index]!;
+  if (order !== Order.Build && order !== Order.Harvest && order !== Order.Attack) return;
+
+  const targetId = pool.orderTarget[index]!;
+  if (targetId === NO_ENTITY || !pool.isAlive(targetId)) return;
+
+  const ti = idIndex(targetId);
+  const dx = pool.posX[ti]! - pool.posX[index]!;
+  const dy = pool.posY[ti]! - pool.posY[index]!;
+  const reach = def.radius + defOf(pool.type[ti]! as EntityType).radius + BUILD_REACH;
+  const distSq = vecLenSqRaw(dx, dy);
+  if (distSq <= sqRange(reach)) return; // already there
+
+  // Only for the last leg; anything further away is a real navigation problem
+  // and should wait for a path rather than walking into a wall.
+  if (distSq > sqRange(reach + fromInt(6))) return;
+
+  stepToward(
+    world,
+    index,
+    pool.posX[ti]!,
+    pool.posY[ti]!,
+    def.speedPerTick,
+    def.turnPerTick,
+  );
 }
 
 /**

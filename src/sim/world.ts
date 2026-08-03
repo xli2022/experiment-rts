@@ -192,6 +192,23 @@ export class World {
 }
 
 /**
+ * Offsets of each mineral patch from a base's centre tile, as top-left corners.
+ *
+ * Both players use the same relative layout, so neither gets a better opening —
+ * which matters more in a mirror matchup than any map feature.
+ */
+const PATCH_OFFSETS: readonly (readonly [number, number])[] = [
+  [-6, -2],
+  [-6, 0],
+  [-6, 2],
+  [-5, -4],
+  [-3, -5],
+  [-1, -6],
+  [1, -6],
+  [3, -5],
+];
+
+/**
  * Build the opening position: a finished Command Post, starting workers, and a
  * mineral line for each player.
  *
@@ -213,18 +230,18 @@ export function setupMatch(world: World): void {
       pool.buildProgress[hi] = hqDef.buildTicks;
     }
 
-    // Mineral patches in an arc beside the base, mirrored by map symmetry.
+    // Mineral line: a tight arc beside the base.
+    //
+    // Distance here is the single biggest lever on the pace of the whole game.
+    // Patches scattered even a few tiles too far leave workers walking instead
+    // of mining and the economy never gets going, so these offsets are chosen
+    // to sit just clear of the Command Post footprint.
     const patchDef = defOf(EntityType.MineralPatch);
     let placed = 0;
-    for (let k = 0; k < PATCHES_PER_BASE * 3 && placed < PATCHES_PER_BASE; k++) {
-      // Deterministic arc: walk outward in a fixed pattern rather than randomly,
-      // so both bases get the same layout regardless of RNG consumption above.
-      const ring = 6 + ((k / 8) | 0) * 2;
-      const step = k % 8;
-      const dx = step < 3 ? step - 1 : step < 5 ? 2 : 4 - step;
-      const dy = step < 2 ? -2 : step < 6 ? step - 4 : 2;
-      const tx = start.tileX + dx * 2 + (dx >= 0 ? ring - 6 : -(ring - 6));
-      const ty = start.tileY + dy * 2;
+    for (const [dx, dy] of PATCH_OFFSETS) {
+      if (placed >= PATCHES_PER_BASE) break;
+      const tx = start.tileX + dx;
+      const ty = start.tileY + dy;
       if (!map.canPlace(tx, ty, patchDef.footprint)) continue;
       const patch = world.placeBuilding(EntityType.MineralPatch, NEUTRAL, tx, ty);
       if (patch === NO_ENTITY) continue;

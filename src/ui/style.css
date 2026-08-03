@@ -1,0 +1,301 @@
+:root {
+  --bg: #0b0e14;
+  --panel: rgba(16, 21, 30, 0.92);
+  --panel-edge: rgba(122, 162, 214, 0.22);
+  --text: #dbe4f0;
+  --muted: #8a97ab;
+  --accent: #4a9eff;
+  --enemy: #ff5a4a;
+  --mineral: #54e0c8;
+  --warn: #ffb648;
+  --danger: #ff5a4a;
+  --ok: #7dff9b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+}
+
+#viewport {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: default;
+}
+
+/* The UI layer sits over the canvas but lets clicks through by default, so only
+   actual controls steal input from the world. */
+#ui-root {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+#ui-root button,
+#ui-root .interactive {
+  pointer-events: auto;
+}
+
+.panel {
+  position: absolute;
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-radius: 10px;
+  backdrop-filter: blur(8px);
+}
+
+/* ---- resources ---- */
+#resources {
+  top: 12px;
+  left: 12px;
+  display: flex;
+  gap: 20px;
+  padding: 10px 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.stat-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  align-self: center;
+}
+
+.stat-value {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.stat-label {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.supply-capped {
+  color: var(--warn);
+}
+
+/* ---- minimap ---- */
+#minimap-panel {
+  bottom: 12px;
+  left: 12px;
+  padding: 8px;
+  line-height: 0;
+}
+
+#minimap {
+  border-radius: 5px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+/* ---- selection + commands ---- */
+#command-panel {
+  bottom: 12px;
+  right: 12px;
+  width: 306px;
+  padding: 12px;
+}
+
+#selection-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+#selection-detail {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 10px;
+  min-height: 16px;
+}
+
+#command-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.cmd {
+  position: relative;
+  aspect-ratio: 1;
+  border: 1px solid var(--panel-edge);
+  border-radius: 7px;
+  background: rgba(38, 48, 66, 0.85);
+  color: var(--text);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 3px;
+  transition:
+    background 0.12s,
+    border-color 0.12s;
+}
+
+.cmd:hover:not(:disabled) {
+  background: rgba(60, 82, 116, 0.95);
+  border-color: var(--accent);
+}
+
+.cmd:disabled {
+  opacity: 0.34;
+  cursor: not-allowed;
+}
+
+.cmd-key {
+  position: absolute;
+  top: 3px;
+  left: 5px;
+  font-size: 9px;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.cmd-cost {
+  color: var(--mineral);
+  font-size: 9px;
+}
+
+.cmd.active {
+  border-color: var(--ok);
+  background: rgba(60, 100, 76, 0.95);
+}
+
+/* ---- marquee ---- */
+#marquee {
+  position: absolute;
+  border: 1px solid var(--ok);
+  background: rgba(125, 255, 155, 0.12);
+  display: none;
+  pointer-events: none;
+}
+
+/* ---- banners ---- */
+#banner {
+  top: 74px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 9px 18px;
+  display: none;
+  font-size: 13px;
+  text-align: center;
+}
+
+#banner.warn {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+#banner.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* ---- overlay (menu / result) ---- */
+#overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 11, 17, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  backdrop-filter: blur(3px);
+}
+
+#overlay.hidden {
+  display: none;
+}
+
+.dialog {
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-radius: 14px;
+  padding: 30px 34px;
+  max-width: 440px;
+  text-align: center;
+}
+
+.dialog h1 {
+  margin: 0 0 6px;
+  font-size: 27px;
+  letter-spacing: -0.015em;
+}
+
+.dialog p {
+  color: var(--muted);
+  margin: 0 0 20px;
+  line-height: 1.55;
+  font-size: 13px;
+}
+
+.dialog button {
+  display: block;
+  width: 100%;
+  margin: 8px 0 0;
+  padding: 11px 18px;
+  border-radius: 9px;
+  border: 1px solid var(--panel-edge);
+  background: rgba(38, 48, 66, 0.9);
+  color: var(--text);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.dialog button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #06121f;
+  font-weight: 600;
+}
+
+.dialog button:hover {
+  filter: brightness(1.14);
+}
+
+.hint {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--muted);
+  font-size: 11.5px;
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-radius: 8px;
+  padding: 6px 14px;
+  white-space: nowrap;
+}

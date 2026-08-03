@@ -142,7 +142,10 @@ export const DEFS: readonly EntityDef[] = [
     mineralCost: 100,
     buildTicks: seconds(25),
     supplyCost: 0,
-    supplyProvided: 8,
+    // Generous on purpose: at 8 supply each, reaching the 200 cap needs roughly
+    // two dozen depots, and that many structures ring a base so densely that
+    // its own army cannot get out.
+    supplyProvided: 15,
     produces: NONE,
   },
   {
@@ -218,8 +221,14 @@ export const STARTING_WORKERS = 6;
 /** Hard ceiling on supply regardless of how many depots are built. */
 export const SUPPLY_MAX = 200;
 
-/** Minerals a worker carries per trip. */
-export const MINERALS_PER_TRIP = 5;
+/**
+ * Minerals a worker carries per trip.
+ *
+ * Together with HARVEST_TICKS and the mineral-line distance this sets the pace
+ * of the entire game: too low and neither side can afford an army before the
+ * patches run dry.
+ */
+export const MINERALS_PER_TRIP = 8;
 /** Ticks spent standing in a patch before the load is full. */
 export const HARVEST_TICKS = seconds(2.0);
 /** Total minerals in a patch before it is exhausted and removed. */
@@ -230,8 +239,16 @@ export const PATCHES_PER_BASE = 8;
 /** Build orders can be queued this deep per production building. */
 export const MAX_PRODUCTION_QUEUE = 5;
 
-/** How close a worker must be to a construction site to work on it. */
-export const BUILD_REACH = fromFloat(1.2);
+/**
+ * Slack added to the two radii when deciding whether a worker can reach a site,
+ * a patch, or a drop-off.
+ *
+ * Radii are circles but building footprints are squares, so a worker standing
+ * against the corner of a 3x3 barracks is further from its centre than the
+ * radius suggests. Too tight a value leaves workers hovering one step outside
+ * build range, unable to work and unable to path closer.
+ */
+export const BUILD_REACH = fromFloat(1.7);
 
 /**
  * A* requests served per tick. Excess requests wait in a deterministic FIFO —

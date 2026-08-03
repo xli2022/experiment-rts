@@ -187,6 +187,16 @@ function executeBuild(
   const def = defOf(building);
   if (!def.isBuilding || building === EntityType.MineralPatch) return;
 
+  // Issuing a build order onto an existing unfinished site of ours means "go
+  // help with that", not "start a second one". Without this the order would be
+  // rejected by the placement check below, which is what let abandoned sites sit
+  // half-built forever with nobody assigned to them.
+  const existing = findSiteAt(world, player, tileX, tileY);
+  if (existing !== NO_ENTITY) {
+    assignBuilder(world, wi, existing);
+    return;
+  }
+
   const ps = world.player(player);
   if (ps.minerals < def.mineralCost) return;
   if (!world.map.canPlace(tileX, tileY, def.footprint)) return;
@@ -205,14 +215,43 @@ function executeBuild(
   pool.buildProgress[si] = 0;
   pool.hp[si] = Math.max(1, (def.maxHp / 10) | 0); // sites start fragile
 
-  // Send the worker to build it.
-  pool.order[wi] = Order.Build;
-  pool.orderTarget[wi] = siteId;
-  pool.orderX[wi] = pool.posX[si]!;
-  pool.orderY[wi] = pool.posY[si]!;
-  pool.clearPath(wi);
-  pool.pathPending[wi] = 1;
-  world.pathQueue.push(wi);
+  assignBuilder(world, wi, siteId);
+}
+
+/** Point a worker at a construction site and path it there. */
+function assignBuilder(world: World, workerIndex: number, siteId: EntityId): void {
+  const pool = world.pool;
+  const si = idIndex(siteId);
+  pool.order[workerIndex] = Order.Build;
+  pool.orderTarget[workerIndex] = siteId;
+  pool.orderX[workerIndex] = pool.posX[si]!;
+  pool.orderY[workerIndex] = pool.posY[si]!;
+  pool.clearPath(workerIndex);
+  pool.pathPending[workerIndex] = 1;
+  world.pathQueue.push(workerIndex);
+}
+
+/**
+ * An unfinished building of ours whose footprint starts at this tile.
+ *
+ * Scans the pool in ascending index order, so every peer finds the same one.
+ */
+function findSiteAt(
+  world: World,
+  player: PlayerId,
+  tileX: number,
+  tileY: number,
+): EntityId {
+  const pool = world.pool;
+  for (let i = 0; i < pool.count; i++) {
+    if (pool.alive[i] !== 1) continue;
+    if (pool.owner[i] !== player) continue;
+    if (pool.buildState[i] === 2) continue; // already finished
+    if (pool.tileX[i] !== tileX || pool.tileY[i] !== tileY) continue;
+    if (!defOf(pool.type[i]! as EntityType).isBuilding) continue;
+    return pool.idAt(i);
+  }
+  return NO_ENTITY;
 }
 
 function executeTrain(
