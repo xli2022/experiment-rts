@@ -28,6 +28,7 @@ import {
   defOf,
   PATCH_AMOUNT,
   PATCHES_PER_BASE,
+  PATCHES_PER_EXPANSION,
   STARTING_MINERALS,
   STARTING_WORKERS,
   SUPPLY_MAX,
@@ -141,6 +142,11 @@ export class World {
     const i = id & 0xffff;
     this.pool.tileX[i] = tileX;
     this.pool.tileY[i] = tileY;
+    // Buildings face the middle of the map rather than always +Y. Purely
+    // cosmetic — nothing consults a building's facing — but it is the same rule
+    // units spawn by, so a base and its opposite number are mirror images
+    // instead of two copies pointing the same way.
+    this.pool.faceY[i] = cy < fromInt(this.map.height >> 1) ? 65536 : -65536;
     this.map.setOccupied(tileX, tileY, def.footprint, 1);
     return id;
   }
@@ -204,8 +210,10 @@ export class World {
 /**
  * Offsets of each mineral patch from a base's centre tile, as top-left corners.
  *
- * Both players use the same relative layout, so neither gets a better opening —
- * which matters more in a mirror matchup than any map feature.
+ * Distance here is the single biggest lever on the pace of the whole game.
+ * Patches scattered even a few tiles too far leave workers walking instead of
+ * mining and the economy never gets going, so these sit just clear of the
+ * Command Post footprint.
  */
 const PATCH_OFFSETS: readonly (readonly [number, number])[] = [
   [-6, -2],
@@ -219,6 +227,46 @@ const PATCH_OFFSETS: readonly (readonly [number, number])[] = [
 ];
 
 /**
+ * Lay a mineral line around a base site.
+ *
+ * `anchor` is always the *canonical* site — player 0's base, or the first of a
+ * mirrored pair of expansions. With `flip` set, each patch is placed at the
+ * 180-degree rotation of where it would otherwise go, so the second line is a
+ * true rotation of the first rather than the same shape in the same
+ * orientation.
+ *
+ * That distinction is the whole point. Laid out the same way round, one
+ * player's workers start on the far side of their own Command Post from their
+ * own patches, and their minerals sit between their base and the attack.
+ */
+function placeMineralLine(
+  world: World,
+  anchorX: number,
+  anchorY: number,
+  count: number,
+  flip: boolean,
+): number {
+  const { map, pool } = world;
+  const patchDef = defOf(EntityType.MineralPatch);
+  let placed = 0;
+  for (let i = 0; i < PATCH_OFFSETS.length && placed < count; i++) {
+    const [dx, dy] = PATCH_OFFSETS[i]!;
+    const canonX = anchorX + dx;
+    const canonY = anchorY + dy;
+    const tx = flip ? mirrorTile(map.width, canonX, patchDef.footprint) : canonX;
+    const ty = flip ? mirrorTile(map.height, canonY, patchDef.footprint) : canonY;
+    if (!map.canPlace(tx, ty, patchDef.footprint)) continue;
+    const patch = world.placeBuilding(EntityType.MineralPatch, NEUTRAL, tx, ty);
+    if (patch === NO_ENTITY) continue;
+    const pi = patch & 0xffff;
+    pool.buildState[pi] = 2;
+    pool.resourceAmount[pi] = PATCH_AMOUNT;
+    placed++;
+  }
+  return placed;
+}
+
+/**
  * Build the opening position: a finished Command Post, starting workers, and a
  * mineral line for each player.
  *
@@ -227,12 +275,25 @@ const PATCH_OFFSETS: readonly (readonly [number, number])[] = [
  */
 export function setupMatch(world: World): void {
   const { map, pool } = world;
+  const hqDef = defOf(EntityType.CommandPost);
+  const half = hqDef.footprint >> 1;
+
+  // Player 0's opening is authored; player 1's is that opening rotated 180
+  // degrees about the centre of the map.
+  //
+  // Applying the same offsets to a mirrored start instead is *nearly* the same
+  // thing and was wrong: a footprint of 4 centred by `start - 2` cannot be
+  // symmetric about a tile, so player 1's whole base landed a tile nearer the
+  // middle of the map — closer to the centre, to its expansion, and to the
+  // enemy, on every axis, from tick zero.
+  const homeX = map.starts[0]!.tileX - half;
+  const homeY = map.starts[0]!.tileY - half;
 
   for (let p = 0; p < MAX_PLAYERS; p++) {
-    const start = map.starts[p]!;
-    const hqDef = defOf(EntityType.CommandPost);
-    const hqTileX = start.tileX - (hqDef.footprint >> 1);
-    const hqTileY = start.tileY - (hqDef.footprint >> 1);
+    const flip = p === 1;
+    const hqTileX = flip ? mirrorTile(map.width, homeX, hqDef.footprint) : homeX;
+    const hqTileY = flip ? mirrorTile(map.height, homeY, hqDef.footprint) : homeY;
+
     const hq = world.placeBuilding(EntityType.CommandPost, p, hqTileX, hqTileY);
     if (hq !== NO_ENTITY) {
       const hi = hq & 0xffff;
@@ -240,35 +301,50 @@ export function setupMatch(world: World): void {
       pool.buildProgress[hi] = hqDef.buildTicks;
     }
 
-    // Mineral line: a tight arc beside the base.
-    //
-    // Distance here is the single biggest lever on the pace of the whole game.
-    // Patches scattered even a few tiles too far leave workers walking instead
-    // of mining and the economy never gets going, so these offsets are chosen
-    // to sit just clear of the Command Post footprint.
-    const patchDef = defOf(EntityType.MineralPatch);
-    let placed = 0;
-    for (const [dx, dy] of PATCH_OFFSETS) {
-      if (placed >= PATCHES_PER_BASE) break;
-      const tx = start.tileX + dx;
-      const ty = start.tileY + dy;
-      if (!map.canPlace(tx, ty, patchDef.footprint)) continue;
-      const patch = world.placeBuilding(EntityType.MineralPatch, NEUTRAL, tx, ty);
-      if (patch === NO_ENTITY) continue;
-      const pi = patch & 0xffff;
-      pool.buildState[pi] = 2;
-      pool.resourceAmount[pi] = PATCH_AMOUNT;
-      placed++;
-    }
+    // Everything else is placed relative to the Command Post's centre, so it
+    // rotates with it.
+    const centreX = hqTileX + half;
+    const centreY = hqTileY + half;
 
-    // Starting workers, fanned out below the Command Post.
+    // Mineral line: a tight arc beside the base, on the side away from the
+    // enemy. Always anchored on player 0's base, and rotated for player 1.
+    placeMineralLine(world, homeX + half, homeY + half, PATCHES_PER_BASE, flip);
+
+    // Starting workers, fanned out on the near side of the Command Post.
+    const facing = flip ? -1 : 1;
     for (let wIdx = 0; wIdx < STARTING_WORKERS; wIdx++) {
-      const ox = fromInt(start.tileX) + fromInt(wIdx - (STARTING_WORKERS >> 1));
-      const oy = fromInt(start.tileY + 3);
-      pool.spawn(EntityType.Worker, p, ox, oy);
+      const ox = fromInt(centreX) + fromInt((wIdx - (STARTING_WORKERS >> 1)) * facing);
+      const oy = fromInt(centreY + 3 * facing);
+      const id = pool.spawn(EntityType.Worker, p, ox, oy);
+      // Units spawn facing +Y by default, which is one more thing that has to
+      // rotate: otherwise one player's opening six all have to turn around
+      // before they can walk to their own minerals.
+      if (id !== NO_ENTITY) pool.faceY[id & 0xffff] = fromInt(facing);
     }
+  }
+
+  // Expansions: a mineral line and nothing else. They belong to whoever gets a
+  // Command Post up on them, which is the whole point — a second base is worth
+  // the 400 minerals and the exposure, or it is not, and that is a decision
+  // rather than something handed out at spawn.
+  for (let e = 0; e < map.expansions.length; e++) {
+    // Anchored on the canonical site of each pair, so the two lines are exact
+    // rotations of one another rather than each laid out from its own site.
+    const canonical = map.expansions[e - (e % 2)]!;
+    placeMineralLine(
+      world,
+      canonical.tileX,
+      canonical.tileY,
+      PATCHES_PER_EXPANSION,
+      e % 2 === 1,
+    );
   }
 
   world.recomputeSupply();
   world.grid.rebuild(pool);
+}
+
+/** Top-left tile of a footprint rotated 180 degrees about the map centre. */
+function mirrorTile(size: number, tile: number, footprint: number): number {
+  return size - 1 - tile - (footprint - 1);
 }

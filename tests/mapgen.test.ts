@@ -18,7 +18,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { PATCHES_PER_BASE, defOf } from '../src/config/rules.js';
+import { PATCHES_PER_BASE, PATCHES_PER_EXPANSION, defOf } from '../src/config/rules.js';
 import { GameMap, MAP_SIZE, generateMap } from '../src/sim/map.js';
 import { buildLayout, mirror, nearestOn, pointAt } from '../src/sim/mapgen.js';
 import { Simulation } from '../src/sim/tick.js';
@@ -65,6 +65,19 @@ function startsConnected(map: GameMap, blocks: { x: number; y: number; r: number
   return false;
 }
 
+/** Mineral patches belonging to the base site at `at`. */
+function patchesAround(sim: Simulation, at: { tileX: number; tileY: number }): number {
+  const pool = sim.world.pool;
+  let n = 0;
+  for (let i = 0; i < pool.count; i++) {
+    if (pool.alive[i] !== 1 || pool.type[i] !== EntityType.MineralPatch) continue;
+    const dx = pool.tileX[i]! - at.tileX;
+    const dy = pool.tileY[i]! - at.tileY;
+    if (dx * dx + dy * dy <= 12 * 12) n++;
+  }
+  return n;
+}
+
 /** The three trunk routes, identified by a point only that route passes through. */
 function trunkChokes(size: number): { centre: { x: number; y: number; r: number }; low: { x: number; y: number; r: number }; high: { x: number; y: number; r: number } } {
   const edge = Math.floor(size * 0.11);
@@ -106,7 +119,7 @@ describe('map generation', () => {
   it('gives both players room to open', () => {
     for (const seed of SEEDS) {
       const sim = new Simulation(seed);
-      const { pool, map } = sim.world;
+      const map = sim.world.map;
 
       const hqDef = defOf(EntityType.CommandPost);
       for (const start of map.starts) {
@@ -124,19 +137,9 @@ describe('map generation', () => {
 
       // Every mineral patch must have fitted, for both players equally — a base
       // one patch short is a losing opening that no amount of skill recovers.
-      const patches = [0, 0];
-      for (let i = 0; i < pool.count; i++) {
-        if (pool.alive[i] !== 1 || pool.type[i] !== EntityType.MineralPatch) continue;
-        const nearer =
-          Math.abs(pool.tileX[i]! - map.starts[0]!.tileX) +
-          Math.abs(pool.tileY[i]! - map.starts[0]!.tileY) <
-          Math.abs(pool.tileX[i]! - map.starts[1]!.tileX) +
-            Math.abs(pool.tileY[i]! - map.starts[1]!.tileY)
-            ? 0
-            : 1;
-        patches[nearer]!++;
+      for (const start of map.starts) {
+        expect(patchesAround(sim, start)).toBe(PATCHES_PER_BASE);
       }
-      expect(patches).toEqual([PATCHES_PER_BASE, PATCHES_PER_BASE]);
     }
   });
 
@@ -201,6 +204,98 @@ describe('map generation', () => {
     }
     // Not just a one-tile lip everywhere: there are real massifs.
     expect(raised).toBeGreaterThan(1000);
+  });
+
+  it('offers expansions in mirrored pairs', () => {
+    for (const seed of SEEDS) {
+      const map = generateMap(seed);
+      expect(map.expansions.length).toBeGreaterThanOrEqual(2);
+      expect(map.expansions.length % 2).toBe(0);
+
+      for (let e = 0; e < map.expansions.length; e += 2) {
+        const first = map.expansions[e]!;
+        const second = map.expansions[e + 1]!;
+        expect(mirror({ x: first.tileX, y: first.tileY }, map.width)).toEqual({
+          x: second.tileX,
+          y: second.tileY,
+        });
+      }
+    }
+  });
+
+  it('leaves an expansion far enough out to be a decision', () => {
+    const map = generateMap(0x51ce7a11);
+    const home = map.starts[0]!;
+    const natural = map.expansions[0]!;
+    const away = map.starts[1]!;
+
+    const dist = (a: { tileX: number; tileY: number }, b: { tileX: number; tileY: number }) =>
+      Math.hypot(a.tileX - b.tileX, a.tileY - b.tileY);
+
+    // Nearer to its own main than to the enemy's, or it is not an expansion so
+    // much as a trap — but not so close that it is part of the main base.
+    expect(dist(natural, home)).toBeLessThan(dist(natural, away));
+    expect(dist(natural, home)).toBeGreaterThan(20);
+  });
+
+  it('gives every expansion room for a Command Post and a mineral line', () => {
+    for (const seed of SEEDS) {
+      const sim = new Simulation(seed);
+      const map = sim.world.map;
+      const hqDef = defOf(EntityType.CommandPost);
+
+      for (const site of map.expansions) {
+        expect(patchesAround(sim, site)).toBe(PATCHES_PER_EXPANSION);
+        // A worker must actually be able to plant a Command Post here, centred
+        // the same way the starting ones are.
+        const tx = site.tileX - (hqDef.footprint >> 1);
+        const ty = site.tileY - (hqDef.footprint >> 1);
+        expect(map.canPlace(tx, ty, hqDef.footprint)).toBe(true);
+      }
+    }
+  });
+
+  it('gives both openings the same walk from base to minerals', () => {
+    // The two mineral lines must be each other's rotation about their own base,
+    // not merely the same shape in the same orientation. Laid out the same way
+    // round, one player's workers start on the far side of their own Command
+    // Post from their own patches, and that player loses on economy alone.
+    //
+    // Asserted as distances rather than tile coordinates because distance is
+    // what mining rate is made of: an off-by-one in the reflection is invisible
+    // on a map and worth a whole tile of walking on every trip.
+    for (const seed of SEEDS) {
+      const sim = new Simulation(seed);
+      const { pool } = sim.world;
+      const patchHalf = defOf(EntityType.MineralPatch).footprint / 2;
+      const hqHalf = defOf(EntityType.CommandPost).footprint / 2;
+
+      const linesByPlayer = [0, 1].map((player) => {
+        let hq = -1;
+        for (let i = 0; i < pool.count; i++) {
+          if (pool.alive[i] !== 1 || pool.owner[i] !== player) continue;
+          if (pool.type[i] === EntityType.CommandPost) hq = i;
+        }
+        expect(hq).toBeGreaterThanOrEqual(0);
+        const cx = pool.tileX[hq]! + hqHalf;
+        const cy = pool.tileY[hq]! + hqHalf;
+
+        const offsets: string[] = [];
+        for (let i = 0; i < pool.count; i++) {
+          if (pool.alive[i] !== 1 || pool.type[i] !== EntityType.MineralPatch) continue;
+          const dx = pool.tileX[i]! + patchHalf - cx;
+          const dy = pool.tileY[i]! + patchHalf - cy;
+          if (Math.hypot(dx, dy) > 14) continue; // another base's line
+          // Player 1's is stored negated, so both lists come out identical.
+          const sign = player === 1 ? -1 : 1;
+          offsets.push(`${dx * sign},${dy * sign}`);
+        }
+        return offsets.sort();
+      });
+
+      expect(linesByPlayer[0]!.length).toBe(PATCHES_PER_BASE);
+      expect(linesByPlayer[1]).toEqual(linesByPlayer[0]);
+    }
   });
 
   it('is a pure function of the seed', () => {

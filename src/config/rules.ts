@@ -317,6 +317,14 @@ export const HARVEST_TICKS = seconds(2.0);
 export const PATCH_AMOUNT = 1500;
 /** Patches per starting base. */
 export const PATCHES_PER_BASE = 8;
+/**
+ * Patches at an expansion site.
+ *
+ * Fewer than a main, so a second base is a meaningful boost rather than a
+ * doubling — the reason to take one is that the mains run dry, and a game where
+ * expanding is strictly better than not is a game with one opening.
+ */
+export const PATCHES_PER_EXPANSION = 6;
 
 /** Build orders can be queued this deep per production building. */
 export const MAX_PRODUCTION_QUEUE = 5;

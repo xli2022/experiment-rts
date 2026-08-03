@@ -28,6 +28,7 @@ import type { World } from '../sim/world.js';
 import { colourFor, PLAYER_COLOURS } from './models/procedural.js';
 import type { ModelProvider } from './models/provider.js';
 import type { FogRenderer } from './fog.js';
+import { MAX_CLIFF_HEIGHT } from './terrain.js';
 
 /** Instances allocated per pool. Comfortably above a 200-supply army. */
 const POOL_CAPACITY = 512;
@@ -72,19 +73,22 @@ export class EntityRenderer {
   ) {
     this.buildPools(world);
 
-    // Selection rings lie flat on the ground with depth testing off, so they
-    // stay visible even when a unit is standing behind a building.
+    // Selection rings are a mark on the ground, not an overlay: they depth-test
+    // like everything else, so a ring goes behind the cliff or the building that
+    // is in front of it instead of floating over the top. `depthWrite` stays off
+    // because they are translucent and drawn in one instanced call — writing
+    // depth would let whichever overlapping ring happened to come first in the
+    // buffer punch a hole in its neighbour.
     const ringGeo = new THREE.RingGeometry(0.86, 1.0, 20);
     ringGeo.rotateX(-Math.PI / 2);
     const ringMat = new THREE.MeshBasicMaterial({
-      color: 0x7dff9b,
+      color: SELECTION_RING_COLOUR,
       transparent: true,
       opacity: 0.9,
-      depthTest: false,
+      depthWrite: false,
     });
     this.selectionRings = new THREE.InstancedMesh(ringGeo, ringMat, POOL_CAPACITY);
     this.selectionRings.frustumCulled = false;
-    this.selectionRings.renderOrder = 10;
     this.group.add(this.selectionRings);
     this.disposables.push(ringGeo, ringMat);
 
@@ -237,7 +241,7 @@ export class EntityRenderer {
       // purely visual — the simulation is 2D and treats them like anything else
       // — but without it a gunship parked over infantry is unreadable.
       const altitude = def.flying
-        ? FLIGHT_ALTITUDE + Math.sin(this.bobPhase + i * 0.7) * 0.12
+        ? FLIGHT_ALTITUDE + Math.sin(this.bobPhase + i * 0.7) * FLYER_BOB
         : 0;
 
       const x = this.prevX[i]! + (this.currX[i]! - this.prevX[i]!) * a;
@@ -370,8 +374,31 @@ export class EntityRenderer {
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
-/** How high above the ground air units are drawn. */
-const FLIGHT_ALTITUDE = 2.4;
+
+/** How far a flyer's hover carries it above and below its nominal altitude. */
+export const FLYER_BOB = 0.12;
+/** How far the lowest part of a flyer's model hangs below its origin. */
+export const FLYER_UNDERHANG = 0.3;
+/** Daylight left between a flyer's lowest point and the tallest terrain. */
+const FLIGHT_CLEARANCE = 0.35;
+
+/**
+ * How high above the ground air units are drawn.
+ *
+ * Derived from the terrain rather than chosen, because air has to *look* like
+ * air: with the two as independent numbers, cliffs grew when the map gained
+ * elevation and gunships ended up flying through ridges. The margin covers the
+ * model's underhang, the hover bob, and a visible gap on top.
+ */
+export const FLIGHT_ALTITUDE =
+  MAX_CLIFF_HEIGHT + FLYER_UNDERHANG + FLYER_BOB + FLIGHT_CLEARANCE;
+/**
+ * Selection rings are neutral grey rather than a team colour.
+ *
+ * What is selected is the player's own business, so the ring should not compete
+ * with the colours that carry game state — team ownership, health, damage.
+ */
+const SELECTION_RING_COLOUR = 0xd2d7de;
 /** Scratch for the camera basis vectors used to place health bars. */
 const barRight = new THREE.Vector3();
 const barUp = new THREE.Vector3();

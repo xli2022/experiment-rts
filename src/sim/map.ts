@@ -49,6 +49,16 @@ export class GameMap {
 
   readonly starts: StartLocation[] = [];
 
+  /**
+   * Second base sites: clear ground with a mineral line already on it, which a
+   * player can claim by building a Command Post.
+   *
+   * Terrain, not ownership — nobody holds an expansion until they build on it,
+   * and the simulation treats a Command Post here exactly like the starting
+   * one. Stored in mirrored pairs so neither player is nearer to more of them.
+   */
+  readonly expansions: StartLocation[] = [];
+
   constructor(size = MAP_SIZE) {
     this.width = size;
     this.height = size;
@@ -170,11 +180,12 @@ export class GameMap {
 export function generateMap(seed: number, size = MAP_SIZE): GameMap {
   const map = new GameMap(size);
 
-  const { bases } = carveLayout(map.tiles, map.elevation, size, seed);
+  const { bases, expansions } = carveLayout(map.tiles, map.elevation, size, seed);
   map.starts.push(
     { tileX: bases[0].x, tileY: bases[0].y },
     { tileX: bases[1].x, tileY: bases[1].y },
   );
+  for (const e of expansions) map.expansions.push({ tileX: e.x, tileY: e.y });
 
   // The lanes are carved to connect by construction, but a jitter that pinched a
   // corridor shut would be a silent, unwinnable match — so it is still checked,

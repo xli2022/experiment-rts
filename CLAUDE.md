@@ -59,6 +59,32 @@ a random wobble, because each copy drew its own wobble from the same stream.
 from walkability alone — but it is still computed deterministically, because two
 peers rendering visibly different terrain would look exactly like a desync.
 
+## Mirror fairness is not the same as symmetry
+
+The map is symmetric; that does not make the *match* symmetric. Anything placed
+at setup has to be laid out as an exact 180-degree rotation of player 0's, not by
+applying the same offsets to a mirrored start. Three separate bugs came from
+getting this subtly wrong, each worth a real advantage and none visible on
+screen:
+
+- A Command Post's footprint is 4, and `start - 2` cannot be symmetric about a
+  tile — so player 1's whole base sat a tile nearer the middle of the map.
+- Reflecting a mineral patch's *top-left corner* about the base's centre tile
+  rather than its centre is half a tile out, which rounds to a whole tile of
+  extra walking on every trip.
+- Units spawn facing +Y and trained units pop out on the +Y side of a building,
+  so one player's reinforcements appeared four tiles nearer the front than the
+  other's, every time.
+
+**The simulation is deterministic but not rotation-equivariant.** `fmul`
+truncates toward negative infinity, so `fmul(-a, b) !== -fmul(a, b)` for 99.99%
+of operand pairs — always by one ULP. Two mirrored armies given mirrored orders
+therefore drift apart within about ten ticks. It is far below anything a player
+can perceive and it costs nothing in multiplayer (both peers compute the same
+numbers, which is all lockstep needs), but it means an AI-vs-AI mirror match is
+decided by rounding, and it cannot be fixed without changing `fmul`'s rounding —
+which is the one function everything else's correctness rests on.
+
 ## Rendering gotchas worth not rediscovering
 
 - **`DataTexture` does not flip.** `CanvasTexture` is uploaded with three.js's

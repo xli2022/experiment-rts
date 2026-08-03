@@ -46,10 +46,30 @@ const SUPPLY_BUFFER = 6;
 /** Concurrent construction sites the bot will run. */
 const MAX_SITES = 2;
 
+/**
+ * Minerals on hand before the bot considers a second base.
+ *
+ * Comfortably above a Command Post's 400, because expanding at exactly the cost
+ * would stall army production for as long as the build takes. Floating this
+ * much is the signal that the home mineral line has stopped being the
+ * bottleneck.
+ */
+const EXPAND_AT_MINERALS = 550;
+/** Command Posts the bot will run. Two bases is plenty to manage well. */
+const MAX_BASES = 2;
+/** How near a Command Post has to be for an expansion to count as taken. */
+const CLAIMED_RANGE_SQ = 14 * 14;
+
 export function generateBotCommands(world: World, player: PlayerId): Command[] {
-  // Stagger players so two bots never issue on the same tick, which keeps their
-  // command streams distinguishable in replays.
-  if ((world.tick + player) % THINK_INTERVAL !== 0) return [];
+  // Every bot thinks on the same tick.
+  //
+  // Staggering them by player read as a harmless way to keep command streams
+  // distinguishable in a replay — commands carry their player anyway — but it
+  // hands whoever thinks first a whole think interval of head start. Measured in
+  // a mirror matchup on a symmetric map, that decided the game: player 0 spent
+  // its opening 50 minerals and had its workers walking before player 1 had
+  // taken a turn at all.
+  if (world.tick % THINK_INTERVAL !== 0) return [];
   if (world.player(player).defeated) return [];
   if (world.matchOver) return [];
 
@@ -295,6 +315,11 @@ function manageConstruction(
     want = EntityType.Barracks;
   } else if (s.turrets.length < 2 && s.minerals >= 300) {
     want = EntityType.Turret;
+  } else if (s.minerals >= EXPAND_AT_MINERALS && expansionSite(world, player, s)) {
+    // Floating this much means the mineral line at home cannot absorb the
+    // income any more. A second base is what turns it into more income rather
+    // than more barracks queueing behind the same eight patches.
+    want = EntityType.CommandPost;
   } else if (s.barracks.length < 6 && s.minerals >= 300) {
     // Excess minerals are wasted minerals; convert them into production.
     want = EntityType.Barracks;
@@ -304,7 +329,10 @@ function manageConstruction(
   const def = defOf(want);
   if (s.minerals < def.mineralCost) return;
 
-  const spot = findBuildSpot(world, pool.tileX[hq]!, pool.tileY[hq]!, def.footprint);
+  // An expansion goes on its site; everything else goes next to the base it
+  // supports.
+  const site = want === EntityType.CommandPost ? expansionSite(world, player, s) : null;
+  const spot = site ?? findBuildSpot(world, pool.tileX[hq]!, pool.tileY[hq]!, def.footprint);
   if (!spot) return;
 
   cmds.push({
@@ -315,6 +343,74 @@ function manageConstruction(
     tileX: spot.x,
     tileY: spot.y,
   });
+}
+
+/**
+ * The nearest expansion worth taking, as a Command Post's top-left tile.
+ *
+ * "Worth taking" means nobody already has a Command Post on it — including this
+ * player, so the bot claims each site once rather than stacking bases — and it
+ * is nearer to home than to the enemy. Walking a lone worker past the enemy's
+ * front door to build a base is not an expansion, it is a donation.
+ */
+function expansionSite(
+  world: World,
+  player: PlayerId,
+  s: Survey,
+): { x: number; y: number } | null {
+  const { map, pool } = world;
+  if (s.commandPosts.length === 0 || s.commandPosts.length >= MAX_BASES) return null;
+
+  const home = s.commandPosts[0]!;
+  const homeX = pool.tileX[home]!;
+  const homeY = pool.tileY[home]!;
+  const def = defOf(EntityType.CommandPost);
+  const half = def.footprint >> 1;
+
+  let best: { x: number; y: number } | null = null;
+  let bestDist = Infinity;
+
+  for (let e = 0; e < map.expansions.length; e++) {
+    const site = map.expansions[e]!;
+    const x = site.tileX - half;
+    const y = site.tileY - half;
+    if (!map.canPlace(x, y, def.footprint)) continue;
+
+    // Distance is squared throughout; nothing here needs the actual length.
+    const dHome = sq(site.tileX - homeX) + sq(site.tileY - homeY);
+    let contested = false;
+    for (let i = 0; i < pool.count; i++) {
+      if (pool.alive[i] !== 1) continue;
+      if (pool.type[i] !== EntityType.CommandPost) continue;
+      if (sq(pool.tileX[i]! - site.tileX) + sq(pool.tileY[i]! - site.tileY) < CLAIMED_RANGE_SQ) {
+        contested = true;
+        break;
+      }
+    }
+    if (contested) continue;
+
+    // Nearer to us than to any enemy base, or it is indefensible.
+    let enemyCloser = false;
+    for (let i = 0; i < pool.count; i++) {
+      if (pool.alive[i] !== 1 || pool.owner[i] === player || pool.owner[i] === NEUTRAL) continue;
+      if (!defOf(pool.type[i]! as EntityType).isBuilding) continue;
+      if (sq(pool.tileX[i]! - site.tileX) + sq(pool.tileY[i]! - site.tileY) < dHome) {
+        enemyCloser = true;
+        break;
+      }
+    }
+    if (enemyCloser) continue;
+
+    if (dHome < bestDist) {
+      bestDist = dHome;
+      best = { x, y };
+    }
+  }
+  return best;
+}
+
+function sq(v: number): number {
+  return v * v;
 }
 
 /** Send a worker to any construction site nobody is working on. */

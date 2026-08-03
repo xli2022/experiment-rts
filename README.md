@@ -37,7 +37,8 @@ suite — see [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml).
 
 Workers gather minerals, construct buildings, and repair them. The Command Post
 trains workers, Supply Depots raise the supply cap, Barracks train the three
-combat units, and Turrets defend. You lose when your last structure falls.
+combat units, and Turrets defend. Build a second Command Post on an expansion to
+mine two lines at once. You lose when your last structure falls.
 
 ### The counter triangle
 
@@ -68,6 +69,11 @@ worth holding, and a flank costs a real commitment rather than a free rotation.
 The layout is generated, not authored: the whole map is carved with a brush that
 opens every tile *and its 180-degree opposite*, so the two halves are identical
 by construction rather than by inspection.
+
+Two **expansions** sit in pockets off the lanes, one nearer each player, with a
+mineral line already on them and room for a Command Post. Nobody owns one until
+they build there, and the patches are smaller than a main — so taking one is a
+decision about when your home line stops keeping up, not a free upgrade.
 
 ## Multiplayer without a server
 

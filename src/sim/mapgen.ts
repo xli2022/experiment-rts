@@ -52,6 +52,14 @@ export interface LaneSpec {
 
 export interface Layout {
   bases: [Pt, Pt];
+  /**
+   * Second base sites, with room for a Command Post and a mineral line.
+   *
+   * Always in mirrored pairs, canonical entry first — the mineral line at an
+   * odd index is laid out reflected, so a pair is an exact 180-degree rotation
+   * of each other rather than merely the same shape in the same orientation.
+   */
+  expansions: Pt[];
   lanes: LaneSpec[];
   clearings: { at: Pt; radius: number }[];
 }
@@ -71,6 +79,14 @@ const CONNECTOR_RADIUS = 3;
 const BASE_RADIUS = 11;
 /** Pockets off the lanes. */
 const CLEARING_RADIUS = 4;
+/**
+ * The pocket an expansion sits in.
+ *
+ * Wide enough for a Command Post, its mineral line, and room to walk around
+ * both — a base site you cannot actually finish building on is worse than no
+ * base site at all.
+ */
+const EXPANSION_RADIUS = 10;
 
 /** Cliffs stop getting taller past this many tiles from open ground. */
 const MAX_ELEVATION = 6;
@@ -201,17 +217,25 @@ export function buildLayout(size: number): Layout {
 
   const lanes: LaneSpec[] = [middle, outer, river, ...connectors];
 
+  // The expansion sits in the pocket the outer connector cuts, roughly a third
+  // of the way out from home. Off both lanes, so taking it is a decision rather
+  // than something that happens on the way past — but with an entrance at each
+  // end, so holding it costs something too.
+  const expansion = pointAt(connectors[1]!.points, 0.5);
+  const expansions: Pt[] = [expansion, mirror(expansion, size)];
+
   // Clearings: pockets of open ground where corridors meet. Somewhere to stage
   // an army, or put a forward building, that is not a chokepoint.
   const clearings = [
-    ...connectors.map((c) => ({ at: pointAt(c.points, 0.5), radius: CLEARING_RADIUS })),
+    { at: pointAt(connectors[0]!.points, 0.5), radius: CLEARING_RADIUS },
+    { at: expansion, radius: EXPANSION_RADIUS },
     // Where the river meets the outer lane — the map's two far corners.
     { at: cornerLow, radius: CLEARING_RADIUS + 2 },
     // The centre crossroads.
     { at: mid, radius: CLEARING_RADIUS + 2 },
   ];
 
-  return { bases: [a, b], lanes, clearings };
+  return { bases: [a, b], expansions, lanes, clearings };
 }
 
 /**
@@ -225,7 +249,7 @@ export function carveLayout(
   elevation: Uint8Array,
   size: number,
   seed: number,
-): { bases: [Pt, Pt]; layout: Layout } {
+): { bases: [Pt, Pt]; expansions: Pt[]; layout: Layout } {
   tiles.fill(Tile.Cliff);
 
   const layout = buildLayout(size);
@@ -291,7 +315,7 @@ export function carveLayout(
   }
 
   raiseCliffs(tiles, elevation, size);
-  return { bases: layout.bases, layout };
+  return { bases: layout.bases, expansions: layout.expansions, layout };
 }
 
 /**

@@ -35,6 +35,9 @@ const BUILD_MENU: { type: EntityType; key: string }[] = [
   { type: EntityType.Depot, key: 'D' },
   { type: EntityType.Barracks, key: 'B' },
   { type: EntityType.Turret, key: 'T' },
+  // A Command Post can go anywhere, like any other structure — what makes the
+  // expansion sites worth walking to is the mineral line already sitting there.
+  { type: EntityType.CommandPost, key: 'C' },
 ];
 
 class Game {

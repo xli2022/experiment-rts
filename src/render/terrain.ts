@@ -24,17 +24,40 @@ const CLIFF_SIDE = 0x424c5c;
  * Height of a cliff tile one step in from open ground.
  *
  * The camera looks down at 52 degrees, so a wall of height H hides about 0.8H
- * tiles of ground behind it. These numbers top out around 3 units — enough for
- * terrain to have presence, little enough that a ridge never swallows the far
- * side of a lane.
+ * tiles of ground behind it — enough reason on its own not to let ridges grow
+ * without limit.
  */
-const CLIFF_BASE_HEIGHT = 1.0;
+const CLIFF_BASE_HEIGHT = 0.85;
 /** Extra height per step further from open ground. */
-const CLIFF_STEP_HEIGHT = 0.45;
+const CLIFF_STEP_HEIGHT = 0.42;
+/**
+ * Height stops climbing this far in from open ground.
+ *
+ * Elevation keeps counting past here (the generator goes to 6) and colour keeps
+ * ramping with it, but the height saturates, so a massif is a plateau rather
+ * than a tower. All the terracing a player ever sees is in the first few tiles
+ * off a lane anyway — the interior is only ever viewed as a skyline.
+ */
+const CLIFF_MAX_STEPS = 4;
 /** Matches `MAX_ELEVATION` in the generator; used only to normalise colour. */
 const MAX_CLIFF_STEP = 6;
 /** How much of its colour a cliff keeps once seen but no longer observed. */
 const FOGGED_CLIFF_SHADE = 0.42;
+
+/** Drawn height of a cliff tile that is `elevation` steps from open ground. */
+export function cliffHeightFor(elevation: number): number {
+  const step = Math.min(Math.max(1, elevation), CLIFF_MAX_STEPS);
+  return CLIFF_BASE_HEIGHT + (step - 1) * CLIFF_STEP_HEIGHT;
+}
+
+/**
+ * The tallest any terrain gets.
+ *
+ * Exported because air units have to clear it. Left as two independent numbers
+ * they drifted apart the moment the map gained elevation, and gunships flew
+ * through ridges.
+ */
+export const MAX_CLIFF_HEIGHT = cliffHeightFor(CLIFF_MAX_STEPS);
 
 export class TerrainRenderer {
   readonly group = new THREE.Group();
@@ -174,9 +197,7 @@ export class TerrainRenderer {
       const tx = map.tileXOf(t);
       const ty = map.tileYOf(t);
       const step = Math.max(1, map.elevation[t]!);
-      const height = CLIFF_BASE_HEIGHT + (step - 1) * CLIFF_STEP_HEIGHT;
-
-      matrix.makeScale(1, height, 1);
+      matrix.makeScale(1, cliffHeightFor(step), 1);
       matrix.setPosition(tx + 0.5, 0, ty + 0.5);
       mesh.setMatrixAt(k, matrix);
 

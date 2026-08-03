@@ -256,6 +256,9 @@ function productionSystem(world: World): void {
     const spawn = spawnPointFor(world, i);
     const id = pool.spawn(unitType, owner, spawn.x, spawn.y);
     if (id === NO_ENTITY) continue; // pool full; retry next tick
+    // Facing out of the building it came from, so a unit does not have to turn
+    // around before it can walk anywhere — and so it mirrors with the spawn.
+    pool.faceY[id & 0xffff] = fromInt(spawn.faceY);
 
     pool.prodRemove(i, 0);
     pool.prodProgress[i] = 0;
@@ -264,18 +267,27 @@ function productionSystem(world: World): void {
 }
 
 /**
- * Where a newly trained unit appears.
+ * Where a newly trained unit appears, and which way it faces.
  *
- * Just below the building's footprint, nudged by the current queue length so a
- * batch does not stack perfectly on one point. Uses only integer state, no RNG,
- * so it is reproducible.
+ * Clear of the building's footprint on the side facing the middle of the map,
+ * nudged by the tick so a batch does not stack perfectly on one point. Uses only
+ * integer state, no RNG, so it is reproducible.
+ *
+ * The side matters. Always spawning on the +Y side put one player's units four
+ * tiles nearer the front every time they trained and the other player's four
+ * tiles further — on a rotationally symmetric map that is a standing advantage
+ * to whoever happens to be in the top-left corner. Choosing the side by which
+ * half of the map the building sits in makes the rule rotate with everything
+ * else.
  */
-const spawnOut = { x: 0, y: 0 };
+const spawnOut = { x: 0, y: 0, faceY: 0 };
 function spawnPointFor(world: World, buildingIndex: number): typeof spawnOut {
   const pool = world.pool;
   const def = defOf(pool.type[buildingIndex]! as EntityType);
   const spread = (world.tick + buildingIndex) % 5;
-  spawnOut.x = pool.posX[buildingIndex]! + fromInt(spread - 2);
-  spawnOut.y = pool.posY[buildingIndex]! + fromInt(def.footprint);
+  const towardCentre = pool.posY[buildingIndex]! < fromInt(world.map.height >> 1) ? 1 : -1;
+  spawnOut.x = pool.posX[buildingIndex]! + fromInt((spread - 2) * towardCentre);
+  spawnOut.y = pool.posY[buildingIndex]! + fromInt(def.footprint * towardCentre);
+  spawnOut.faceY = towardCentre;
   return spawnOut;
 }
