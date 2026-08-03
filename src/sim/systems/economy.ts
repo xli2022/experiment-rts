@@ -148,7 +148,16 @@ function nearestPatch(world: World, i: number): number {
   return best;
 }
 
-function inReach(world: World, a: number, b: number, extra: number): boolean {
+/**
+ * Is `a` close enough to `b` to work on it, given that order's slack?
+ *
+ * Exported because the HUD has to ask the same question to tell a worker still
+ * walking to a site apart from one already building it. Answering it a second
+ * time in the UI would let the two drift, and a worker reported as building
+ * while it is still walking is exactly the misinformation the status line
+ * exists to prevent.
+ */
+export function inReach(world: World, a: number, b: number, extra: number): boolean {
   const pool = world.pool;
   const defA = defOf(pool.type[a]! as EntityType);
   const defB = defOf(pool.type[b]! as EntityType);

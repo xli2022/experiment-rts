@@ -17,6 +17,7 @@ import type { World } from '../sim/world.js';
 import { PLAYER_COLOURS, RESOURCE_COLOUR } from '../render/models/procedural.js';
 import { fullscreenSupported, isFullscreen, onFullscreenChange, toggleFullscreen } from './fullscreen.js';
 import { audio } from '../audio/audio.js';
+import { activityOf } from './status.js';
 
 export interface CommandButton {
   key: string;
@@ -213,12 +214,14 @@ export class Hud {
     const counts = new Map<EntityType, number>();
     let totalHp = 0;
     let maxHp = 0;
+    let idle = 0;
     for (const i of selected) {
       if (world.pool.alive[i] !== 1) continue;
       const type = world.pool.type[i]! as EntityType;
       counts.set(type, (counts.get(type) ?? 0) + 1);
       totalHp += world.pool.hp[i]!;
       maxHp += defOf(type).maxHp;
+      if (activityOf(world, i) === 'idle') idle++;
     }
 
     if (selected.size === 1) {
@@ -230,7 +233,11 @@ export class Hud {
       if (type === EntityType.MineralPatch) {
         parts.push(`${world.pool.resourceAmount[i]} minerals left`);
       }
-      if (world.pool.carrying[i]! > 0) parts.push(`carrying ${world.pool.carrying[i]}`);
+      // What it is doing, which for a worker is almost never visible from the
+      // model alone — walking to a site, building, mining and repairing all
+      // look like standing about.
+      const activity = activityOf(world, i);
+      if (activity) parts.push(activity);
       if (def.isBuilding && world.pool.buildState[i] !== BuildState.Complete) {
         const pct = Math.floor((world.pool.buildProgress[i]! / def.buildTicks) * 100);
         parts.push(`under construction ${pct}%`);
@@ -245,7 +252,11 @@ export class Hud {
         .map(([type, n]) => `${n} ${defOf(type).name}`)
         .join(', ');
       this.selectionTitle.textContent = `${selected.size} selected`;
-      this.selectionDetail.textContent = `${summary} · ${totalHp}/${maxHp} HP`;
+      // At squad scale the useful question is not what each one is doing but
+      // whether any of them is doing nothing, so only the idle count survives.
+      const detail = [summary, `${totalHp}/${maxHp} HP`];
+      if (idle > 0) detail.push(`${idle} idle`);
+      this.selectionDetail.textContent = detail.join(' · ');
     }
   }
 

@@ -29,6 +29,11 @@ between V8, SpiderMonkey and JavaScriptCore.
 check — it is the thing standing between us and a desync bug that only
 reproduces when a Chrome player faces a Firefox player.
 
+It scans text, deliberately, so that `await import(...)` cannot slip past a
+parser-based check. The cost is that prose matches too: a comment containing the
+words `from "something"` is read as an import of `something`. Reword rather than
+loosening the scan.
+
 ### No trigonometry
 
 The simulation stores facing as a **normalised vector**, never an angle, and
