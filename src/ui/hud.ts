@@ -376,11 +376,13 @@ export class Hud {
         const explored = !fog || fog.isExploredAt(x, y);
         if (!explored) continue;
         if (world.map.tiles[world.map.index(x, y)] === 1) {
-          ctx.fillStyle = '#39414f';
+          // Cliff darker than ground, so the lanes read as the bright channels
+          // they are. Drawn the other way round the eye follows the rock.
+          ctx.fillStyle = '#232b38';
         } else {
           // Explored ground is drawn faintly so the shape of the map is
           // recoverable from memory without revealing what is on it.
-          ctx.fillStyle = fog && !fog.isVisibleAt(x + 0.5, y + 0.5) ? '#1d2430' : '#26303e';
+          ctx.fillStyle = fog && !fog.isVisibleAt(x + 0.5, y + 0.5) ? '#3a4759' : '#4d6079';
         }
         ctx.fillRect(x * scale, y * scale, step * scale, step * scale);
       }

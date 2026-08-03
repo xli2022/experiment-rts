@@ -45,6 +45,37 @@ are a rendering concern; convert at the boundary.
 - Squared distances overflow int32 at map scale, so use `vecLenSqRaw` /
   `sqRange`, which stay in exact float64 integer range and compare safely.
 
+## Map generation
+
+`src/sim/mapgen.ts` carves lanes out of a solid block. The one rule: **every
+write opens a tile and its 180-degree opposite**, inside a single `open()`. That
+is the entire symmetry guarantee, and it must stay that way — lanes can then
+wobble, overlap, and be carved in any order and the halves still come out
+bit-identical. The previous approach wrote each shape twice and trusted the
+copies to agree; they diverged on 926 tiles the moment the corridor brush gained
+a random wobble, because each copy drew its own wobble from the same stream.
+
+`map.elevation` is cosmetic and not checksummed — the simulation decides movement
+from walkability alone — but it is still computed deterministically, because two
+peers rendering visibly different terrain would look exactly like a desync.
+
+## Rendering gotchas worth not rediscovering
+
+- **`DataTexture` does not flip.** `CanvasTexture` is uploaded with three.js's
+  default vertical flip and `DataTexture` is not, so a data-backed overlay on the
+  same ground plane needs its rows written bottom-up. The fog got this wrong and
+  lifted over the mirror image of where the player actually was — which on a
+  rotationally symmetric map reads as "the fog is upside down". See
+  `tests/fog.test.ts`.
+- **Anything floating above a unit is UI, so place it in screen space.** Offset
+  along the camera's own up vector, not world Y: world Y projects to a slanted
+  screen direction away from the centre of the view, so health bars drifted
+  sideways off their units. Size them per-depth too, or they merge into a
+  hairline when zoomed out.
+- **The fog plane is flat, and cliffs are not.** Terrain with height stands
+  straight through the shroud, so cliffs are shaded to match the fog rather than
+  covered by it (`TerrainRenderer.applyFog`).
+
 ## Verifying determinism
 
 ```sh

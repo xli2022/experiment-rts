@@ -596,6 +596,9 @@ class Game {
     this.camera.update(dtMs / 1000);
     this.projectiles.update(dtMs);
     this.fog.refresh();
+    // Cliffs have height and so stand through the fog plane; they are shaded to
+    // match it instead of being covered by it.
+    this.terrain.applyFog(this.fog);
     this.selection.prune(this.sim.world);
 
     this.entities.update(

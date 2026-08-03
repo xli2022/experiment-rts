@@ -216,6 +216,12 @@ export class EntityRenderer {
     const pool = world.pool;
     const a = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
 
+    // Health bars are measured in screen space; these are what convert. The
+    // camera's basis is constant across the frame, so it is resolved once.
+    barForward.set(0, 0, -1).applyQuaternion(camera.quaternion);
+    // Perspective term 1/tan(fov/2): NDC height = world height * this / depth.
+    const focalScale = camera.projectionMatrix.elements[5] || 1;
+
     for (let i = 0; i < pool.count; i++) {
       if (pool.alive[i] !== 1) continue;
       // Fog hides enemies by not drawing them. Covering them with a dark plane
@@ -289,24 +295,44 @@ export class EntityRenderer {
       const damaged = pool.hp[i]! < def.maxHp;
       if ((damaged || selected.has(i)) && barCount < POOL_CAPACITY && def.maxHp > 1) {
         const frac = Math.max(0, Math.min(1, pool.hp[i]! / def.maxHp));
-        const width = def.isBuilding ? 2.0 : 0.9;
-        const y = spec.height + 0.35 + altitude;
 
-        // Billboard the bar, then step half its width along the camera's own
-        // right vector to place the left edge. Offsetting in world X instead
-        // only happens to look right while the camera faces one direction.
+        // The bar is a piece of UI that happens to live in the scene, so it is
+        // sized in *screen* units and converted to world units at this entity's
+        // depth. Sized in world units it was a merged hairline when zoomed out
+        // and a banner when zoomed in.
         barRight.set(1, 0, 0).applyQuaternion(camera.quaternion);
-        const leftEdgeX = x - barRight.x * (width / 2);
-        const leftEdgeY = y - barRight.y * (width / 2);
-        const leftEdgeZ = z - barRight.z * (width / 2);
+        barUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
 
-        this.position.set(leftEdgeX, leftEdgeY, leftEdgeZ);
-        this.scale.set(width, 0.14, 1);
+        const headY = spec.height + altitude;
+        // Depth along the view axis, which is what perspective divides by.
+        const viewDepth =
+          (x - camera.position.x) * barForward.x +
+          (headY - camera.position.y) * barForward.y +
+          (z - camera.position.z) * barForward.z;
+        // World units per unit of normalised device height, at this depth.
+        const perNdc = Math.max(0.001, viewDepth) / focalScale;
+
+        const width = (def.isBuilding ? BAR_WIDTH_NDC * 1.8 : BAR_WIDTH_NDC) * perNdc;
+        const thickness = BAR_HEIGHT_NDC * perNdc;
+        const lift = BAR_LIFT_NDC * perNdc;
+
+        // Step up along the camera's own up vector, not world Y. World Y
+        // projects to a slanted screen direction for anything away from the
+        // centre of the view, which left every bar drifting sideways off its
+        // unit — worse the further out and the closer in the camera was.
+        // Then step back half a width along camera-right to put the left edge
+        // where the bar should start, since the quad grows rightward.
+        this.position.set(
+          x + barUp.x * lift - barRight.x * (width / 2),
+          headY + barUp.y * lift - barRight.y * (width / 2),
+          z + barUp.z * lift - barRight.z * (width / 2),
+        );
+        this.scale.set(width, thickness, 1);
         this.matrix.compose(this.position, camera.quaternion, this.scale);
         this.healthBg.setMatrixAt(barCount, this.matrix);
 
         // Same left edge; only the width changes, so the bar drains rightward.
-        this.scale.set(Math.max(0.0001, width * frac), 0.14, 1);
+        this.scale.set(Math.max(0.0001, width * frac), thickness, 1);
         this.matrix.compose(this.position, camera.quaternion, this.scale);
         this.healthFill.setMatrixAt(barCount, this.matrix);
 
@@ -346,9 +372,23 @@ export class EntityRenderer {
 const UP = new THREE.Vector3(0, 1, 0);
 /** How high above the ground air units are drawn. */
 const FLIGHT_ALTITUDE = 2.4;
-/** Scratch for the camera-space right vector used to anchor health bars. */
+/** Scratch for the camera basis vectors used to place health bars. */
 const barRight = new THREE.Vector3();
+const barUp = new THREE.Vector3();
+const barForward = new THREE.Vector3();
 const IDENTITY = new THREE.Quaternion();
+
+/**
+ * Health bar geometry, in normalised device units.
+ *
+ * NDC height spans 2 across the viewport, so 0.1 is a twentieth of the screen
+ * height — about 45 px at 900. Expressing the bar this way is what keeps it the
+ * same size whether the camera is at its closest or fully pulled back.
+ */
+const BAR_WIDTH_NDC = 0.1;
+const BAR_HEIGHT_NDC = 0.014;
+/** Gap between the top of the model and the bar. */
+const BAR_LIFT_NDC = 0.032;
 
 function poolKey(type: EntityType, part: number, owner: number): string {
   return `${type}:${part}:${owner}`;

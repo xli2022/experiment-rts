@@ -50,6 +50,14 @@ export class FogRenderer {
   private readonly disposables: { dispose(): void }[] = [];
   private dirty = true;
 
+  /**
+   * Bumped every time visibility changes.
+   *
+   * The terrain renderer shades its cliffs from this state and needs to know
+   * when to bother — comparing a counter is cheaper than diffing 16k tiles.
+   */
+  version = 0;
+
   constructor(map: GameMap) {
     this.width = map.width;
     this.height = map.height;
@@ -113,6 +121,7 @@ export class FogRenderer {
     }
 
     this.dirty = true;
+    this.version++;
   }
 
   /** Mark every tile within `radius` of a world position as currently visible. */
@@ -137,15 +146,28 @@ export class FogRenderer {
     }
   }
 
-  /** Push the visibility state to the GPU. Call once per rendered frame. */
+  /**
+   * Push the visibility state to the GPU. Call once per rendered frame.
+   *
+   * Rows are written bottom-up. Texture V runs opposite to tile Y on this plane,
+   * and unlike the canvas-backed ground texture a `DataTexture` is uploaded
+   * without three.js's default vertical flip — so writing rows in the obvious
+   * order mirrors the fog about the map's centre line. That is a quiet bug: the
+   * shroud still looks like a shroud, it just lifts over the wrong corner, and
+   * in a mirror match each player ends up watching the other's half.
+   */
   refresh(): void {
     if (!this.dirty) return;
     this.dirty = false;
     const state = this.state;
     const px = this.pixels;
-    for (let i = 0; i < state.length; i++) {
-      const s = state[i]!;
-      px[i * 4 + 3] = s === VISIBLE ? 0 : s === EXPLORED ? EXPLORED_ALPHA : UNEXPLORED_ALPHA;
+    for (let tz = 0; tz < this.height; tz++) {
+      const src = tz * this.width;
+      const dst = (this.height - 1 - tz) * this.width;
+      for (let tx = 0; tx < this.width; tx++) {
+        const s = state[src + tx]!;
+        px[(dst + tx) * 4 + 3] = s === VISIBLE ? 0 : s === EXPLORED ? EXPLORED_ALPHA : UNEXPLORED_ALPHA;
+      }
     }
     this.texture.needsUpdate = true;
   }

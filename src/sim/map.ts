@@ -21,7 +21,7 @@
 
 import { checksumArray, checksumInit, checksumU32 } from './checksum.js';
 import { toInt, type Fix } from './fixed.js';
-import { Rng } from './rng.js';
+import { carveLayout } from './mapgen.js';
 import { Tile } from './types.js';
 
 export const MAP_SIZE = 128;
@@ -163,72 +163,23 @@ export class GameMap {
 /**
  * Generate a symmetric two-player map from a seed.
  *
- * Both peers run this with the same seed during the lobby handshake and must
- * produce byte-identical terrain, so it uses only the seeded RNG.
+ * The layout is carved rather than scattered — see `mapgen.ts` for the shape and
+ * why. Both peers run this with the same seed during the lobby handshake and
+ * must produce byte-identical terrain, so it uses only the seeded RNG.
  */
 export function generateMap(seed: number, size = MAP_SIZE): GameMap {
   const map = new GameMap(size);
-  const rng = new Rng(seed ^ 0x5f3a7c1d);
-  const w = map.width;
-  const h = map.height;
 
-  // Start locations, placed symmetrically on the diagonal.
-  const inset = Math.floor(size * 0.16);
-  const a: StartLocation = { tileX: inset, tileY: inset };
-  const b: StartLocation = { tileX: w - 1 - inset, tileY: h - 1 - inset };
-  map.starts.push(a, b);
+  const { bases } = carveLayout(map.tiles, map.elevation, size, seed);
+  map.starts.push(
+    { tileX: bases[0].x, tileY: bases[0].y },
+    { tileX: bases[1].x, tileY: bases[1].y },
+  );
 
-  /** Reflect a tile through the map centre. */
-  const mirror = (tx: number, ty: number): [number, number] => [w - 1 - tx, h - 1 - ty];
-
-  const setCliff = (tx: number, ty: number): void => {
-    if (!map.inBounds(tx, ty)) return;
-    const i = map.index(tx, ty);
-    map.tiles[i] = Tile.Cliff;
-    map.elevation[i] = 1;
-  };
-
-  // Scatter rock clusters across one half; every cluster is mirrored, so the
-  // two halves are identical under 180-degree rotation.
-  const clusters = 26;
-  for (let c = 0; c < clusters; c++) {
-    const cx = rng.nextInt(w);
-    const cy = rng.nextInt(h);
-    // Only seed clusters from one half; the mirror fills the other.
-    if (cy * w + cx > ((h * w) >> 1)) continue;
-
-    const blobRadius = rng.nextRange(2, 5);
-    for (let dy = -blobRadius; dy <= blobRadius; dy++) {
-      for (let dx = -blobRadius; dx <= blobRadius; dx++) {
-        if (dx * dx + dy * dy > blobRadius * blobRadius) continue;
-        // Ragged edges, so blobs do not read as circles.
-        if (rng.nextInt(100) < 18) continue;
-        const tx = cx + dx;
-        const ty = cy + dy;
-        setCliff(tx, ty);
-        const [mx, my] = mirror(tx, ty);
-        setCliff(mx, my);
-      }
-    }
-  }
-
-  // Carve the start areas clear again, generously, so bases always have room.
-  const clearRadius = 12;
-  for (const s of map.starts) {
-    for (let dy = -clearRadius; dy <= clearRadius; dy++) {
-      for (let dx = -clearRadius; dx <= clearRadius; dx++) {
-        if (dx * dx + dy * dy > clearRadius * clearRadius) continue;
-        const tx = s.tileX + dx;
-        const ty = s.tileY + dy;
-        if (!map.inBounds(tx, ty)) continue;
-        const i = map.index(tx, ty);
-        map.tiles[i] = Tile.Ground;
-        map.elevation[i] = 0;
-      }
-    }
-  }
-
-  ensureConnected(map, a, b);
+  // The lanes are carved to connect by construction, but a jitter that pinched a
+  // corridor shut would be a silent, unwinnable match — so it is still checked,
+  // and repaired if it ever happens.
+  ensureConnected(map, map.starts[0]!, map.starts[1]!);
   // Terrain is final from here on; freeze its hash so per-tick checksums are cheap.
   map.sealTerrain();
   return map;
@@ -272,20 +223,30 @@ function ensureConnected(map: GameMap, a: StartLocation, b: StartLocation): void
   }
 
   // Unreachable: cut a three-tile-wide corridor along the line between starts.
+  // Mirrored as it goes, like every other write to the grid — a repair that
+  // opened one side only would hand a player a shortcut nobody designed.
   let x = a.tileX;
   let y = a.tileY;
   while (x !== b.tileX || y !== b.tileY) {
     for (let dy = -1; dy <= 1; dy++) {
       for (let dx = -1; dx <= 1; dx++) {
-        const tx = x + dx;
-        const ty = y + dy;
-        if (!map.inBounds(tx, ty)) continue;
-        const i = map.index(tx, ty);
-        map.tiles[i] = Tile.Ground;
-        map.elevation[i] = 0;
+        openBoth(map, x + dx, y + dy);
       }
     }
     if (x !== b.tileX) x += x < b.tileX ? 1 : -1;
     if (y !== b.tileY) y += y < b.tileY ? 1 : -1;
+  }
+}
+
+function openBoth(map: GameMap, tx: number, ty: number): void {
+  const w = map.width;
+  const h = map.height;
+  if (tx < 0 || ty < 0 || tx >= w || ty >= h) return;
+  for (let k = 0; k < 2; k++) {
+    const x = k === 0 ? tx : w - 1 - tx;
+    const y = k === 0 ? ty : h - 1 - ty;
+    const i = map.index(x, y);
+    map.tiles[i] = Tile.Ground;
+    map.elevation[i] = 0;
   }
 }

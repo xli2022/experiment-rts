@@ -56,6 +56,19 @@ rather than a secret: peer-to-peer lockstep gives every client the whole game
 state by construction, exactly as the genre's originals did. What it buys is
 scouting and map control.
 
+### The map
+
+Bases sit in opposite corners, joined by **three routes** — a middle lane through
+the centre and two outer lanes that hug the map edge — plus a corner-to-corner
+river crossing all three at the centre, and short connectors between mid and the
+outer lanes. Everything else is cliff.
+
+That means no single blockade closes the map, the centre is a four-way crossroads
+worth holding, and a flank costs a real commitment rather than a free rotation.
+The layout is generated, not authored: the whole map is carved with a brush that
+opens every tile *and its 180-degree opposite*, so the two halves are identical
+by construction rather than by inspection.
+
 ## Multiplayer without a server
 
 Three ways to play, all sharing one code path:

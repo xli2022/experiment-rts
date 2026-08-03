@@ -17,17 +17,78 @@ import { Tile } from '../sim/types.js';
 const GROUND_BASE = '#3f5a44';
 const GROUND_ALT = '#44614a';
 const RESOURCE_TINT = '#3c5f60';
-const CLIFF_TOP = 0x6b7280;
-const CLIFF_SIDE = 0x4b5563;
+const CLIFF_TOP = 0x7c8595;
+const CLIFF_SIDE = 0x424c5c;
+
+/**
+ * Height of a cliff tile one step in from open ground.
+ *
+ * The camera looks down at 52 degrees, so a wall of height H hides about 0.8H
+ * tiles of ground behind it. These numbers top out around 3 units — enough for
+ * terrain to have presence, little enough that a ridge never swallows the far
+ * side of a lane.
+ */
+const CLIFF_BASE_HEIGHT = 1.0;
+/** Extra height per step further from open ground. */
+const CLIFF_STEP_HEIGHT = 0.45;
+/** Matches `MAX_ELEVATION` in the generator; used only to normalise colour. */
+const MAX_CLIFF_STEP = 6;
+/** How much of its colour a cliff keeps once seen but no longer observed. */
+const FOGGED_CLIFF_SHADE = 0.42;
 
 export class TerrainRenderer {
   readonly group = new THREE.Group();
   private readonly disposables: { dispose(): void }[] = [];
 
+  /** Cliff instances, and the map tile each one stands on. */
+  private cliffs: THREE.InstancedMesh | null = null;
+  private cliffTileX = new Int32Array(0);
+  private cliffTileY = new Int32Array(0);
+  /** Each cliff's unfogged colour, so shading can be reapplied from scratch. */
+  private cliffTone = new Float32Array(0);
+  private fogVersion = -1;
+
   constructor(map: GameMap) {
     this.group.add(this.buildGround(map));
     const cliffs = this.buildCliffs(map);
-    if (cliffs) this.group.add(cliffs);
+    if (cliffs) {
+      this.cliffs = cliffs;
+      this.group.add(cliffs);
+    }
+  }
+
+  /**
+   * Darken cliffs the player has not seen.
+   *
+   * The fog is a flat plane just above the ground, so anything with height
+   * stands straight through it. With a map that is more than half cliff, that
+   * handed the whole layout to the player on the first frame — every ridge and
+   * every lane, before a single scout moved. Shading the instances instead keeps
+   * fog to one draw call and makes unexplored rock read as the same void as
+   * unexplored ground.
+   */
+  applyFog(fog: {
+    version: number;
+    isExploredAt(tx: number, tz: number): boolean;
+    isVisibleAt(x: number, z: number): boolean;
+  }): void {
+    const mesh = this.cliffs;
+    if (!mesh || fog.version === this.fogVersion) return;
+    this.fogVersion = fog.version;
+
+    const colour = new THREE.Color();
+    const low = new THREE.Color(CLIFF_SIDE);
+    const high = new THREE.Color(CLIFF_TOP);
+    for (let k = 0; k < this.cliffTone.length; k++) {
+      const tx = this.cliffTileX[k]!;
+      const ty = this.cliffTileY[k]!;
+      let shade = 0;
+      if (fog.isVisibleAt(tx + 0.5, ty + 0.5)) shade = 1;
+      else if (fog.isExploredAt(tx, ty)) shade = FOGGED_CLIFF_SHADE;
+      colour.copy(low).lerp(high, this.cliffTone[k]!).multiplyScalar(shade);
+      mesh.setColorAt(k, colour);
+    }
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   }
 
   /**
@@ -75,7 +136,15 @@ export class TerrainRenderer {
     return mesh;
   }
 
-  /** All cliff tiles as one instanced box mesh. */
+  /**
+   * All cliff tiles as one instanced box mesh, scaled by elevation.
+   *
+   * `map.elevation` holds each cliff tile's distance from open ground, so
+   * scaling height by it turns what would be a uniform grey wall into massifs
+   * that rise away from the lanes. It costs nothing — the same instance count,
+   * one scale per matrix — and it is what makes a corridor read as a canyon
+   * from the game camera rather than as a gap in a hedge.
+   */
   private buildCliffs(map: GameMap): THREE.InstancedMesh | null {
     const tiles: number[] = [];
     for (let i = 0; i < map.tiles.length; i++) {
@@ -83,22 +152,44 @@ export class TerrainRenderer {
     }
     if (tiles.length === 0) return null;
 
-    const geometry = new THREE.BoxGeometry(1, 1.4, 1);
+    // Unit cube sitting on the ground plane, so a Y scale raises the top face
+    // without lifting the block off the floor.
+    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    geometry.translate(0, 0.5, 0);
     const material = new THREE.MeshLambertMaterial({ color: CLIFF_TOP });
     this.disposables.push(geometry, material);
 
     const mesh = new THREE.InstancedMesh(geometry, material, tiles.length);
     const matrix = new THREE.Matrix4();
     const colour = new THREE.Color();
+    const low = new THREE.Color(CLIFF_SIDE);
+    const high = new THREE.Color(CLIFF_TOP);
+
+    this.cliffTileX = new Int32Array(tiles.length);
+    this.cliffTileY = new Int32Array(tiles.length);
+    this.cliffTone = new Float32Array(tiles.length);
 
     for (let k = 0; k < tiles.length; k++) {
       const t = tiles[k]!;
-      const x = map.tileXOf(t) + 0.5;
-      const z = map.tileYOf(t) + 0.5;
-      matrix.makeTranslation(x, 0.7, z);
+      const tx = map.tileXOf(t);
+      const ty = map.tileYOf(t);
+      const step = Math.max(1, map.elevation[t]!);
+      const height = CLIFF_BASE_HEIGHT + (step - 1) * CLIFF_STEP_HEIGHT;
+
+      matrix.makeScale(1, height, 1);
+      matrix.setPosition(tx + 0.5, 0, ty + 0.5);
       mesh.setMatrixAt(k, matrix);
-      // Alternate two greys so a rock field has some visual break-up.
-      colour.setHex((map.tileXOf(t) + map.tileYOf(t)) % 3 === 0 ? CLIFF_SIDE : CLIFF_TOP);
+
+      // Lighter with height, plus a faint per-tile break-up so a large massif
+      // does not read as one flat-shaded lump.
+      let tone = (step - 1) / (MAX_CLIFF_STEP - 1);
+      if ((tx + ty) % 3 === 0) tone *= 0.82;
+      tone = Math.min(1, tone);
+
+      this.cliffTileX[k] = tx;
+      this.cliffTileY[k] = ty;
+      this.cliffTone[k] = tone;
+      colour.copy(low).lerp(high, tone);
       mesh.setColorAt(k, colour);
     }
 
