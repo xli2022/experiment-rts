@@ -51,7 +51,7 @@ export function generateBotCommands(world: World, player: PlayerId): Command[] {
   // command streams distinguishable in replays.
   if ((world.tick + player) % THINK_INTERVAL !== 0) return [];
   if (world.player(player).defeated) return [];
-  if (world.winner !== -1) return [];
+  if (world.matchOver) return [];
 
   const cmds: Command[] = [];
   const s = survey(world, player);
@@ -491,8 +491,24 @@ function findOpenTileNear(world: World, tx: number, ty: number): number {
 
 /** Send the army at the enemy once it is big enough to matter. */
 function manageArmy(world: World, player: PlayerId, s: Survey, cmds: Command[]): void {
-  if (s.army.length < ATTACK_ARMY_SIZE) return;
   if (s.enemyTargets.length === 0) return;
+
+  // Normally wait for a critical mass before committing. But once the map is
+  // mined out and there are no minerals banked, that army is never getting any
+  // bigger, and holding out for a threshold it can no longer reach turns a won
+  // position into a permanent draw — observed with a crippled opponent still
+  // standing because the winner was one unit short of attacking. With no way to
+  // reinforce, whatever is left goes in.
+  const cheapest = defOf(EntityType.Rifleman).mineralCost;
+  const canReinforce = s.patches.length > 0 || s.minerals >= cheapest;
+  const required = canReinforce ? ATTACK_ARMY_SIZE : 1;
+
+  // With the economy dead and no army left, workers are the only pieces on the
+  // board. They fight badly but they do fight, and a base full of them idling
+  // next to exhausted patches while the opponent's last buildings stand is a
+  // draw by inaction rather than a decision.
+  const attackers = s.army.length > 0 ? s.army : !canReinforce ? s.workers : [];
+  if (attackers.length < required) return;
   // Re-issue occasionally rather than every think tick, so units get a chance
   // to actually walk somewhere before being redirected.
   //
@@ -503,7 +519,7 @@ function manageArmy(world: World, player: PlayerId, s: Survey, cmds: Command[]):
 
   const pool = world.pool;
   const target = s.enemyTargets[0]!;
-  const units = s.army.map((i) => pool.idAt(i));
+  const units = attackers.map((i) => pool.idAt(i));
 
   cmds.push({
     type: CommandType.AttackMove,

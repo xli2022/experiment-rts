@@ -29,6 +29,7 @@ suite — see [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml).
 | Attack-move | `A` then click |
 | Stop / Hold | `S` / `H` |
 | Control groups | `Ctrl`+`1`–`9` to assign, `1`–`9` to recall |
+| Fullscreen | `F`, or the button top-right |
 | Cancel | `Esc` |
 
 Workers gather minerals and construct buildings. The Command Post trains

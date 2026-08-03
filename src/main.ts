@@ -26,6 +26,7 @@ import { ProjectileRenderer } from './render/projectiles.js';
 import { groundPointAt, pickAt, pickInBox, Selection } from './input/selection.js';
 import { Hud, type CommandButton } from './ui/hud.js';
 import { showLobby, type MatchSetup } from './ui/lobby.js';
+import { onFullscreenChange } from './ui/fullscreen.js';
 
 /** Buildings the player can place, in command-card order. */
 const BUILD_MENU: { type: EntityType; key: string }[] = [
@@ -115,6 +116,13 @@ class Game {
     this.attachInput(canvas);
     this.resize();
     window.addEventListener('resize', () => this.resize());
+    // Entering or leaving fullscreen changes the viewport. Most browsers also
+    // fire `resize`, but not all do so reliably, and a stale projection matrix
+    // leaves the game letterboxed or stretched.
+    onFullscreenChange(() => {
+      // The window dimensions update a frame after the event.
+      requestAnimationFrame(() => this.resize());
+    });
   }
 
   private addLights(): void {
@@ -228,6 +236,11 @@ class Game {
         break;
       case 'KeyA':
         if (this.selection.hasOwnUnits(this.sim.world)) this.attackMovePending = true;
+        break;
+      case 'KeyF':
+        // A keypress counts as the user gesture browsers require, so this is
+        // allowed to enter fullscreen where a programmatic call would be denied.
+        void this.hud.toggleFullscreen();
         break;
       default:
         break;
@@ -547,17 +560,30 @@ class Game {
 
   private checkResult(): void {
     if (this.finished) return;
-    const winner = this.sim.world.winner;
-    if (winner === NO_ENTITY) return;
+    if (!this.sim.world.matchOver) return;
 
     this.finished = true;
+    const winner = this.sim.world.winner;
+    const replay = [{ label: 'Play again', primary: true, onClick: () => location.reload() }];
+
+    // Both sides can be eliminated on the same tick, which is a draw rather
+    // than a win for nobody.
+    if (winner === NO_ENTITY) {
+      this.hud.showDialog(
+        'Draw',
+        'Both sides were wiped out with nothing left to rebuild from.',
+        replay,
+      );
+      return;
+    }
+
     const won = winner === this.localPlayer;
     this.hud.showDialog(
       won ? 'Victory' : 'Defeat',
       won
         ? 'Every enemy structure has been destroyed.'
         : 'All of your structures were destroyed.',
-      [{ label: 'Play again', primary: true, onClick: () => location.reload() }],
+      replay,
     );
   }
 

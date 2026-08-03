@@ -15,6 +15,7 @@ import { toFloat } from '../sim/fixed.js';
 import { BuildState, EntityType, NEUTRAL, type PlayerId } from '../sim/types.js';
 import type { World } from '../sim/world.js';
 import { PLAYER_COLOURS, RESOURCE_COLOUR } from '../render/models/procedural.js';
+import { fullscreenSupported, isFullscreen, onFullscreenChange, toggleFullscreen } from './fullscreen.js';
 
 export interface CommandButton {
   key: string;
@@ -38,6 +39,8 @@ export class Hud {
   private readonly minimap: HTMLCanvasElement;
   private readonly minimapCtx: CanvasRenderingContext2D;
   readonly marquee: HTMLElement;
+
+  private readonly fullscreenBtn: HTMLButtonElement;
 
   /** True while the pointer is over a HUD panel, to suppress world clicks. */
   pointerOverUi = false;
@@ -75,9 +78,12 @@ export class Hud {
         <div id="command-grid"></div>
       </div>
 
+      <button class="panel" id="fullscreen-btn" type="button"
+              title="Fullscreen (F)" aria-label="Toggle fullscreen"></button>
+
       <div class="panel" id="banner"></div>
       <div id="marquee"></div>
-      <div class="hint">Arrows / edge pan &nbsp;·&nbsp; wheel zoom &nbsp;·&nbsp; drag select &nbsp;·&nbsp; right-click order &nbsp;·&nbsp; A attack &nbsp;·&nbsp; S stop &nbsp;·&nbsp; Ctrl+1-9 groups</div>
+      <div class="hint">Arrows / edge pan &nbsp;·&nbsp; wheel zoom &nbsp;·&nbsp; drag select &nbsp;·&nbsp; right-click order &nbsp;·&nbsp; A attack &nbsp;·&nbsp; S stop &nbsp;·&nbsp; F fullscreen &nbsp;·&nbsp; Ctrl+1-9 groups</div>
       <div id="overlay" class="hidden"></div>
     `;
 
@@ -92,9 +98,20 @@ export class Hud {
     this.minimap = must(root, '#minimap') as HTMLCanvasElement;
     this.minimapCtx = this.minimap.getContext('2d')!;
 
+    this.fullscreenBtn = must(root, '#fullscreen-btn') as HTMLButtonElement;
+    if (fullscreenSupported()) {
+      this.fullscreenBtn.addEventListener('click', () => void this.toggleFullscreen());
+      // The browser can leave fullscreen without going through our button — Esc,
+      // or the user switching apps — so track the real state rather than ours.
+      onFullscreenChange(() => this.syncFullscreenLabel());
+      this.syncFullscreenLabel();
+    } else {
+      this.fullscreenBtn.style.display = 'none';
+    }
+
     // Panels swallow pointer events so a click on the command card never also
     // issues a world order behind it.
-    for (const sel of ['#resources', '#minimap-panel', '#command-panel']) {
+    for (const sel of ['#resources', '#minimap-panel', '#command-panel', '#fullscreen-btn']) {
       const panel = must(root, sel);
       panel.classList.add('interactive');
       panel.addEventListener('pointerenter', () => {
@@ -113,6 +130,19 @@ export class Hud {
     };
     this.minimap.addEventListener('pointerdown', handleMinimap);
     this.minimap.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
+  /** Enter or leave fullscreen. Safe to call from a click or a keypress. */
+  async toggleFullscreen(): Promise<void> {
+    await toggleFullscreen();
+    this.syncFullscreenLabel();
+  }
+
+  private syncFullscreenLabel(): void {
+    const active = isFullscreen();
+    // Arrows pointing inward mean "shrink", outward mean "grow".
+    this.fullscreenBtn.textContent = active ? '⤡' : '⛶';
+    this.fullscreenBtn.title = active ? 'Exit fullscreen (F)' : 'Fullscreen (F)';
   }
 
   updateResources(world: World): void {

@@ -384,6 +384,10 @@ function separate(world: World): void {
     if (pool.alive[i] !== 1) continue;
     const defI = defOf(pool.type[i]! as EntityType);
     if (defI.isBuilding) continue;
+    // Non-colliding units (workers) pass through everything else, so they are
+    // neither pushed nor pushing. They are still ejected from buildings and
+    // cliffs by clampToMap below.
+    if (!defI.collides) continue;
 
     const px = pool.posX[i]!;
     const py = pool.posY[i]!;
@@ -394,6 +398,7 @@ function separate(world: World): void {
       if (pool.alive[j] !== 1) return;
       const defJ = defOf(pool.type[j]! as EntityType);
       if (defJ.isBuilding) return;
+      if (!defJ.collides) return;
 
       const dx = pool.posX[j]! - px;
       const dy = pool.posY[j]! - py;

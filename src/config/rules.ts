@@ -22,6 +22,18 @@ export interface EntityDef {
   readonly type: EntityType;
   readonly name: string;
   readonly isBuilding: boolean;
+  /**
+   * Whether this entity pushes other units out of its way.
+   *
+   * Workers are deliberately false. A mineral line packs a dozen of them into a
+   * few tiles, all converging on the same patch from the same direction, and
+   * mutual push-apart turns that into a permanent traffic jam that costs far
+   * more income than the overlap costs realism. Letting them pass through each
+   * other is the standard fix and is what the genre does. It only affects
+   * unit-to-unit contact: buildings and terrain still block everyone, so nothing
+   * can walk through a wall.
+   */
+  readonly collides: boolean;
   readonly maxHp: number;
   /** Collision radius in world units. */
   readonly radius: Fix;
@@ -54,6 +66,7 @@ export const DEFS: readonly EntityDef[] = [
     type: EntityType.Worker,
     name: 'Worker',
     isBuilding: false,
+    collides: false,
     maxHp: 40,
     radius: fromFloat(0.32),
     footprint: 0,
@@ -73,6 +86,7 @@ export const DEFS: readonly EntityDef[] = [
     type: EntityType.Rifleman,
     name: 'Rifleman',
     isBuilding: false,
+    collides: true,
     maxHp: 45,
     radius: fromFloat(0.32),
     footprint: 0,
@@ -92,6 +106,7 @@ export const DEFS: readonly EntityDef[] = [
     type: EntityType.Brawler,
     name: 'Brawler',
     isBuilding: false,
+    collides: true,
     maxHp: 90,
     radius: fromFloat(0.42),
     footprint: 0,
@@ -111,6 +126,7 @@ export const DEFS: readonly EntityDef[] = [
     type: EntityType.CommandPost,
     name: 'Command Post',
     isBuilding: true,
+    collides: true,
     maxHp: 1500,
     radius: fromFloat(2.0),
     footprint: 4,
@@ -130,6 +146,7 @@ export const DEFS: readonly EntityDef[] = [
     type: EntityType.Depot,
     name: 'Supply Depot',
     isBuilding: true,
+    collides: true,
     maxHp: 500,
     radius: fromFloat(1.0),
     footprint: 2,
@@ -152,6 +169,7 @@ export const DEFS: readonly EntityDef[] = [
     type: EntityType.Barracks,
     name: 'Barracks',
     isBuilding: true,
+    collides: true,
     maxHp: 1000,
     radius: fromFloat(1.5),
     footprint: 3,
@@ -171,6 +189,7 @@ export const DEFS: readonly EntityDef[] = [
     type: EntityType.Turret,
     name: 'Turret',
     isBuilding: true,
+    collides: true,
     maxHp: 600,
     radius: fromFloat(1.0),
     footprint: 2,
@@ -190,6 +209,7 @@ export const DEFS: readonly EntityDef[] = [
     type: EntityType.MineralPatch,
     name: 'Mineral Patch',
     isBuilding: true, // static and blocks placement, though not player-owned
+    collides: true,
     maxHp: 1,
     radius: fromFloat(0.8),
     footprint: 2,

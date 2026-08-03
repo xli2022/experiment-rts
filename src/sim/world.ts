@@ -72,6 +72,15 @@ export class World {
   winner: PlayerId = NO_ENTITY;
 
   /**
+   * True once the match has ended, win or draw.
+   *
+   * Distinct from `winner` because a draw is a real outcome here: both players
+   * can be eliminated on the same tick, and "winner is nobody" must still stop
+   * the match rather than leave it running forever.
+   */
+  matchOver = false;
+
+  /**
    * Units waiting for an A* path, in request order.
    *
    * A plain array used as a FIFO. Pathfinding is budgeted per tick (see
@@ -147,6 +156,7 @@ export class World {
     h = checksumU32(h, this.tick);
     h = checksumU32(h, this.rng.state);
     h = checksumU32(h, this.winner);
+    h = checksumU32(h, this.matchOver ? 1 : 0);
     for (let p = 0; p < this.players.length; p++) {
       const ps = this.players[p]!;
       h = checksumU32(h, ps.minerals);
