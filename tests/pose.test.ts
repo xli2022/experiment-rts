@@ -1,0 +1,161 @@
+/**
+ * Which animation a unit plays, and why the old rule never showed a swing.
+ *
+ * Reported as "the melee unit moves toward its target and attacks, but the
+ * attack animation is not played". The clip was chosen from two things that
+ * merely *correlate* with fighting:
+ *
+ *   if (moving) run; else if (order is Attack/AttackMove) attack;
+ *
+ * Both halves are wrong, and either alone is enough to hide every swing:
+ *
+ * - A unit defending itself carries no attack order. It is idle, hitting
+ *   whatever walked into range — the most common fight in the game — so the
+ *   `else if` never fired.
+ * - Units in contact are shoved apart by separation every tick, so a brawler
+ *   in melee is never quite stationary and the `if` won anyway.
+ *
+ * The fix is to stop inferring: the simulation already publishes every shot it
+ * fires, so the swing is driven by the shot. These tests pin the rule, and pin
+ * the fact that the sim really does report the shot in the case that broke.
+ */
+
+import { describe, expect, it } from 'vitest';
+import { poseFor } from '../src/render/entities.js';
+import { defOf } from '../src/config/rules.js';
+import { Simulation } from '../src/sim/tick.js';
+import { EntityType, Order } from '../src/sim/types.js';
+
+const FIX = 65536;
+/** Roughly a sword-machine's attack clip. */
+const SWING = 1.5;
+/** Comfortably above MOVING_EPSILON: a unit genuinely under way. */
+const RUNNING = 0.05;
+/** The jitter separation imparts to units standing in a scrum. */
+const JOSTLE = 0.01;
+
+describe('choosing a clip', () => {
+  it('swings while a shot is still playing out, even while being jostled', () => {
+    // This is the regression. The old rule saw movement and ran.
+    const pose = poseFor(0.2, SWING, JOSTLE, 99);
+    expect(pose.clip).toBe('attack');
+  });
+
+  it('swings even mid-stride, so a unit that fires while closing still shows it', () => {
+    expect(poseFor(0.2, SWING, RUNNING, 99).clip).toBe('attack');
+  });
+
+  it('times the swing from the shot, so the blow lands with the damage', () => {
+    // Not from wall-clock: an animation free-running against the cooldown would
+    // land its hit at whatever point in the cycle it happened to be at.
+    for (const t of [0, 0.3, 1.4]) {
+      expect(poseFor(t, SWING, 0, 99).time).toBeCloseTo(t, 6);
+    }
+  });
+
+  it('holds the follow-through rather than restarting the wind-up', () => {
+    // A cooldown longer than the clip must not loop the swing.
+    expect(poseFor(0.5, SWING, 0, 99).loop).toBe(false);
+  });
+
+  it('goes back to running once the swing has played out', () => {
+    const after = poseFor(SWING + 0.01, SWING, RUNNING, 99);
+    expect(after.clip).toBe('run');
+    expect(after.loop).toBe(true);
+  });
+
+  it('idles on the first frame of the stride when still and not fighting', () => {
+    const idle = poseFor(SWING + 0.01, SWING, 0, 99);
+    expect(`${idle.clip} @ ${idle.time}`).toBe('run @ 0');
+  });
+
+  it('never asks for a swing a model does not have', () => {
+    // Duration 0 means the clip is missing; posing on it would read the wrong
+    // rows of the bone texture entirely.
+    expect(poseFor(0, 0, 0, 99).clip).toBe('run');
+  });
+
+  it('ignores a unit that has never attacked', () => {
+    // Fresh slots are stamped far in the past rather than at zero.
+    expect(poseFor(1e9, SWING, 0, 99).clip).toBe('run');
+  });
+});
+
+/**
+ * An idle brawler with an enemy standing next to it, on open ground.
+ *
+ * The spot is searched for rather than hard-coded: the map is more than half
+ * cliff, and a unit standing in rock is ejected by `clampToMap` every tick.
+ */
+function stageDuel(): { sim: Simulation; brawler: number; enemy: number } {
+  const sim = new Simulation(0x51ce7a11);
+  const pool = sim.world.pool;
+  const map = sim.world.map;
+  const start = map.starts[0]!;
+
+  let spot: { x: number; y: number } | null = null;
+  for (let r = 4; r < 30 && !spot; r++) {
+    for (let dy = -r; dy <= r && !spot; dy++) {
+      for (let dx = -r; dx <= r && !spot; dx++) {
+        const x = start.tileX + dx;
+        const y = start.tileY + dy;
+        if (map.isWalkable(x, y) && map.isWalkable(x + 1, y)) spot = { x, y };
+      }
+    }
+  }
+  if (!spot) throw new Error('no open ground near the start');
+
+  const ax = spot.x + 0.5;
+  const ay = spot.y + 0.5;
+  const brawler =
+    pool.spawn(EntityType.Brawler, 0, Math.round(ax * FIX), Math.round(ay * FIX)) & 0xffff;
+  const enemy =
+    pool.spawn(EntityType.Rifleman, 1, Math.round((ax + 1) * FIX), Math.round(ay * FIX)) & 0xffff;
+  return { sim, brawler, enemy };
+}
+
+describe('the signal behind it', () => {
+  it('reports a shot for an idle brawler defending itself', () => {
+    // The exact case the old order-based rule could not see: no order at all.
+    const { sim, brawler, enemy } = stageDuel();
+    const pool = sim.world.pool;
+    const hp0 = pool.hp[enemy]!;
+
+    let swung = false;
+    for (let t = 0; t < 60 && !swung; t++) {
+      pool.hp[enemy] = hp0;
+      pool.order[enemy] = Order.Hold;
+      pool.order[brawler] = Order.None;
+      sim.step([]);
+      const shots = sim.world.events.shots;
+      for (let k = 0; k < shots.length; k += 2) if (shots[k] === brawler) swung = true;
+    }
+    expect(`idle ${defOf(EntityType.Brawler).name} reported a shot: ${swung}`).toBe(
+      `idle ${defOf(EntityType.Brawler).name} reported a shot: true`,
+    );
+  });
+
+  it('reports shots as (attacker, target) pairs', () => {
+    // The renderer indexes shots[k] as the attacker; a flipped pair would
+    // animate the victim instead, which looks like nothing happening at all.
+    const { sim, enemy } = stageDuel();
+    const pool = sim.world.pool;
+    const hp0 = pool.hp[enemy]!;
+
+    let seen = 0;
+    for (let t = 0; t < 60; t++) {
+      pool.hp[enemy] = hp0;
+      sim.step([]);
+      const shots = sim.world.events.shots;
+      for (let k = 0; k + 1 < shots.length; k += 2) {
+        const attacker = shots[k]!;
+        const target = shots[k + 1]!;
+        expect(defOf(pool.type[attacker]! as EntityType).attackRange).toBeGreaterThan(0);
+        expect(pool.owner[attacker]).not.toBe(pool.owner[target]);
+        seen++;
+      }
+    }
+    // Without a fight the assertions above are vacuous, so the fight is required.
+    expect(seen).toBeGreaterThan(0);
+  });
+});

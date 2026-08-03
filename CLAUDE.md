@@ -140,6 +140,24 @@ things about this were learned the hard way:
 - **Fit each model on the axis it reads by.** Walkers by height, aircraft by
   wingspan — fitting a wide ship on height sizes it by whatever fin sticks up.
 
+### Pick the clip from events, not from state
+
+Which clip a unit plays is decided by `poseFor` in `src/render/entities.ts`,
+driven by `world.events.shots` — the shots the simulation actually fired. It used
+to be inferred from the unit's *order* and its speed, which merely correlate with
+fighting, and both halves were wrong at once:
+
+- A unit defending itself holds **no order at all**. It is idle, hitting whatever
+  walked into range — the most common fight in the game — so the attack branch
+  never ran.
+- Units in contact are shoved apart by separation every tick, so a brawler in
+  melee is never quite stationary, and a movement-first rule kept it running on
+  the spot even when the order *was* set.
+
+The swing is timed from the shot, not from wall-clock, so the blow lands on the
+frame the damage did; and it does not loop, so a cooldown longer than the clip
+holds the follow-through instead of restarting the wind-up. `tests/pose.test.ts`.
+
 Skins are KTX2/ETC1S, encoded by `npm run textures` from `assets/textures/`
 (source art, not served). A compressed texture cannot be flipped as it uploads
 the way a PNG can, so the vertical flip these UVs need is baked in by the

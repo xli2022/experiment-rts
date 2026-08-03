@@ -23,7 +23,7 @@ import * as THREE from 'three';
 import { defOf } from '../config/rules.js';
 import { ENTITY_CAPACITY } from '../sim/entities.js';
 import { toFloat } from '../sim/fixed.js';
-import { BuildState, EntityType, NEUTRAL, Order } from '../sim/types.js';
+import { BuildState, EntityType, NEUTRAL } from '../sim/types.js';
 import type { World } from '../sim/world.js';
 import { colourFor, PLAYER_COLOURS } from './models/procedural.js';
 import type { ModelProvider } from './models/provider.js';
@@ -53,6 +53,17 @@ export class EntityRenderer {
   private readonly currFx = new Float32Array(ENTITY_CAPACITY);
   private readonly currFz = new Float32Array(ENTITY_CAPACITY);
   private readonly wasAlive = new Uint8Array(ENTITY_CAPACITY);
+  /**
+   * When each unit last actually attacked, in elapsed seconds.
+   *
+   * The simulation reports every shot it fires, so the swing is driven by the
+   * thing that really happened rather than inferred from the unit's order. That
+   * distinction is the whole bug this replaced: a unit defending itself has no
+   * attack *order* at all — it is idle and simply fighting what walked up to it
+   * — so an order-based guess never played the animation for the most common
+   * fight in the game.
+   */
+  private readonly attackedAt = new Float32Array(ENTITY_CAPACITY).fill(-1e9);
 
   private readonly pools = new Map<string, Pool>();
   private readonly disposables: { dispose(): void }[] = [];
@@ -199,6 +210,12 @@ export class EntityRenderer {
    */
   noteDeaths(world: World, elapsedS: number): void {
     const pool = world.pool;
+    // Shots come in (attacker, target) pairs.
+    const shots = world.events.shots;
+    for (let k = 0; k < shots.length; k += 2) {
+      this.attackedAt[shots[k]!] = elapsedS;
+    }
+
     for (const i of world.events.deaths) {
       const type = pool.type[i]! as EntityType;
       if (!this.animated.has(type)) continue;
@@ -313,6 +330,10 @@ export class EntityRenderer {
         this.prevZ[i] = z;
         this.prevFx[i] = fx;
         this.prevFz[i] = fz;
+        // Nor any swing to finish. Slots are recycled within seconds, so a
+        // brand-new unit would otherwise inherit the last occupant's attack and
+        // walk out of the barracks mid-swing.
+        this.attackedAt[i] = -1e9;
       } else {
         this.prevX[i] = this.currX[i]!;
         this.prevZ[i] = this.currZ[i]!;
@@ -399,27 +420,24 @@ export class EntityRenderer {
       if (animated) {
         const anim = this.animatedPools.get(animatedKey(type, owner));
         if (anim) {
-          // Moving units run, engaged units swing, everything else holds the
-          // first frame of the run cycle as an idle. There is no authored idle
-          // clip, and a frozen stride reads better than a T-pose.
-          const moving = Math.hypot(this.currX[i]! - this.prevX[i]!, this.currZ[i]! - this.prevZ[i]!);
-          const order = pool.order[i]!;
-          const fighting = order === Order.Attack || order === Order.AttackMove;
-          // Offset each unit's phase by its slot so an army does not march in
-          // perfect lockstep, which reads as one object rather than many.
-          const phase = elapsedS + i * 0.37;
-
-          let clip = 'run';
-          let time = 0;
-          if (moving > MOVING_EPSILON) time = phase;
-          else if (fighting) clip = 'attack';
-          if (clip === 'attack') time = phase;
+          const swing = animated.model.clips.get('attack');
+          const pose = poseFor(
+            elapsedS - this.attackedAt[i]!,
+            swing ? swing.duration : 0,
+            Math.hypot(this.currX[i]! - this.prevX[i]!, this.currZ[i]! - this.prevZ[i]!),
+            // Offset each unit's stride by its slot so an army does not march in
+            // perfect lockstep, which reads as one object rather than many.
+            elapsedS + i * 0.37,
+          );
 
           this.position.set(x, altitude + animated.groundOffset, z);
           this.scale.setScalar(animated.scale);
           this.matrix.compose(this.position, this.quat, this.scale);
           this.scale.set(1, 1, 1);
-          anim.add(this.matrix, AnimatedUnitPool.frameFor(animated.model, clip, time, true));
+          anim.add(
+            this.matrix,
+            AnimatedUnitPool.frameFor(animated.model, pose.clip, pose.time, pose.loop),
+          );
         }
       }
 
@@ -584,6 +602,49 @@ const BAR_LIFT_NDC = 0.032;
 
 /** How far a unit must move between ticks to count as running. */
 const MOVING_EPSILON = 0.004;
+
+/** Which clip a unit is posed on this frame, and where in it. */
+export interface Pose {
+  clip: string;
+  /** Seconds into the clip. */
+  time: number;
+  loop: boolean;
+}
+
+/**
+ * Choose a unit's clip. Pure, because getting it wrong is invisible in a diff.
+ *
+ * Two things about this rule were learned from a bug report of "the melee unit
+ * never plays its attack animation":
+ *
+ * - **A swing is an event, not a state.** The old rule asked whether the unit
+ *   held an attack *order*, which is only correlated with fighting: a unit
+ *   defending itself has no order at all — it is idle, hitting whatever walked
+ *   into range — so the most common fight in the game never animated. The
+ *   simulation already publishes each shot in `world.events.shots`; `sinceAttack`
+ *   is that, and it is the only honest signal.
+ * - **The swing outranks the stride.** Units in contact are shoved around by
+ *   separation every tick, so a brawler mid-melee is never quite stationary and
+ *   a movement-first rule keeps it running on the spot. Order matters here, not
+ *   just the conditions.
+ *
+ * The swing is timed from the shot rather than from wall-clock, so the blow
+ * lands on the frame the damage did. It does not loop: a cooldown longer than
+ * the clip should hold the follow-through, not restart the wind-up.
+ */
+export function poseFor(
+  sinceAttack: number,
+  swingDuration: number,
+  movedPerTick: number,
+  phase: number,
+): Pose {
+  if (swingDuration > 0 && sinceAttack >= 0 && sinceAttack < swingDuration) {
+    return { clip: 'attack', time: sinceAttack, loop: false };
+  }
+  if (movedPerTick > MOVING_EPSILON) return { clip: 'run', time: phase, loop: true };
+  // No authored idle clip; a frozen stride reads better than a T-pose.
+  return { clip: 'run', time: 0, loop: true };
+}
 
 /** Seconds a body lingers, sinking, once its death clip has played out. */
 const CORPSE_LINGER_S = 1.4;
