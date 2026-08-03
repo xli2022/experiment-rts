@@ -70,6 +70,16 @@ export class EntityRenderer {
   >();
   private readonly animatedPools = new Map<string, AnimatedUnitPool>();
 
+  /**
+   * Units that have died and are still playing their death clip.
+   *
+   * The simulation frees an entity the tick it dies, so there is nothing left to
+   * hang a death animation on — the corpse has to be the renderer's own. It
+   * carries the position and facing captured at the moment of death, because the
+   * entity slot behind it is reused within seconds.
+   */
+  private readonly corpses: Corpse[] = [];
+
   private readonly selectionRings: THREE.InstancedMesh;
   private readonly healthBg: THREE.InstancedMesh;
   private readonly healthFill: THREE.InstancedMesh;
@@ -178,6 +188,67 @@ export class EntityRenderer {
         const entry = this.pools.get(poolKey(type, p, owner));
         if (entry) entry.mesh.visible = false;
       }
+    }
+  }
+
+  /**
+   * Record this tick's deaths so their death animation can play out.
+   *
+   * Call once per simulation tick, from the same place the other per-tick
+   * effects are read — `world.events` is cleared at the start of the next step.
+   */
+  noteDeaths(world: World, elapsedS: number): void {
+    const pool = world.pool;
+    for (const i of world.events.deaths) {
+      const type = pool.type[i]! as EntityType;
+      if (!this.animated.has(type)) continue;
+      if (this.corpses.length >= MAX_CORPSES) this.corpses.shift();
+      this.corpses.push({
+        type,
+        owner: pool.owner[i]!,
+        x: this.currX[i]!,
+        z: this.currZ[i]!,
+        yaw: Math.atan2(this.currFx[i]!, this.currFz[i]!),
+        flying: defOf(type).flying,
+        bornS: elapsedS,
+      });
+    }
+  }
+
+  /**
+   * Emit every corpse still worth drawing, and retire the rest.
+   *
+   * A flyer's wreck falls the rest of the way to the ground over its death clip
+   * rather than lying in the air; everything else sinks away once the clip has
+   * played, which clears the battlefield without the bodies simply vanishing.
+   */
+  private drawCorpses(elapsedS: number, fog: FogRenderer | undefined, localPlayer: number): void {
+    for (let k = this.corpses.length - 1; k >= 0; k--) {
+      const corpse = this.corpses[k]!;
+      const entry = this.animated.get(corpse.type);
+      const age = elapsedS - corpse.bornS;
+      const clip = entry?.model.clips.get('die');
+      if (!entry || !clip || age > clip.duration + CORPSE_LINGER_S) {
+        this.corpses.splice(k, 1);
+        continue;
+      }
+      const anim = this.animatedPools.get(animatedKey(corpse.type, corpse.owner));
+      if (!anim) continue;
+      // A corpse is not an entity any more, so it obeys fog by position: an
+      // enemy dying out of sight should not announce itself.
+      if (corpse.owner !== localPlayer && fog && !fog.isVisibleAt(corpse.x, corpse.z)) continue;
+
+      const fell = corpse.flying
+        ? FLIGHT_ALTITUDE * Math.max(0, 1 - age / Math.max(0.001, clip.duration))
+        : 0;
+      const sink = Math.max(0, age - clip.duration) / CORPSE_LINGER_S;
+
+      this.quat.setFromAxisAngle(UP, corpse.yaw);
+      this.position.set(corpse.x, fell + entry.groundOffset - sink * entry.height, corpse.z);
+      this.scale.setScalar(entry.scale);
+      this.matrix.compose(this.position, this.quat, this.scale);
+      this.scale.set(1, 1, 1);
+      anim.add(this.matrix, AnimatedUnitPool.frameFor(entry.model, 'die', age, false));
     }
   }
 
@@ -445,6 +516,7 @@ export class EntityRenderer {
     this.selectionRings.instanceMatrix.needsUpdate = true;
     this.healthBg.count = barCount;
     this.healthBg.instanceMatrix.needsUpdate = true;
+    this.drawCorpses(elapsedS, fog, localPlayer);
     for (const anim of this.animatedPools.values()) anim.commit();
 
     this.healthFill.count = barCount;
@@ -512,6 +584,21 @@ const BAR_LIFT_NDC = 0.032;
 
 /** How far a unit must move between ticks to count as running. */
 const MOVING_EPSILON = 0.004;
+
+/** Seconds a body lingers, sinking, once its death clip has played out. */
+const CORPSE_LINGER_S = 1.4;
+/** Bodies kept at once. A long battle would otherwise accumulate them forever. */
+const MAX_CORPSES = 96;
+
+interface Corpse {
+  type: EntityType;
+  owner: number;
+  x: number;
+  z: number;
+  yaw: number;
+  flying: boolean;
+  bornS: number;
+}
 
 function animatedKey(type: EntityType, owner: number): string {
   return `${type}:${owner}`;

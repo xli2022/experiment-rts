@@ -100,7 +100,13 @@ export class Hud {
 
       <div class="panel" id="banner"></div>
       <div id="marquee"></div>
-      <div class="hint">Arrows / edge pan &nbsp;·&nbsp; wheel zoom &nbsp;·&nbsp; drag select &nbsp;·&nbsp; right-click order &nbsp;·&nbsp; A attack &nbsp;·&nbsp; S stop &nbsp;·&nbsp; F fullscreen &nbsp;·&nbsp; M mute &nbsp;·&nbsp; Ctrl+1-9 groups</div>
+      <!--
+        Only the things nothing else on screen tells you. Attack and Stop are
+        printed on their own command-card buttons, and fullscreen and mute are
+        buttons in the corner — repeating them here was four items of noise in
+        the one strip a player has no reason to read twice.
+      -->
+      <div class="hint">Arrows / edge pan &nbsp;·&nbsp; wheel zoom &nbsp;·&nbsp; drag select &nbsp;·&nbsp; right-click order &nbsp;·&nbsp; Ctrl+1-9 groups</div>
       <div id="overlay" class="hidden"></div>
     `;
 

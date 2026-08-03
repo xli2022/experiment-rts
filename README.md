@@ -143,6 +143,12 @@ src/ui/       DOM overlay: HUD, minimap, lobby
 src/config/   all balance data, in one table
 ```
 
-Units and buildings are built from Three.js primitives at runtime, behind a
-`ModelProvider` interface — loaded assets can replace them later without
-touching gameplay code.
+Buildings and workers are built from Three.js primitives at runtime. The three
+combat units are authored models: skinned rigs with run, attack and death
+clips, baked at load into a bone-matrix texture so a hundred of them mid-swing
+still cost one draw call per type. Their skins are KTX2/ETC1S — a tenth the size
+of the source PNGs, which live in `assets/textures/` and are re-encoded with:
+
+```sh
+npm run textures
+```

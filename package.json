@@ -14,7 +14,8 @@
     "format": "prettier --write \"src/**/*.{ts,css}\" \"tests/**/*.ts\"",
     "determinism:node": "vite-node scripts/checksum-probe.ts",
     "determinism:bun": "bun run scripts/checksum-probe.ts",
-    "determinism:cross": "bash scripts/cross-engine.sh"
+    "determinism:cross": "bash scripts/cross-engine.sh",
+    "textures": "node scripts/encode-textures.mjs"
   },
   "dependencies": {
     "three": "^0.185.1",
@@ -23,7 +24,9 @@
   "devDependencies": {
     "@types/node": "^26.1.2",
     "@types/three": "^0.185.3",
+    "ktx2-encoder": "^0.6.0",
     "prettier": "^3.8.1",
+    "sharp": "^0.35.3",
     "typescript": "^6.0.2",
     "vite": "^8.2.0",
     "vite-node": "^6.0.0",

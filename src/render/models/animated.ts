@@ -95,6 +95,12 @@ export async function loadAnimatedModel(url: string): Promise<AnimatedModel> {
   const skeleton = mesh.skeleton;
   const boneCount = skeleton.bones.length;
 
+  // The mesh's own transform, taken from the rest pose before any clip is
+  // applied — sampling it after baking would capture whatever pose the last
+  // frame happened to leave behind.
+  gltf.scene.updateMatrixWorld(true);
+  const nodeMatrix = mesh.matrixWorld.clone();
+
   // Frame budget per clip, and where each one starts in the texture.
   const clips = new Map<string, BakedClip>();
   let totalFrames = 0;
@@ -109,7 +115,14 @@ export async function loadAnimatedModel(url: string): Promise<AnimatedModel> {
   const width = boneCount * 4;
   const data = new Float32Array(width * totalFrames * 4);
 
-  const mixer = new THREE.AnimationMixer(mesh);
+  // The mixer is rooted at the *scene*, not the mesh.
+  //
+  // Rooted at the mesh, three.js resolves a track's target either as one of the
+  // skeleton's bones or as a descendant of the mesh — and an FBX rig's helper
+  // nodes are neither. A 3ds Max Biped puts `Bip001` above the bones as the
+  // rig root, so binding from the mesh silently dropped the root motion of
+  // every clip, and for the five-bone aircraft that was most of the animation.
+  const mixer = new THREE.AnimationMixer(gltf.scene);
   for (const clip of gltf.animations) {
     const baked = clips.get(clip.name)!;
     const action = mixer.clipAction(clip);
@@ -153,8 +166,6 @@ export async function loadAnimatedModel(url: string): Promise<AnimatedModel> {
     geometry.getAttribute('position') as THREE.BufferAttribute,
   );
 
-  gltf.scene.updateMatrixWorld(true);
-  const nodeMatrix = mesh.matrixWorld.clone();
   const extent = animatedExtent(
     geometry,
     data,

@@ -118,7 +118,7 @@ class Game {
     // Authored models arrive asynchronously and swap themselves in. The match is
     // fully playable on the procedural stand-ins until they do, so a slow asset
     // delays nothing.
-    void loadUnitModels().then((models) => {
+    void loadUnitModels(this.renderer).then((models) => {
       for (const { type, model, scale, textures } of models) {
         this.entities.useAnimatedModel(type, model, scale, textures);
       }
@@ -601,6 +601,7 @@ class Game {
       // to be read here, on the same frame the tick landed.
       this.projectiles.spawnFromEvents(this.sim.world);
       this.projectiles.spawnDeaths(this.sim.world);
+      this.entities.noteDeaths(this.sim.world, this.elapsedS);
       this.playTickSounds();
       this.fog.update(this.sim.world, this.localPlayer);
       this.lastTick = this.sim.world.tick;

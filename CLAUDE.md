@@ -116,6 +116,37 @@ else's correctness rests on.
   straight through the shroud, so cliffs are shaded to match the fog rather than
   covered by it (`TerrainRenderer.applyFog`).
 
+## Authored unit models
+
+The three combat units are skinned FBX rigs, converted to GLB and drawn as one
+instanced mesh per type per team: every clip is sampled into a bone-matrix
+texture at load, and each instance carries one number — the row it is posed on.
+`src/render/models/animated.ts` bakes, `src/render/animatedUnits.ts` draws. Four
+things about this were learned the hard way:
+
+- **Bind the `AnimationMixer` to the scene, not the mesh.** Three.js resolves a
+  track's target as either a skeleton bone or a descendant of the mixer's root,
+  and an FBX rig's helper nodes are neither — a 3ds Max Biped puts `Bip001`
+  above the bones. Rooted at the mesh, every clip silently lost its root motion,
+  which for the five-bone aircraft was most of the animation.
+- **Apply the asset's node transform yourself.** Three.js uses it as the model
+  matrix when it draws a `SkinnedMesh`; a hand-rolled instanced draw has to fold
+  it into the instance matrix. An FBX authored Z-up arrives as a 90-degree
+  rotation, so skipping it draws every unit on its back.
+- **Ground and scale are measured from different things.** A run cycle crouches
+  below the bind pose, so grounding by the bind pose buries the feet; an attack
+  clip swings a sword overhead, so scaling by the animated extent sizes the unit
+  by its weapon. Ground from the animation minimum, scale from the bind pose.
+- **Fit each model on the axis it reads by.** Walkers by height, aircraft by
+  wingspan — fitting a wide ship on height sizes it by whatever fin sticks up.
+
+Skins are KTX2/ETC1S, encoded by `npm run textures` from `assets/textures/`
+(source art, not served). A compressed texture cannot be flipped as it uploads
+the way a PNG can, so the vertical flip these UVs need is baked in by the
+encoder. Three.js resolves its own transcoder WASM against `import.meta.url`, so
+leave `setTranscoderPath` alone — pointing it at a hand-copied `public/` folder
+ships the same 580 KB twice.
+
 ## Verifying determinism
 
 ```sh
