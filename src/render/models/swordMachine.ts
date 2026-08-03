@@ -55,7 +55,10 @@ export async function loadSwordMachine(): Promise<SwordMachineAssets> {
       try {
         const tex = await loader.loadAsync(assetUrl(file));
         tex.colorSpace = THREE.SRGBColorSpace;
-        tex.flipY = false; // glTF UVs, unlike three's image default
+        // `flipY` stays at three's default. A texture authored for glTF would
+        // want it off, but this GLB was exported from an FBX and kept three's
+        // UV convention — verified by painting a marker at a known pixel of the
+        // real atlas and checking it landed on the model's eye.
         tex.needsUpdate = true;
         return tex;
       } catch {
