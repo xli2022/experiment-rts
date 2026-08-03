@@ -24,6 +24,7 @@ import { TerrainRenderer } from './render/terrain.js';
 import { ProceduralModelProvider } from './render/models/procedural.js';
 import { groundPointAt, pickAt, pickInBox, Selection } from './input/selection.js';
 import { Hud, type CommandButton } from './ui/hud.js';
+import { showLobby, type MatchSetup } from './ui/lobby.js';
 
 /** Buildings the player can place, in command-card order. */
 const BUILD_MENU: { type: EntityType; key: string }[] = [
@@ -57,18 +58,20 @@ class Game {
   private lastTick = -1;
   private finished = false;
 
-  constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement, seed: number, transport: Transport) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    uiRoot: HTMLElement,
+    seed: number,
+    transport: Transport,
+    botPlayers: PlayerId[],
+  ) {
     this.localPlayer = transport.localPlayer;
     this.sim = new Simulation(seed);
 
-    // Every slot we do not control is played by the bot. Because the bot is
-    // deterministic it runs on every peer, so this is identical everywhere.
-    for (let p = 0; p < this.sim.world.players.length; p++) {
-      if (p !== this.localPlayer && p >= transport.playerCount) this.sim.botPlayers.add(p);
-    }
-    if (transport.playerCount === 1) {
-      for (let p = 1; p < this.sim.world.players.length; p++) this.sim.botPlayers.add(p);
-    }
+    // Slots played by the AI. Because the bot is deterministic it runs inside
+    // the simulation on every peer, so every peer must agree on this set — it
+    // comes from the lobby, which both sides agreed on before starting.
+    for (const p of botPlayers) this.sim.botPlayers.add(p);
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -564,23 +567,37 @@ class Game {
 // Bootstrap
 // ---------------------------------------------------------------------------
 
-function boot(): void {
+async function boot(): Promise<void> {
   const canvas = document.getElementById('viewport') as HTMLCanvasElement | null;
   const uiRoot = document.getElementById('ui-root');
   if (!canvas || !uiRoot) throw new Error('missing #viewport or #ui-root');
 
-  // A seed in the URL makes any match reproducible, which is how a desync report
-  // turns into something debuggable.
   const params = new URLSearchParams(location.search);
-  const seed = Number(params.get('seed') ?? 0) || 0x51ce7a11;
 
-  const game = new Game(canvas, uiRoot, seed, new SoloTransport());
+  // `?skip=ai` boots straight into a skirmish, which is what the end-to-end
+  // tests and screenshot tooling use. A seed in the URL makes any match
+  // reproducible, which is how a desync report becomes debuggable.
+  let setup: MatchSetup;
+  if (params.get('skip') === 'ai') {
+    setup = {
+      transport: new SoloTransport(),
+      seed: Number(params.get('seed') ?? 0) || 0x51ce7a11,
+      localPlayer: 0,
+      botPlayers: [1],
+    };
+  } else {
+    setup = await showLobby(uiRoot);
+    const override = Number(params.get('seed') ?? 0);
+    if (override) setup.seed = override;
+  }
+
+  const game = new Game(canvas, uiRoot, setup.seed, setup.transport, setup.botPlayers);
   game.start();
 
   // Exposed for the end-to-end tests and for debugging a live match.
   (window as unknown as { __game: Game }).__game = game;
 }
 
-boot();
+void boot();
 
 export { Game };
