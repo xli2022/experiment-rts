@@ -34,6 +34,12 @@ export interface EntityDef {
    * can walk through a wall.
    */
   readonly collides: boolean;
+  /**
+   * Flying units ignore terrain entirely: no pathfinding, no cliffs, no
+   * buildings in the way. They steer straight at wherever they are going, which
+   * is both how the genre treats air and far cheaper than pathing them.
+   */
+  readonly flying: boolean;
   readonly maxHp: number;
   /** Collision radius in world units. */
   readonly radius: Fix;
@@ -67,6 +73,7 @@ export const DEFS: readonly EntityDef[] = [
     name: 'Worker',
     isBuilding: false,
     collides: false,
+    flying: false,
     maxHp: 40,
     radius: fromFloat(0.32),
     footprint: 0,
@@ -87,6 +94,7 @@ export const DEFS: readonly EntityDef[] = [
     name: 'Rifleman',
     isBuilding: false,
     collides: true,
+    flying: false,
     maxHp: 45,
     radius: fromFloat(0.32),
     footprint: 0,
@@ -107,6 +115,7 @@ export const DEFS: readonly EntityDef[] = [
     name: 'Brawler',
     isBuilding: false,
     collides: true,
+    flying: false,
     maxHp: 90,
     radius: fromFloat(0.42),
     footprint: 0,
@@ -127,6 +136,7 @@ export const DEFS: readonly EntityDef[] = [
     name: 'Command Post',
     isBuilding: true,
     collides: true,
+    flying: false,
     maxHp: 1500,
     radius: fromFloat(2.0),
     footprint: 4,
@@ -147,6 +157,7 @@ export const DEFS: readonly EntityDef[] = [
     name: 'Supply Depot',
     isBuilding: true,
     collides: true,
+    flying: false,
     maxHp: 500,
     radius: fromFloat(1.0),
     footprint: 2,
@@ -170,6 +181,7 @@ export const DEFS: readonly EntityDef[] = [
     name: 'Barracks',
     isBuilding: true,
     collides: true,
+    flying: false,
     maxHp: 1000,
     radius: fromFloat(1.5),
     footprint: 3,
@@ -183,13 +195,14 @@ export const DEFS: readonly EntityDef[] = [
     buildTicks: seconds(45),
     supplyCost: 0,
     supplyProvided: 0,
-    produces: [EntityType.Rifleman, EntityType.Brawler],
+    produces: [EntityType.Rifleman, EntityType.Brawler, EntityType.Gunship],
   },
   {
     type: EntityType.Turret,
     name: 'Turret',
     isBuilding: true,
     collides: true,
+    flying: false,
     maxHp: 600,
     radius: fromFloat(1.0),
     footprint: 2,
@@ -210,6 +223,7 @@ export const DEFS: readonly EntityDef[] = [
     name: 'Mineral Patch',
     isBuilding: true, // static and blocks placement, though not player-owned
     collides: true,
+    flying: false,
     maxHp: 1,
     radius: fromFloat(0.8),
     footprint: 2,
@@ -225,11 +239,59 @@ export const DEFS: readonly EntityDef[] = [
     supplyProvided: 0,
     produces: NONE,
   },
+  {
+    type: EntityType.Gunship,
+    name: 'Gunship',
+    isBuilding: false,
+    // Flies over everything, including its own army.
+    collides: false,
+    flying: true,
+    maxHp: 70,
+    radius: fromFloat(0.45),
+    footprint: 0,
+    speedPerTick: speed(4.4),
+    turnPerTick: fromFloat(0.7),
+    sightRange: fromFloat(9),
+    attackRange: fromFloat(3.5),
+    damage: 10,
+    attackCooldown: seconds(1.0),
+    mineralCost: 100,
+    buildTicks: seconds(24),
+    supplyCost: 2,
+    supplyProvided: 0,
+    produces: NONE,
+  },
 ];
 
 export function defOf(type: EntityType): EntityDef {
   return DEFS[type]!;
 }
+
+/**
+ * Counter bonus, as a percentage of base damage.
+ *
+ * A rock-paper-scissors triangle between the three combat units:
+ *
+ *     Rifleman (ranged)  ->  Gunship (air)
+ *     Gunship  (air)     ->  Brawler (melee)
+ *     Brawler  (melee)   ->  Rifleman (ranged)
+ *
+ * Expressed as a damage multiplier rather than "cannot target", so a player who
+ * has committed to one unit type is disadvantaged but never completely helpless
+ * — a hard counter turns the match into a coin flip decided before contact.
+ *
+ * Integer percent, applied with integer arithmetic, so it stays exact and
+ * deterministic.
+ */
+export function counterBonusPct(attacker: EntityType, target: EntityType): number {
+  if (attacker === EntityType.Rifleman && target === EntityType.Gunship) return COUNTER_PCT;
+  if (attacker === EntityType.Gunship && target === EntityType.Brawler) return COUNTER_PCT;
+  if (attacker === EntityType.Brawler && target === EntityType.Rifleman) return COUNTER_PCT;
+  return 100;
+}
+
+/** How hard a counter hits. 200 = double damage. */
+export const COUNTER_PCT = 200;
 
 // ---------------------------------------------------------------------------
 // Global economy and match rules
@@ -279,6 +341,16 @@ export const BUILD_REACH = fromFloat(1.7);
  * as broken. Workers should have to travel — that trip is the economy.
  */
 export const HARVEST_REACH = fromFloat(0.35);
+
+/**
+ * Hit points a worker restores per tick when repairing.
+ *
+ * Repair is free in minerals but not in time: the worker has to stand there and
+ * is not mining while it does. At this rate a badly damaged Command Post takes
+ * most of a minute with one worker, which is worth defending rather than an
+ * instant undo of an attack.
+ */
+export const REPAIR_HP_PER_TICK = 6;
 
 /**
  * How much slack an order gets when deciding "am I close enough yet".

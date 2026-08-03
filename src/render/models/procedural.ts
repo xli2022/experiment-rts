@@ -80,6 +80,21 @@ export class ProceduralModelProvider implements ModelProvider {
           ],
         };
 
+      case EntityType.Gunship:
+        return {
+          radius,
+          height: 1.0,
+          // Wide, flat and swept — a silhouette nothing on the ground shares, so
+          // air is identifiable at a glance even in a crowded fight.
+          parts: [
+            part(new THREE.ConeGeometry(0.3, 0.95, 4), 'player', [0, 0, 0], [Math.PI / 2, 0, 0]),
+            part(new THREE.BoxGeometry(1.5, 0.09, 0.34), 'player', [0, 0.04, -0.05]),
+            part(new THREE.BoxGeometry(0.3, 0.1, 0.3), 'accent', [0, 0.13, 0.1]),
+            part(new THREE.BoxGeometry(0.1, 0.1, 0.42), 'dark', [0.5, -0.04, 0.12]),
+            part(new THREE.BoxGeometry(0.1, 0.1, 0.42), 'dark', [-0.5, -0.04, 0.12]),
+          ],
+        };
+
       case EntityType.CommandPost:
         return {
           radius,

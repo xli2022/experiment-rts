@@ -47,10 +47,55 @@ const CHASE_REPATH_INTERVAL = 10;
 const PATH_RETRY_COOLDOWN = 40;
 
 export function movementSystem(world: World, astar: AStar, fields: FlowFieldCache): void {
+  moveFlyers(world);
   servePathRequests(world, astar);
   followFlowFields(world, fields);
   followPaths(world);
   separate(world);
+}
+
+/**
+ * Air movement: steer straight at the destination, ignoring everything.
+ *
+ * Flyers need no pathfinding at all, which is both correct for the genre and a
+ * useful property — a flying army costs nothing in the system that dominates
+ * simulation time. They are handled entirely here and skipped by every
+ * ground-movement pass below.
+ */
+function moveFlyers(world: World): void {
+  const pool = world.pool;
+
+  for (let i = 0; i < pool.count; i++) {
+    if (pool.alive[i] !== 1) continue;
+    const def = defOf(pool.type[i]! as EntityType);
+    if (!def.flying || def.speedPerTick === 0) continue;
+
+    const order = pool.order[i]!;
+    if (order === Order.None || order === Order.Hold) continue;
+
+    // Chase orders track the target's live position; ground orders head for the
+    // commanded point.
+    let tx = pool.orderX[i]!;
+    let ty = pool.orderY[i]!;
+    let stopWithin = ARRIVAL_REACH;
+
+    const targetId = pool.orderTarget[i]!;
+    if (targetId !== NO_ENTITY && pool.isAlive(targetId)) {
+      const ti = idIndex(targetId);
+      tx = pool.posX[ti]!;
+      ty = pool.posY[ti]!;
+      // Stop at weapon range rather than flying into the target.
+      stopWithin = def.attackRange + defOf(pool.type[ti]! as EntityType).radius;
+    }
+
+    const dist = vecDist(pool.posX[i]!, pool.posY[i]!, tx, ty);
+    if (dist <= stopWithin) {
+      if (order === Order.Move || order === Order.AttackMove) pool.order[i] = Order.None;
+      continue;
+    }
+
+    stepToward(world, i, tx, ty, def.speedPerTick, def.turnPerTick);
+  }
 }
 
 /**
@@ -69,7 +114,7 @@ function followFlowFields(world: World, fields: FlowFieldCache): void {
     if (goal < 0) continue;
 
     const def = defOf(pool.type[i]! as EntityType);
-    if (def.isBuilding || def.speedPerTick === 0) {
+    if (def.isBuilding || def.speedPerTick === 0 || def.flying) {
       pool.flowGoal[i] = -1;
       continue;
     }
@@ -202,7 +247,7 @@ function followPaths(world: World): void {
     if (pool.alive[i] !== 1) continue;
     const type = pool.type[i]! as EntityType;
     const def = defOf(type);
-    if (def.isBuilding || def.speedPerTick === 0) continue;
+    if (def.isBuilding || def.speedPerTick === 0 || def.flying) continue;
 
     const order = pool.order[i]!;
     if (order === Order.None || order === Order.Hold) continue;
@@ -446,12 +491,16 @@ function clampToMap(world: World): void {
   const hi = fromInt(world.map.width) - 1;
   for (let i = 0; i < pool.count; i++) {
     if (pool.alive[i] !== 1) continue;
-    if (defOf(pool.type[i]! as EntityType).isBuilding) continue;
+    const def = defOf(pool.type[i]! as EntityType);
+    if (def.isBuilding) continue;
 
     if (pool.posX[i]! < lo) pool.posX[i] = lo;
     if (pool.posY[i]! < lo) pool.posY[i] = lo;
     if (pool.posX[i]! > hi) pool.posX[i] = hi;
     if (pool.posY[i]! > hi) pool.posY[i] = hi;
+
+    // Flyers are over the terrain, not on it, so nothing ejects them.
+    if (def.flying) continue;
 
     const tile = world.map.tileOfPos(pool.posX[i]!, pool.posY[i]!);
     if (tile < 0) continue;

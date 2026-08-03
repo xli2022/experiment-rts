@@ -13,6 +13,7 @@ import {
   HARVEST_REACH,
   HARVEST_TICKS,
   MINERALS_PER_TRIP,
+  REPAIR_HP_PER_TICK,
 } from '../../config/rules.js';
 import { idIndex } from '../entities.js';
 import { fromInt, sqRange, vecLenSqRaw } from '../fixed.js';
@@ -177,7 +178,12 @@ function constructionSystem(world: World): void {
     }
 
     const si = idIndex(siteId);
-    if (pool.buildState[si] === BuildState.Complete) {
+    const def = defOf(pool.type[si]! as EntityType);
+    const finished = pool.buildState[si] === BuildState.Complete;
+
+    // A finished building at full health needs nothing; release the worker so it
+    // does not stand there indefinitely.
+    if (finished && pool.hp[si]! >= def.maxHp) {
       pool.order[i] = Order.None;
       pool.orderTarget[i] = NO_ENTITY;
       continue;
@@ -185,11 +191,21 @@ function constructionSystem(world: World): void {
 
     if (!inReach(world, i, si, BUILD_REACH)) continue;
 
-    // The worker is on site; stop moving and build.
+    // The worker is on site; stop moving and work.
     pool.clearPath(i);
-    pool.buildState[si] = BuildState.UnderConstruction;
 
-    const def = defOf(pool.type[si]! as EntityType);
+    // Repair: same order, same worker, different job depending on whether the
+    // structure is unfinished or merely hurt.
+    if (finished) {
+      pool.hp[si] = Math.min(def.maxHp, pool.hp[si]! + REPAIR_HP_PER_TICK);
+      if (pool.hp[si]! >= def.maxHp) {
+        pool.order[i] = Order.None;
+        pool.orderTarget[i] = NO_ENTITY;
+      }
+      continue;
+    }
+
+    pool.buildState[si] = BuildState.UnderConstruction;
     pool.buildProgress[si]! += 1;
 
     // Health climbs with progress, so a half-built structure is genuinely

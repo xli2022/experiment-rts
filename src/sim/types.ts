@@ -43,9 +43,12 @@ export enum EntityType {
   Turret = 6,
   // Neutral
   MineralPatch = 7,
+  // Appended rather than slotted in with the other units, so existing numeric
+  // ids stay put — the defs table is indexed by this enum.
+  Gunship = 8,
 }
 
-export const ENTITY_TYPE_COUNT = 8;
+export const ENTITY_TYPE_COUNT = 9;
 
 /** What an entity is currently trying to do. Drives the system dispatch. */
 export enum Order {

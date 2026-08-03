@@ -7,7 +7,7 @@
  * then entity slot index — so there is never a tie to break arbitrarily.
  */
 
-import { defOf } from '../../config/rules.js';
+import { counterBonusPct, defOf } from '../../config/rules.js';
 import { idIndex } from '../entities.js';
 import { fromInt, sqRange, vecLenSqRaw, vecNormalize } from '../fixed.js';
 import { BuildState, EntityType, NEUTRAL, NO_ENTITY, Order } from '../types.js';
@@ -82,7 +82,10 @@ export function combatSystem(world: World): void {
     if (pool.attackCooldown[i]! > 0) continue;
 
     pool.attackCooldown[i] = def.attackCooldown;
-    applyDamage(world, targetIndex, def.damage);
+    // Integer maths so the counter bonus stays exact across engines.
+    const bonus = counterBonusPct(type, pool.type[targetIndex]! as EntityType);
+    const damage = ((def.damage * bonus) / 100) | 0;
+    applyDamage(world, targetIndex, damage);
     world.events.shots.push(i, targetIndex);
   }
 }

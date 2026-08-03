@@ -16,6 +16,7 @@ import {
 } from '../net/trysteroTransport.js';
 import type { Transport } from '../net/transport.js';
 import type { PlayerId } from '../sim/types.js';
+import { audio } from '../audio/audio.js';
 
 export interface MatchSetup {
   transport: Transport;
@@ -47,6 +48,10 @@ export function showLobby(root: HTMLElement): Promise<MatchSetup> {
     };
 
     const menu = (): void => {
+      // Every route out of this menu is a click, which is exactly the user
+      // gesture browsers require before an AudioContext may start.
+      overlay.addEventListener('pointerdown', () => void audio.resume(), { once: true });
+
       const dialog = render(`
         <h1>Experiment RTS</h1>
         <p>Gather minerals, build a base, and destroy every enemy structure.</p>

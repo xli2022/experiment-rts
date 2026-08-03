@@ -137,6 +137,55 @@ body {
   min-height: 16px;
 }
 
+/* ---- production progress ---- */
+#production {
+  margin-bottom: 10px;
+}
+
+#production[hidden] {
+  display: none;
+}
+
+#prod-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+#prod-eta {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+#prod-track {
+  height: 7px;
+  border-radius: 4px;
+  background: rgba(10, 14, 20, 0.85);
+  border: 1px solid var(--panel-edge);
+  overflow: hidden;
+}
+
+#prod-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), var(--ok));
+  /* Matches the 20Hz simulation tick, so the bar advances smoothly rather than
+     stepping once per tick. */
+  transition: width 0.05s linear;
+}
+
+#prod-queue {
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+#prod-queue[hidden] {
+  display: none;
+}
+
 #command-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -194,7 +243,8 @@ body {
 }
 
 /* ---- fullscreen toggle ---- */
-#fullscreen-btn {
+#fullscreen-btn,
+#mute-btn {
   top: 12px;
   right: 12px;
   width: 38px;
@@ -211,7 +261,12 @@ body {
   transition: border-color 0.12s, background 0.12s;
 }
 
-#fullscreen-btn:hover {
+#mute-btn {
+  right: 58px;
+}
+
+#fullscreen-btn:hover,
+#mute-btn:hover {
   border-color: var(--accent);
   color: var(--accent);
 }

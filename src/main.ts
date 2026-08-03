@@ -14,7 +14,7 @@ import { LockstepRunner } from './net/lockstep.js';
 import { SoloTransport } from './net/localTransport.js';
 import type { Transport } from './net/transport.js';
 import { CommandType, type Command } from './sim/commands.js';
-import { fromFloat } from './sim/fixed.js';
+import { fromFloat, toFloat } from './sim/fixed.js';
 import { MAP_SIZE } from './sim/map.js';
 import { Simulation } from './sim/tick.js';
 import { BuildState, EntityType, NEUTRAL, NO_ENTITY, type PlayerId } from './sim/types.js';
@@ -23,6 +23,8 @@ import { RtsCamera } from './render/camera.js';
 import { TerrainRenderer } from './render/terrain.js';
 import { ProceduralModelProvider } from './render/models/procedural.js';
 import { ProjectileRenderer } from './render/projectiles.js';
+import { FogRenderer } from './render/fog.js';
+import { audio } from './audio/audio.js';
 import { groundPointAt, pickAt, pickInBox, Selection } from './input/selection.js';
 import { Hud, type CommandButton } from './ui/hud.js';
 import { showLobby, type MatchSetup } from './ui/lobby.js';
@@ -43,6 +45,7 @@ class Game {
   private readonly entities: EntityRenderer;
   private readonly terrain: TerrainRenderer;
   private readonly projectiles = new ProjectileRenderer();
+  private readonly fog: FogRenderer;
   private readonly selection: Selection;
   private readonly hud: Hud;
   private readonly runner: LockstepRunner;
@@ -55,11 +58,22 @@ class Game {
   /** True when the next left click issues an attack-move. */
   private attackMovePending = false;
 
+  /**
+   * The command card as last built, so its hotkeys can actually be pressed.
+   *
+   * The card has always drawn a letter in the corner of each button; nothing was
+   * bound to those letters, so every one of them was a lie. Keeping the buttons
+   * here lets one lookup drive both the click and the key.
+   */
+  private commandButtons: CommandButton[] = [];
+
   private dragStart: { x: number; y: number } | null = null;
   private pointerNdc = new THREE.Vector2();
   private lastFrameMs = 0;
   private lastTick = -1;
   private finished = false;
+  /** Wall-clock seconds since start, for purely cosmetic animation. */
+  private elapsedS = 0;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -84,7 +98,14 @@ class Game {
     this.camera = new RtsCamera(canvas, MAP_SIZE);
     this.terrain = new TerrainRenderer(this.sim.world.map);
     this.entities = new EntityRenderer(this.provider, this.sim.world);
-    this.scene.add(this.terrain.group, this.entities.group, this.projectiles.group);
+    this.fog = new FogRenderer(this.sim.world.map);
+    this.fog.update(this.sim.world, this.localPlayer);
+    this.scene.add(
+      this.terrain.group,
+      this.entities.group,
+      this.projectiles.group,
+      this.fog.mesh,
+    );
     this.addLights();
 
     this.ghost = this.makeGhost();
@@ -215,6 +236,24 @@ class Game {
       return;
     }
 
+    // Global toggles first, so they work regardless of what is selected.
+    if (e.code === 'KeyM') {
+      this.hud.toggleMute();
+      return;
+    }
+    if (e.code === 'KeyF') {
+      void this.hud.toggleFullscreen();
+      return;
+    }
+
+    // Then whatever the command card currently offers. This is what makes
+    // B/D/T/R/G work: the card is contextual, so the same key means "Barracks"
+    // with a worker selected and "Brawler" with a barracks selected.
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && this.dispatchCommandKey(e.code)) {
+      e.preventDefault();
+      return;
+    }
+
     switch (e.code) {
       case 'KeyS':
         if (this.selection.hasOwnUnits(this.sim.world)) {
@@ -237,14 +276,33 @@ class Game {
       case 'KeyA':
         if (this.selection.hasOwnUnits(this.sim.world)) this.attackMovePending = true;
         break;
-      case 'KeyF':
-        // A keypress counts as the user gesture browsers require, so this is
-        // allowed to enter fullscreen where a programmatic call would be denied.
-        void this.hud.toggleFullscreen();
-        break;
       default:
         break;
     }
+  }
+
+  /**
+   * Fire the command-card button bound to a key, if there is one.
+   *
+   * Disabled buttons deliberately still "consume" nothing but make a sound —
+   * pressing B with no minerals should tell you why nothing happened rather than
+   * silently doing nothing.
+   */
+  private dispatchCommandKey(code: string): boolean {
+    if (!code.startsWith('Key')) return false;
+    const letter = code.slice(3);
+
+    for (const button of this.commandButtons) {
+      if (button.key.toUpperCase() !== letter) continue;
+      if (!button.enabled) {
+        audio.play('denied', 0.7);
+        return true;
+      }
+      button.onClick();
+      audio.play('select', 0.6);
+      return true;
+    }
+    return false;
   }
 
   private cancelModes(): void {
@@ -277,6 +335,7 @@ class Game {
     }
     if (additive) this.selection.toggle(hit);
     else this.selection.set([hit]);
+    audio.play('select', 0.7);
   }
 
   private handleBoxSelect(
@@ -332,6 +391,12 @@ class Game {
       const type = world.pool.type[hit]! as EntityType;
 
       if (type === EntityType.MineralPatch) {
+        this.projectiles.spawnClickMarker(
+          toFloat(world.pool.posX[hit]!),
+          toFloat(world.pool.posY[hit]!),
+          0x54e0c8,
+        );
+        audio.play('order', 0.9);
         this.issue({
           type: CommandType.Harvest,
           player: this.localPlayer,
@@ -340,7 +405,24 @@ class Game {
         });
         return;
       }
+      // Own building that needs work: send every selected worker to build or
+      // repair it. Same verb the player already uses for everything else.
+      if (owner === this.localPlayer) {
+        const def = defOf(type);
+        const needsWork =
+          def.isBuilding &&
+          (world.pool.buildState[hit] !== BuildState.Complete ||
+            world.pool.hp[hit]! < def.maxHp);
+        if (needsWork && this.orderWorkersTo(hit)) return;
+      }
+
       if (owner !== this.localPlayer && owner !== NEUTRAL) {
+        this.projectiles.spawnClickMarker(
+          toFloat(world.pool.posX[hit]!),
+          toFloat(world.pool.posY[hit]!),
+          0xff5a4a,
+        );
+        audio.play('order', 0.9);
         this.issue({
           type: CommandType.Attack,
           player: this.localPlayer,
@@ -355,9 +437,48 @@ class Game {
     if (point) this.issueGroundOrder(point.x, point.z, false);
   }
 
+  /**
+   * Send every selected worker to build or repair a structure.
+   *
+   * Returns false when nothing in the selection can do the job, so the caller
+   * can fall through to its normal handling rather than swallowing the click.
+   */
+  private orderWorkersTo(buildingIndex: number): boolean {
+    const world = this.sim.world;
+    const workers: number[] = [];
+    for (const i of this.selection.indices) {
+      if (world.pool.alive[i] !== 1) continue;
+      if (world.pool.owner[i] !== this.localPlayer) continue;
+      if (world.pool.type[i] !== EntityType.Worker) continue;
+      workers.push(i);
+    }
+    if (workers.length === 0) return false;
+
+    for (const w of workers) {
+      this.issue({
+        type: CommandType.Build,
+        player: this.localPlayer,
+        worker: world.pool.idAt(w),
+        building: world.pool.type[buildingIndex]! as EntityType,
+        tileX: world.pool.tileX[buildingIndex]!,
+        tileY: world.pool.tileY[buildingIndex]!,
+      });
+    }
+
+    this.projectiles.spawnClickMarker(
+      toFloat(world.pool.posX[buildingIndex]!),
+      toFloat(world.pool.posY[buildingIndex]!),
+      0x7dff9b,
+    );
+    audio.play('order', 0.9);
+    return true;
+  }
+
   private issueGroundOrder(x: number, z: number, attackMove: boolean): void {
     const units = this.selection.ids(this.sim.world);
     if (units.length === 0) return;
+    this.projectiles.spawnClickMarker(x, z, attackMove ? 0xff7a4a : 0x7dff9b);
+    audio.play('order', 0.9);
     this.issue({
       type: attackMove ? CommandType.AttackMove : CommandType.Move,
       player: this.localPlayer,
@@ -395,6 +516,7 @@ class Game {
     const tileX = Math.floor(point.x) - (def.footprint >> 1);
     const tileY = Math.floor(point.z) - (def.footprint >> 1);
     if (!this.sim.world.map.canPlace(tileX, tileY, def.footprint)) {
+      audio.play('denied', 0.8);
       this.hud.showBanner('Cannot build there', 'warn');
       window.setTimeout(() => this.hud.hideBanner(), 1400);
       return;
@@ -402,11 +524,14 @@ class Game {
 
     const worker = this.findSelectedWorker();
     if (worker === NO_ENTITY) {
+      audio.play('denied', 0.8);
       this.hud.showBanner('Select a worker first', 'warn');
       window.setTimeout(() => this.hud.hideBanner(), 1400);
       return;
     }
 
+    audio.play('build', 0.8);
+    this.projectiles.spawnClickMarker(point.x, point.z, 0x7dff9b);
     this.issue({
       type: CommandType.Build,
       player: this.localPlayer,
@@ -451,6 +576,7 @@ class Game {
   }
 
   private tick(dtMs: number): void {
+    this.elapsedS += dtMs / 1000;
     const alpha = this.runner.update(dtMs);
 
     // Snapshot exactly once per simulation tick, not per frame — interpolation
@@ -458,29 +584,94 @@ class Game {
     // interval to nothing and make movement stutter.
     if (this.sim.world.tick !== this.lastTick) {
       this.entities.captureSnapshot(this.sim.world);
-      // Shots are cleared at the start of the next step, so they have to be
-      // read here, on the same frame the tick landed.
+      // Shots and deaths are cleared at the start of the next step, so they have
+      // to be read here, on the same frame the tick landed.
       this.projectiles.spawnFromEvents(this.sim.world);
+      this.projectiles.spawnDeaths(this.sim.world);
+      this.playTickSounds();
+      this.fog.update(this.sim.world, this.localPlayer);
       this.lastTick = this.sim.world.tick;
     }
 
     this.camera.update(dtMs / 1000);
     this.projectiles.update(dtMs);
+    this.fog.refresh();
     this.selection.prune(this.sim.world);
 
-    this.entities.update(this.sim.world, alpha, this.selection.indices, this.camera.camera);
+    this.entities.update(
+      this.sim.world,
+      alpha,
+      this.selection.indices,
+      this.camera.camera,
+      this.elapsedS,
+      this.fog,
+      this.localPlayer,
+    );
     this.hud.updateResources(this.sim.world);
     this.hud.updateSelection(this.sim.world, this.selection.indices);
-    this.hud.setCommands(this.buildCommandCard());
+    this.hud.updateProduction(this.sim.world, this.selection.indices);
+    this.commandButtons = this.buildCommandCard();
+    this.hud.setCommands(this.commandButtons);
     this.hud.drawMinimap(
       this.sim.world,
       this.camera.focusPoint.x,
       this.camera.focusPoint.z,
       this.camera.zoomHeight * 0.42,
+      this.fog,
     );
 
     this.checkResult();
     this.renderer.render(this.scene, this.camera.camera);
+  }
+
+  /**
+   * Turn this tick's events into sound.
+   *
+   * Volume falls off with distance from the camera so a battle across the map
+   * does not drown out what is happening in front of the player, and only a few
+   * of each kind play per tick — twenty simultaneous rifle shots is noise, not
+   * information.
+   */
+  private playTickSounds(): void {
+    const world = this.sim.world;
+    const cx = this.camera.focusPoint.x;
+    const cz = this.camera.focusPoint.z;
+
+    const nearness = (x: number, z: number): number => {
+      const d = Math.hypot(x - cx, z - cz);
+      // Silent past roughly a screen's width away.
+      return Math.max(0, 1 - d / 55);
+    };
+
+    let shotsPlayed = 0;
+    const shots = world.events.shots;
+    for (let k = 0; k + 1 < shots.length && shotsPlayed < 3; k += 2) {
+      const i = shots[k]!;
+      if (world.pool.alive[i] !== 1) continue;
+      const near = nearness(toFloat(world.pool.posX[i]!), toFloat(world.pool.posY[i]!));
+      if (near <= 0.05) continue;
+      audio.play('shot', near * 0.8);
+      shotsPlayed++;
+    }
+
+    let deathsPlayed = 0;
+    for (const i of world.events.deaths) {
+      if (deathsPlayed >= 2) break;
+      if (world.pool.type[i] === EntityType.MineralPatch) continue;
+      const near = nearness(toFloat(world.pool.posX[i]!), toFloat(world.pool.posY[i]!));
+      if (near <= 0.05) continue;
+      const big = defOf(world.pool.type[i]! as EntityType).isBuilding;
+      audio.play(big ? 'explosion' : 'death', near);
+      deathsPlayed++;
+    }
+
+    // A completed building is worth hearing wherever it is — it is something the
+    // player deliberately started and is waiting on.
+    for (const i of world.events.completed) {
+      if (world.pool.owner[i] !== this.localPlayer) continue;
+      audio.play('build', 0.9);
+      break;
+    }
   }
 
   /** Contextual buttons for the current selection. */

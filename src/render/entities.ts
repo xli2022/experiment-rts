@@ -27,6 +27,7 @@ import { BuildState, EntityType, NEUTRAL } from '../sim/types.js';
 import type { World } from '../sim/world.js';
 import { colourFor, PLAYER_COLOURS } from './models/procedural.js';
 import type { ModelProvider } from './models/provider.js';
+import type { FogRenderer } from './fog.js';
 
 /** Instances allocated per pool. Comfortably above a 200-supply army. */
 const POOL_CAPACITY = 512;
@@ -62,6 +63,8 @@ export class EntityRenderer {
   private readonly scale = new THREE.Vector3(1, 1, 1);
   private readonly position = new THREE.Vector3();
   private readonly colour = new THREE.Color();
+  /** Drives the hover bob for air units. Cosmetic, so wall-clock is fine. */
+  private bobPhase = 0;
 
   constructor(
     private readonly provider: ModelProvider,
@@ -120,6 +123,7 @@ export class EntityRenderer {
       EntityType.Worker,
       EntityType.Rifleman,
       EntityType.Brawler,
+      EntityType.Gunship,
       EntityType.CommandPost,
       EntityType.Depot,
       EntityType.Barracks,
@@ -200,7 +204,11 @@ export class EntityRenderer {
     alpha: number,
     selected: ReadonlySet<number>,
     camera: THREE.Camera,
+    elapsedS = 0,
+    fog?: FogRenderer,
+    localPlayer = 0,
   ): void {
+    this.bobPhase = elapsedS * 2.2;
     for (const pool of this.pools.values()) pool.count = 0;
     let ringCount = 0;
     let barCount = 0;
@@ -210,11 +218,21 @@ export class EntityRenderer {
 
     for (let i = 0; i < pool.count; i++) {
       if (pool.alive[i] !== 1) continue;
+      // Fog hides enemies by not drawing them. Covering them with a dark plane
+      // would not work — units stand above the ground, not on the texture.
+      if (fog && !fog.shouldDraw(world, i, localPlayer)) continue;
 
       const type = pool.type[i]! as EntityType;
       const def = defOf(type);
       const owner = pool.owner[i]!;
       const spec = this.provider.get(type);
+
+      // Air units are drawn well above the ground, with a slow bob. Altitude is
+      // purely visual — the simulation is 2D and treats them like anything else
+      // — but without it a gunship parked over infantry is unreadable.
+      const altitude = def.flying
+        ? FLIGHT_ALTITUDE + Math.sin(this.bobPhase + i * 0.7) * 0.12
+        : 0;
 
       const x = this.prevX[i]! + (this.currX[i]! - this.prevX[i]!) * a;
       const z = this.prevZ[i]! + (this.currZ[i]! - this.prevZ[i]!) * a;
@@ -240,7 +258,7 @@ export class EntityRenderer {
         if (!entry || entry.count >= POOL_CAPACITY) continue;
         const part = spec.parts[p]!;
 
-        this.position.set(part.offset[0], part.offset[1] + sink, part.offset[2]);
+        this.position.set(part.offset[0], part.offset[1] + sink + altitude, part.offset[2]);
         this.position.applyQuaternion(this.quat);
         this.position.x += x;
         this.position.z += z;
@@ -272,7 +290,7 @@ export class EntityRenderer {
       if ((damaged || selected.has(i)) && barCount < POOL_CAPACITY && def.maxHp > 1) {
         const frac = Math.max(0, Math.min(1, pool.hp[i]! / def.maxHp));
         const width = def.isBuilding ? 2.0 : 0.9;
-        const y = spec.height + 0.35;
+        const y = spec.height + 0.35 + altitude;
 
         // Billboard the bar, then step half its width along the camera's own
         // right vector to place the left edge. Offsetting in world X instead
@@ -326,6 +344,8 @@ export class EntityRenderer {
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
+/** How high above the ground air units are drawn. */
+const FLIGHT_ALTITUDE = 2.4;
 /** Scratch for the camera-space right vector used to anchor health bars. */
 const barRight = new THREE.Vector3();
 const IDENTITY = new THREE.Quaternion();

@@ -75,6 +75,10 @@ interface Survey {
   sites: number[];
   patches: number[];
   enemyTargets: number[];
+  /** Enemy combat units by class, for picking a counter. */
+  enemyRanged: number;
+  enemyMelee: number;
+  enemyAir: number;
   minerals: number;
   supplyUsed: number;
   supplyMax: number;
@@ -100,6 +104,9 @@ function survey(world: World, player: PlayerId): Survey {
     sites: [],
     patches: [],
     enemyTargets: [],
+    enemyRanged: 0,
+    enemyMelee: 0,
+    enemyAir: 0,
     minerals: world.player(player).minerals,
     supplyUsed: world.player(player).supplyUsed,
     supplyMax: world.player(player).supplyMax,
@@ -119,6 +126,9 @@ function survey(world: World, player: PlayerId): Survey {
     if (owner !== player) {
       // Prefer structures as attack targets; killing buildings is what wins.
       if (defOf(type).isBuilding) s.enemyTargets.push(i);
+      else if (type === EntityType.Rifleman) s.enemyRanged++;
+      else if (type === EntityType.Brawler) s.enemyMelee++;
+      else if (type === EntityType.Gunship) s.enemyAir++;
       continue;
     }
 
@@ -130,6 +140,7 @@ function survey(world: World, player: PlayerId): Survey {
         break;
       case EntityType.Rifleman:
       case EntityType.Brawler:
+      case EntityType.Gunship:
         s.army.push(i);
         break;
       case EntityType.CommandPost:
@@ -213,14 +224,38 @@ function manageProduction(
 
   for (const b of s.barracks) {
     if (pool.prodCount[b]! >= 2) continue;
-    // Mix melee into the ranged core; a pure rifleman army melts to brawlers.
-    const wantBrawler = (world.tick / THINK_INTERVAL + b) % 3 === 0;
-    const unit = wantBrawler ? EntityType.Brawler : EntityType.Rifleman;
+    const unit = pickUnitToTrain(world, s, b);
     const cost = defOf(unit).mineralCost;
     if (s.minerals < cost) break;
     cmds.push({ type: CommandType.Train, player, building: pool.idAt(b), unit });
     s.minerals -= cost;
   }
+}
+
+/**
+ * Choose the next unit, countering whatever the opponent has most of.
+ *
+ * The roster is a triangle — ranged beats air, air beats melee, melee beats
+ * ranged — and an AI that ignored it would make the whole mechanic invisible in
+ * play. Falls back to a rotating mix when the enemy composition is unknown or
+ * balanced, because committing to one type against an unseen army is how you
+ * get hard-countered yourself.
+ */
+function pickUnitToTrain(world: World, s: Survey, building: number): EntityType {
+  const { enemyRanged, enemyMelee, enemyAir } = s;
+  const known = enemyRanged + enemyMelee + enemyAir;
+
+  if (known >= 3) {
+    if (enemyAir >= enemyMelee && enemyAir >= enemyRanged) return EntityType.Rifleman;
+    if (enemyMelee >= enemyRanged && enemyMelee >= enemyAir) return EntityType.Gunship;
+    if (enemyRanged >= enemyMelee && enemyRanged >= enemyAir) return EntityType.Brawler;
+  }
+
+  // Nothing decisive scouted: keep a spread so no single counter beats us.
+  const phase = (Math.floor(world.tick / THINK_INTERVAL) + building) % 4;
+  if (phase === 0) return EntityType.Brawler;
+  if (phase === 1) return EntityType.Gunship;
+  return EntityType.Rifleman;
 }
 
 /**

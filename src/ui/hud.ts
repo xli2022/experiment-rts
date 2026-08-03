@@ -12,10 +12,11 @@
 
 import { defOf } from '../config/rules.js';
 import { toFloat } from '../sim/fixed.js';
-import { BuildState, EntityType, NEUTRAL, type PlayerId } from '../sim/types.js';
+import { BuildState, EntityType, NEUTRAL, TICKS_PER_SECOND, type PlayerId } from '../sim/types.js';
 import type { World } from '../sim/world.js';
 import { PLAYER_COLOURS, RESOURCE_COLOUR } from '../render/models/procedural.js';
 import { fullscreenSupported, isFullscreen, onFullscreenChange, toggleFullscreen } from './fullscreen.js';
+import { audio } from '../audio/audio.js';
 
 export interface CommandButton {
   key: string;
@@ -34,6 +35,11 @@ export class Hud {
   private readonly selectionTitle: HTMLElement;
   private readonly selectionDetail: HTMLElement;
   private readonly commandGrid: HTMLElement;
+  private readonly production: HTMLElement;
+  private readonly prodLabel: HTMLElement;
+  private readonly prodEta: HTMLElement;
+  private readonly prodFill: HTMLElement;
+  private readonly prodQueue: HTMLElement;
   private readonly banner: HTMLElement;
   private readonly overlay: HTMLElement;
   private readonly minimap: HTMLCanvasElement;
@@ -41,6 +47,7 @@ export class Hud {
   readonly marquee: HTMLElement;
 
   private readonly fullscreenBtn: HTMLButtonElement;
+  private readonly muteBtn: HTMLButtonElement;
 
   /** True while the pointer is over a HUD panel, to suppress world clicks. */
   pointerOverUi = false;
@@ -75,15 +82,25 @@ export class Hud {
       <div class="panel" id="command-panel">
         <div id="selection-title">Nothing selected</div>
         <div id="selection-detail"></div>
+        <div id="production" hidden>
+          <div id="prod-row">
+            <span id="prod-label"></span>
+            <span id="prod-eta"></span>
+          </div>
+          <div id="prod-track"><div id="prod-fill"></div></div>
+          <div id="prod-queue"></div>
+        </div>
         <div id="command-grid"></div>
       </div>
 
+      <button class="panel" id="mute-btn" type="button"
+              title="Mute (M)" aria-label="Toggle sound"></button>
       <button class="panel" id="fullscreen-btn" type="button"
               title="Fullscreen (F)" aria-label="Toggle fullscreen"></button>
 
       <div class="panel" id="banner"></div>
       <div id="marquee"></div>
-      <div class="hint">Arrows / edge pan &nbsp;·&nbsp; wheel zoom &nbsp;·&nbsp; drag select &nbsp;·&nbsp; right-click order &nbsp;·&nbsp; A attack &nbsp;·&nbsp; S stop &nbsp;·&nbsp; F fullscreen &nbsp;·&nbsp; Ctrl+1-9 groups</div>
+      <div class="hint">Arrows / edge pan &nbsp;·&nbsp; wheel zoom &nbsp;·&nbsp; drag select &nbsp;·&nbsp; right-click order &nbsp;·&nbsp; A attack &nbsp;·&nbsp; S stop &nbsp;·&nbsp; F fullscreen &nbsp;·&nbsp; M mute &nbsp;·&nbsp; Ctrl+1-9 groups</div>
       <div id="overlay" class="hidden"></div>
     `;
 
@@ -92,11 +109,20 @@ export class Hud {
     this.selectionTitle = must(root, '#selection-title');
     this.selectionDetail = must(root, '#selection-detail');
     this.commandGrid = must(root, '#command-grid');
+    this.production = must(root, '#production');
+    this.prodLabel = must(root, '#prod-label');
+    this.prodEta = must(root, '#prod-eta');
+    this.prodFill = must(root, '#prod-fill');
+    this.prodQueue = must(root, '#prod-queue');
     this.banner = must(root, '#banner');
     this.overlay = must(root, '#overlay');
     this.marquee = must(root, '#marquee');
     this.minimap = must(root, '#minimap') as HTMLCanvasElement;
     this.minimapCtx = this.minimap.getContext('2d')!;
+
+    this.muteBtn = must(root, '#mute-btn') as HTMLButtonElement;
+    this.muteBtn.addEventListener('click', () => this.toggleMute());
+    this.syncMuteLabel();
 
     this.fullscreenBtn = must(root, '#fullscreen-btn') as HTMLButtonElement;
     if (fullscreenSupported()) {
@@ -111,7 +137,9 @@ export class Hud {
 
     // Panels swallow pointer events so a click on the command card never also
     // issues a world order behind it.
-    for (const sel of ['#resources', '#minimap-panel', '#command-panel', '#fullscreen-btn']) {
+    for (const sel of [
+      '#resources', '#minimap-panel', '#command-panel', '#fullscreen-btn', '#mute-btn',
+    ]) {
       const panel = must(root, sel);
       panel.classList.add('interactive');
       panel.addEventListener('pointerenter', () => {
@@ -130,6 +158,18 @@ export class Hud {
     };
     this.minimap.addEventListener('pointerdown', handleMinimap);
     this.minimap.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
+  /** Toggle all sound. */
+  toggleMute(): void {
+    audio.toggleMuted();
+    this.syncMuteLabel();
+  }
+
+  private syncMuteLabel(): void {
+    const muted = audio.muted;
+    this.muteBtn.textContent = muted ? '🔇' : '🔊';
+    this.muteBtn.title = muted ? 'Unmute (M)' : 'Mute (M)';
   }
 
   /** Enter or leave fullscreen. Safe to call from a click or a keypress. */
@@ -204,6 +244,52 @@ export class Hud {
   }
 
   /**
+   * Show what a selected building is training, and how far along it is.
+   *
+   * A production queue with no visible progress is the single most common thing
+   * players ask about in an RTS — "is it building?" — so the bar reports the
+   * unit by name, the fraction complete, and the remaining time.
+   */
+  updateProduction(world: World, selected: ReadonlySet<number>): void {
+    const single = selected.size === 1 ? [...selected][0]! : -1;
+    const pool = world.pool;
+
+    if (
+      single < 0 ||
+      pool.alive[single] !== 1 ||
+      pool.owner[single] !== this.localPlayer ||
+      pool.prodCount[single]! === 0
+    ) {
+      this.production.hidden = true;
+      return;
+    }
+
+    this.production.hidden = false;
+
+    const current = pool.prodAt(single, 0);
+    const def = defOf(current);
+    const progress = Math.min(1, pool.prodProgress[single]! / Math.max(1, def.buildTicks));
+    const remainingTicks = Math.max(0, def.buildTicks - pool.prodProgress[single]!);
+
+    this.prodLabel.textContent = `Training ${def.name}`;
+    this.prodEta.textContent = `${(remainingTicks / TICKS_PER_SECOND).toFixed(1)}s`;
+    this.prodFill.style.width = `${(progress * 100).toFixed(1)}%`;
+
+    // The rest of the queue, so a player can see what they have committed to.
+    const queued = pool.prodCount[single]! - 1;
+    if (queued > 0) {
+      const names: string[] = [];
+      for (let slot = 1; slot < pool.prodCount[single]!; slot++) {
+        names.push(defOf(pool.prodAt(single, slot)).name);
+      }
+      this.prodQueue.textContent = `Queued: ${names.join(', ')}`;
+      this.prodQueue.hidden = false;
+    } else {
+      this.prodQueue.hidden = true;
+    }
+  }
+
+  /**
    * Rebuild the command card.
    *
    * Only rebuilt when the buttons actually change — recreating DOM every frame
@@ -267,7 +353,13 @@ export class Hud {
    * Throttled to every few frames: it is a full canvas repaint and nothing on it
    * changes fast enough at 60Hz to be worth the cost.
    */
-  drawMinimap(world: World, focusX: number, focusZ: number, viewRadius: number): void {
+  drawMinimap(
+    world: World,
+    focusX: number,
+    focusZ: number,
+    viewRadius: number,
+    fog?: { isExploredAt(tx: number, tz: number): boolean; isVisibleAt(x: number, z: number): boolean },
+  ): void {
     if (this.minimapFrame++ % 4 !== 0) return;
 
     const ctx = this.minimapCtx;
@@ -278,13 +370,19 @@ export class Hud {
 
     // Cliffs, sampled rather than drawn per tile — at this scale several tiles
     // share a pixel anyway.
-    ctx.fillStyle = '#39414f';
     const step = 2;
     for (let y = 0; y < world.map.height; y += step) {
       for (let x = 0; x < world.map.width; x += step) {
+        const explored = !fog || fog.isExploredAt(x, y);
+        if (!explored) continue;
         if (world.map.tiles[world.map.index(x, y)] === 1) {
-          ctx.fillRect(x * scale, y * scale, step * scale, step * scale);
+          ctx.fillStyle = '#39414f';
+        } else {
+          // Explored ground is drawn faintly so the shape of the map is
+          // recoverable from memory without revealing what is on it.
+          ctx.fillStyle = fog && !fog.isVisibleAt(x + 0.5, y + 0.5) ? '#1d2430' : '#26303e';
         }
+        ctx.fillRect(x * scale, y * scale, step * scale, step * scale);
       }
     }
 
@@ -295,11 +393,23 @@ export class Hud {
       const def = defOf(type);
       const owner = pool.owner[i]!;
 
+      const px0 = toFloat(pool.posX[i]!);
+      const pz0 = toFloat(pool.posY[i]!);
+      // The minimap obeys the same fog rules as the world view; showing enemy
+      // positions here would defeat the entire point of having fog.
+      if (fog && owner !== this.localPlayer) {
+        const known =
+          owner === NEUTRAL
+            ? fog.isExploredAt(Math.floor(px0), Math.floor(pz0))
+            : fog.isVisibleAt(px0, pz0);
+        if (!known) continue;
+      }
+
       ctx.fillStyle =
         owner === NEUTRAL ? hex(RESOURCE_COLOUR) : hex(PLAYER_COLOURS[owner] ?? 0x999999);
 
-      const px = toFloat(pool.posX[i]!) * scale;
-      const pz = toFloat(pool.posY[i]!) * scale;
+      const px = px0 * scale;
+      const pz = pz0 * scale;
       // Buildings as squares, units as dots — shape carries information that
       // colour alone cannot at three pixels.
       if (def.isBuilding) {

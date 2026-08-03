@@ -29,12 +29,32 @@ suite — see [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml).
 | Attack-move | `A` then click |
 | Stop / Hold | `S` / `H` |
 | Control groups | `Ctrl`+`1`–`9` to assign, `1`–`9` to recall |
+| Build / train | the letter shown on each command-card button |
+| Repair | right-click your own damaged or half-built structure with a worker |
 | Fullscreen | `F`, or the button top-right |
+| Mute | `M` |
 | Cancel | `Esc` |
 
-Workers gather minerals and construct buildings. The Command Post trains
-workers, Supply Depots raise the supply cap, Barracks train Riflemen and
-Brawlers, and Turrets defend. You lose when your last structure falls.
+Workers gather minerals, construct buildings, and repair them. The Command Post
+trains workers, Supply Depots raise the supply cap, Barracks train the three
+combat units, and Turrets defend. You lose when your last structure falls.
+
+### The counter triangle
+
+|  |  |
+|---|---|
+| **Rifleman** (ranged) | double damage to Gunships |
+| **Gunship** (air) | double damage to Brawlers, and ignores terrain entirely |
+| **Brawler** (melee) | double damage to Riflemen |
+
+It is a cycle with no dominant pick, and it is expressed as a damage multiplier
+rather than "cannot target" — committing to one unit type leaves you at a
+disadvantage, never helpless.
+
+Fog of war hides what you are not currently watching. It is a rendering feature
+rather than a secret: peer-to-peer lockstep gives every client the whole game
+state by construction, exactly as the genre's originals did. What it buys is
+scouting and map control.
 
 ## Multiplayer without a server
 

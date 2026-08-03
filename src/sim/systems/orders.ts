@@ -159,6 +159,9 @@ function setMoveOrder(
   pool.combatTarget[index] = NO_ENTITY;
   pool.clearPath(index);
 
+  // Flyers steer straight there; no path or field is ever built for them.
+  if (defOf(pool.type[index]! as EntityType).flying) return;
+
   if (grouped) {
     const goal = world.map.tileOfPos(x, y);
     pool.flowGoal[index] = goal >= 0 ? goal : -1;
@@ -187,11 +190,11 @@ function executeBuild(
   const def = defOf(building);
   if (!def.isBuilding || building === EntityType.MineralPatch) return;
 
-  // Issuing a build order onto an existing unfinished site of ours means "go
-  // help with that", not "start a second one". Without this the order would be
-  // rejected by the placement check below, which is what let abandoned sites sit
-  // half-built forever with nobody assigned to them.
-  const existing = findSiteAt(world, player, tileX, tileY);
+  // Issuing a build order onto one of our own structures means "work on that" —
+  // finish it if it is a site, patch it up if it is damaged. Without this the
+  // order would be rejected by the placement check below, which is what let
+  // abandoned sites sit half-built forever with nobody assigned to them.
+  const existing = findWorkableAt(world, player, tileX, tileY);
   if (existing !== NO_ENTITY) {
     assignBuilder(world, wi, existing);
     return;
@@ -232,11 +235,15 @@ function assignBuilder(world: World, workerIndex: number, siteId: EntityId): voi
 }
 
 /**
- * An unfinished building of ours whose footprint starts at this tile.
+ * A building of ours at this tile that a worker could usefully work on.
+ *
+ * That means either unfinished (build it) or damaged (repair it). A finished,
+ * undamaged building is not workable, so ordering a worker onto one does
+ * nothing rather than parking it there forever.
  *
  * Scans the pool in ascending index order, so every peer finds the same one.
  */
-function findSiteAt(
+function findWorkableAt(
   world: World,
   player: PlayerId,
   tileX: number,
@@ -246,10 +253,13 @@ function findSiteAt(
   for (let i = 0; i < pool.count; i++) {
     if (pool.alive[i] !== 1) continue;
     if (pool.owner[i] !== player) continue;
-    if (pool.buildState[i] === 2) continue; // already finished
     if (pool.tileX[i] !== tileX || pool.tileY[i] !== tileY) continue;
-    if (!defOf(pool.type[i]! as EntityType).isBuilding) continue;
-    return pool.idAt(i);
+    const def = defOf(pool.type[i]! as EntityType);
+    if (!def.isBuilding) continue;
+
+    const unfinished = pool.buildState[i] !== 2;
+    const damaged = pool.hp[i]! < def.maxHp;
+    if (unfinished || damaged) return pool.idAt(i);
   }
   return NO_ENTITY;
 }
