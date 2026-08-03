@@ -222,7 +222,11 @@ export const DEFS: readonly EntityDef[] = [
     type: EntityType.MineralPatch,
     name: 'Mineral Patch',
     isBuilding: true, // static and blocks placement, though not player-owned
-    collides: true,
+    // Walked over, not walked around. A mineral line is eight patches in a tight
+    // arc right beside the Command Post, and as solid ground it was a wall
+    // across the busiest few tiles on the map: workers queued round the ends of
+    // it, and a unit told to move through the base took the long way.
+    collides: false,
     flying: false,
     maxHp: 1,
     radius: fromFloat(0.8),

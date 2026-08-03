@@ -26,6 +26,23 @@ import { Tile } from './types.js';
 
 export const MAP_SIZE = 128;
 
+/** Nothing stands here. */
+export const UNOCCUPIED = 0;
+/**
+ * A structure stands here: it blocks both movement and further building.
+ */
+export const OCCUPIED_SOLID = 1;
+/**
+ * Something stands here that blocks building but not movement.
+ *
+ * Mineral patches are the case. A patch is scenery you mine, not a wall — units
+ * walk over one rather than round it, and a mineral line stops being a fence
+ * that a worker has to path all the way around to reach the far side of. It
+ * still cannot be built on, or a base could be walled in with its own economy
+ * underneath it.
+ */
+export const OCCUPIED_RESERVED = 2;
+
 /** Where each player's first Command Post is centred, in tiles. */
 export interface StartLocation {
   tileX: number;
@@ -102,17 +119,21 @@ export class GameMap {
   isWalkable(tx: number, ty: number): boolean {
     if (!this.inBounds(tx, ty)) return false;
     const i = this.index(tx, ty);
-    return this.tiles[i] !== Tile.Cliff && this.occupied[i] === 0;
+    return this.tiles[i] !== Tile.Cliff && this.occupied[i] !== OCCUPIED_SOLID;
   }
 
-  /** A building of `footprint` size may be placed with its top-left here. */
+  /**
+   * A building of `footprint` size may be placed with its top-left here.
+   *
+   * Stricter than `isWalkable`: reserved tiles are walkable but not buildable.
+   */
   canPlace(tx: number, ty: number, footprint: number): boolean {
     for (let y = ty; y < ty + footprint; y++) {
       for (let x = tx; x < tx + footprint; x++) {
         if (!this.inBounds(x, y)) return false;
         const i = this.index(x, y);
         if (this.tiles[i] !== Tile.Ground) return false;
-        if (this.occupied[i] !== 0) return false;
+        if (this.occupied[i] !== UNOCCUPIED) return false;
       }
     }
     return true;

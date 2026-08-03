@@ -13,7 +13,7 @@
 import { checksumInit, checksumU32 } from './checksum.js';
 import { EntityPool } from './entities.js';
 import { fromInt, type Fix } from './fixed.js';
-import { GameMap, generateMap, MAP_SIZE } from './map.js';
+import { GameMap, generateMap, MAP_SIZE, OCCUPIED_RESERVED, OCCUPIED_SOLID } from './map.js';
 import { Rng } from './rng.js';
 import { SpatialGrid } from './spatial.js';
 import {
@@ -147,7 +147,14 @@ export class World {
     // units spawn by, so a base and its opposite number are mirror images
     // instead of two copies pointing the same way.
     this.pool.faceY[i] = cy < fromInt(this.map.height >> 1) ? 65536 : -65536;
-    this.map.setOccupied(tileX, tileY, def.footprint, 1);
+    // A structure that does not collide still reserves its ground — nothing can
+    // be built on a mineral patch, but everything can walk over one.
+    this.map.setOccupied(
+      tileX,
+      tileY,
+      def.footprint,
+      def.collides ? OCCUPIED_SOLID : OCCUPIED_RESERVED,
+    );
     return id;
   }
 

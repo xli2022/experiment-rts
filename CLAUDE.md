@@ -76,14 +76,28 @@ screen:
   so one player's reinforcements appeared four tiles nearer the front than the
   other's, every time.
 
-**The simulation is deterministic but not rotation-equivariant.** `fmul`
-truncates toward negative infinity, so `fmul(-a, b) !== -fmul(a, b)` for 99.99%
-of operand pairs — always by one ULP. Two mirrored armies given mirrored orders
-therefore drift apart within about ten ticks. It is far below anything a player
-can perceive and it costs nothing in multiplayer (both peers compute the same
-numbers, which is all lockstep needs), but it means an AI-vs-AI mirror match is
-decided by rounding, and it cannot be fixed without changing `fmul`'s rounding —
-which is the one function everything else's correctness rests on.
+**The simulation is deterministic but not rotation-equivariant.** Set both sides
+up as exact mirrors, give them mirrored orders, and they still diverge. Two
+independent causes, measured:
+
+- **A\* breaks ties by tile index**, and row-major index is not invariant under a
+  180-degree rotation. 27 of 30 mirrored start/goal pairs return a
+  *differently shaped* route — always the same length, never the same tiles.
+  Units steer between waypoints, so a different-shaped path of equal tile cost
+  is a different real distance. This is the big one: with no bots and exactly
+  mirrored harvest orders, one side out-mined the other by a third.
+- **`fmul` truncates toward negative infinity**, so `fmul(-a, b) !== -fmul(a, b)`
+  for 99.99% of operand pairs — always by one ULP. This is the floor: even with
+  direct steering and no pathfinding, two mirrored units drift apart within
+  about ten ticks.
+
+None of this is a desync risk — every peer computes the same numbers, which is
+all lockstep needs — and none of it is perceptible in a human game. What it means
+is that **an AI-vs-AI mirror match is not a fair fight**, and measuring balance
+by running bot matches on a symmetric map will report whichever side the
+tie-breaks happen to favour. Fixing it needs a rotation-invariant tie-break in
+A\* and a change to `fmul`'s rounding, and `fmul` is the function everything
+else's correctness rests on.
 
 ## Rendering gotchas worth not rediscovering
 
