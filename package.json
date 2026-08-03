@@ -1,0 +1,32 @@
+{
+  "name": "experiment-rts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A 3D real-time strategy game for the browser with serverless P2P multiplayer",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "format": "prettier --write \"src/**/*.{ts,css}\" \"tests/**/*.ts\"",
+    "determinism:node": "vite-node scripts/checksum-probe.ts",
+    "determinism:bun": "bun run scripts/checksum-probe.ts",
+    "determinism:cross": "bash scripts/cross-engine.sh"
+  },
+  "dependencies": {
+    "three": "^0.185.1",
+    "trystero": "^0.25.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "@types/three": "^0.185.3",
+    "prettier": "^3.8.1",
+    "typescript": "^6.0.2",
+    "vite": "^8.2.0",
+    "vite-node": "^6.0.0",
+    "vitest": "^4.1.10"
+  }
+}

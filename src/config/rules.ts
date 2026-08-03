@@ -1,0 +1,256 @@
+/**
+ * All balance data in one file.
+ *
+ * Every tunable number the simulation reads lives here, so balancing is editing
+ * a table rather than hunting through systems. Values are converted to
+ * fixed-point / ticks at module load, which is deterministic — `fromFloat` is
+ * only ever applied to literals here, never to simulation state.
+ *
+ * Distances are in world units (1 unit = 1 map tile). Speeds are authored in
+ * units per second and stored per tick.
+ */
+
+import { fromFloat, type Fix } from '../sim/fixed.js';
+import { EntityType, seconds, TICKS_PER_SECOND } from '../sim/types.js';
+
+/** Author a speed in units/second, store it as movement per tick. */
+function speed(unitsPerSecond: number): Fix {
+  return fromFloat(unitsPerSecond / TICKS_PER_SECOND);
+}
+
+export interface EntityDef {
+  readonly type: EntityType;
+  readonly name: string;
+  readonly isBuilding: boolean;
+  readonly maxHp: number;
+  /** Collision radius in world units. */
+  readonly radius: Fix;
+  /** Buildings occupy footprint x footprint tiles. Zero for units. */
+  readonly footprint: number;
+  readonly speedPerTick: Fix;
+  /** Max chord step when turning toward a new facing, per tick. */
+  readonly turnPerTick: Fix;
+  readonly sightRange: Fix;
+  /** Zero means this entity cannot attack. */
+  readonly attackRange: Fix;
+  readonly damage: number;
+  readonly attackCooldown: number;
+  readonly mineralCost: number;
+  readonly buildTicks: number;
+  readonly supplyCost: number;
+  readonly supplyProvided: number;
+  /** Unit types this building can train, in menu order. */
+  readonly produces: readonly EntityType[];
+}
+
+const NONE: readonly EntityType[] = [];
+
+/**
+ * Indexed by `EntityType`. Order must match the enum exactly — the simulation
+ * looks defs up by numeric type, and `tests/rules.test.ts` asserts alignment.
+ */
+export const DEFS: readonly EntityDef[] = [
+  {
+    type: EntityType.Worker,
+    name: 'Worker',
+    isBuilding: false,
+    maxHp: 40,
+    radius: fromFloat(0.32),
+    footprint: 0,
+    speedPerTick: speed(3.2),
+    turnPerTick: fromFloat(0.5),
+    sightRange: fromFloat(7),
+    attackRange: fromFloat(0.6),
+    damage: 5,
+    attackCooldown: seconds(1.0),
+    mineralCost: 50,
+    buildTicks: seconds(12),
+    supplyCost: 1,
+    supplyProvided: 0,
+    produces: NONE,
+  },
+  {
+    type: EntityType.Rifleman,
+    name: 'Rifleman',
+    isBuilding: false,
+    maxHp: 45,
+    radius: fromFloat(0.32),
+    footprint: 0,
+    speedPerTick: speed(2.9),
+    turnPerTick: fromFloat(0.5),
+    sightRange: fromFloat(8),
+    attackRange: fromFloat(5),
+    damage: 6,
+    attackCooldown: seconds(0.8),
+    mineralCost: 50,
+    buildTicks: seconds(17),
+    supplyCost: 1,
+    supplyProvided: 0,
+    produces: NONE,
+  },
+  {
+    type: EntityType.Brawler,
+    name: 'Brawler',
+    isBuilding: false,
+    maxHp: 90,
+    radius: fromFloat(0.42),
+    footprint: 0,
+    speedPerTick: speed(3.6),
+    turnPerTick: fromFloat(0.6),
+    sightRange: fromFloat(7),
+    attackRange: fromFloat(0.9),
+    damage: 13,
+    attackCooldown: seconds(1.2),
+    mineralCost: 75,
+    buildTicks: seconds(20),
+    supplyCost: 2,
+    supplyProvided: 0,
+    produces: NONE,
+  },
+  {
+    type: EntityType.CommandPost,
+    name: 'Command Post',
+    isBuilding: true,
+    maxHp: 1500,
+    radius: fromFloat(2.0),
+    footprint: 4,
+    speedPerTick: 0,
+    turnPerTick: 0,
+    sightRange: fromFloat(9),
+    attackRange: 0,
+    damage: 0,
+    attackCooldown: 0,
+    mineralCost: 400,
+    buildTicks: seconds(55),
+    supplyCost: 0,
+    supplyProvided: 10,
+    produces: [EntityType.Worker],
+  },
+  {
+    type: EntityType.Depot,
+    name: 'Supply Depot',
+    isBuilding: true,
+    maxHp: 500,
+    radius: fromFloat(1.0),
+    footprint: 2,
+    speedPerTick: 0,
+    turnPerTick: 0,
+    sightRange: fromFloat(6),
+    attackRange: 0,
+    damage: 0,
+    attackCooldown: 0,
+    mineralCost: 100,
+    buildTicks: seconds(25),
+    supplyCost: 0,
+    supplyProvided: 8,
+    produces: NONE,
+  },
+  {
+    type: EntityType.Barracks,
+    name: 'Barracks',
+    isBuilding: true,
+    maxHp: 1000,
+    radius: fromFloat(1.5),
+    footprint: 3,
+    speedPerTick: 0,
+    turnPerTick: 0,
+    sightRange: fromFloat(7),
+    attackRange: 0,
+    damage: 0,
+    attackCooldown: 0,
+    mineralCost: 150,
+    buildTicks: seconds(45),
+    supplyCost: 0,
+    supplyProvided: 0,
+    produces: [EntityType.Rifleman, EntityType.Brawler],
+  },
+  {
+    type: EntityType.Turret,
+    name: 'Turret',
+    isBuilding: true,
+    maxHp: 600,
+    radius: fromFloat(1.0),
+    footprint: 2,
+    speedPerTick: 0,
+    turnPerTick: fromFloat(0.9),
+    sightRange: fromFloat(8),
+    attackRange: fromFloat(6.5),
+    damage: 11,
+    attackCooldown: seconds(0.8),
+    mineralCost: 100,
+    buildTicks: seconds(28),
+    supplyCost: 0,
+    supplyProvided: 0,
+    produces: NONE,
+  },
+  {
+    type: EntityType.MineralPatch,
+    name: 'Mineral Patch',
+    isBuilding: true, // static and blocks placement, though not player-owned
+    maxHp: 1,
+    radius: fromFloat(0.8),
+    footprint: 2,
+    speedPerTick: 0,
+    turnPerTick: 0,
+    sightRange: 0,
+    attackRange: 0,
+    damage: 0,
+    attackCooldown: 0,
+    mineralCost: 0,
+    buildTicks: 0,
+    supplyCost: 0,
+    supplyProvided: 0,
+    produces: NONE,
+  },
+];
+
+export function defOf(type: EntityType): EntityDef {
+  return DEFS[type]!;
+}
+
+// ---------------------------------------------------------------------------
+// Global economy and match rules
+// ---------------------------------------------------------------------------
+
+export const STARTING_MINERALS = 50;
+export const STARTING_WORKERS = 6;
+
+/** Hard ceiling on supply regardless of how many depots are built. */
+export const SUPPLY_MAX = 200;
+
+/** Minerals a worker carries per trip. */
+export const MINERALS_PER_TRIP = 5;
+/** Ticks spent standing in a patch before the load is full. */
+export const HARVEST_TICKS = seconds(2.0);
+/** Total minerals in a patch before it is exhausted and removed. */
+export const PATCH_AMOUNT = 1500;
+/** Patches per starting base. */
+export const PATCHES_PER_BASE = 8;
+
+/** Build orders can be queued this deep per production building. */
+export const MAX_PRODUCTION_QUEUE = 5;
+
+/** How close a worker must be to a construction site to work on it. */
+export const BUILD_REACH = fromFloat(1.2);
+
+/**
+ * A* requests served per tick. Excess requests wait in a deterministic FIFO —
+ * pathfinding is the one system that can blow the tick budget, and letting it
+ * run unbounded would stall the lockstep turn for every peer.
+ */
+export const PATH_BUDGET_PER_TICK = 24;
+
+/**
+ * Move orders naming at least this many units use a shared flow field instead of
+ * one A* search each.
+ *
+ * Below the threshold, per-unit A* is cheaper: a flow field costs a full-map
+ * Dijkstra sweep, which is wasted effort for a single worker walking a few
+ * tiles. Above it, the sweep is amortised across the whole group and wins by a
+ * wide margin — an army-wide attack-move was measured at roughly 60ms of
+ * pathfinding per tick before this split, which in lockstep stalls every peer.
+ */
+export const GROUP_PATH_THRESHOLD = 5;
+
+/** Separation strength when units overlap, as a fraction of the overlap. */
+export const SEPARATION_STRENGTH = fromFloat(0.35);
