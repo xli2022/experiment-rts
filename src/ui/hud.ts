@@ -199,7 +199,7 @@ export class Hud {
     // silently stops, so it gets a colour rather than needing to be noticed.
     this.supplyValue.classList.toggle(
       'supply-capped',
-      ps.supplyUsed >= ps.supplyMax && ps.supplyMax > 0,
+      (ps.supplyUsed >= ps.supplyMax && ps.supplyMax > 0) || anySupplyBlocked(world, this.localPlayer),
     );
   }
 
@@ -277,8 +277,21 @@ export class Hud {
     const progress = Math.min(1, pool.prodProgress[single]! / Math.max(1, def.buildTicks));
     const remainingTicks = Math.max(0, def.buildTicks - pool.prodProgress[single]!);
 
-    this.prodLabel.textContent = `Training ${def.name}`;
-    this.prodEta.textContent = `${(remainingTicks / TICKS_PER_SECOND).toFixed(1)}s`;
+    // A finished unit waits in the building until there is room for it. Without
+    // saying so the panel just sits at 100% forever, which reads as the game
+    // being broken — and it is easy to hit without the supply counter looking
+    // full, because what matters is whether *this* unit fits, not whether
+    // there is any headroom at all. One free supply trains a rifleman and
+    // stalls a gunship.
+    const blocked = supplyBlocked(world, single);
+    this.production.classList.toggle('blocked', blocked);
+    if (blocked) {
+      this.prodLabel.textContent = `${def.name} needs ${def.supplyCost} supply`;
+      this.prodEta.textContent = 'build a depot';
+    } else {
+      this.prodLabel.textContent = `Training ${def.name}`;
+      this.prodEta.textContent = `${(remainingTicks / TICKS_PER_SECOND).toFixed(1)}s`;
+    }
     this.prodFill.style.width = `${(progress * 100).toFixed(1)}%`;
 
     // The rest of the queue, so a player can see what they have committed to.
@@ -448,4 +461,31 @@ function must(root: HTMLElement, selector: string): HTMLElement {
 
 function hex(colour: number): string {
   return `#${colour.toString(16).padStart(6, '0')}`;
+}
+
+/**
+ * Is this building holding a unit it has finished but cannot release?
+ *
+ * The check the simulation makes, mirrored for display. Deliberately mirrored
+ * rather than exported from the simulation: it is derived from state that is
+ * already checksummed, and a second field for the renderer to read would be one
+ * more thing that has to stay in step.
+ */
+function supplyBlocked(world: World, index: number): boolean {
+  const pool = world.pool;
+  if (pool.prodCount[index]! === 0) return false;
+  const def = defOf(pool.prodAt(index, 0));
+  if (pool.prodProgress[index]! < def.buildTicks) return false;
+  const ps = world.player(pool.owner[index]! as PlayerId);
+  return ps.supplyUsed + def.supplyCost > ps.supplyMax;
+}
+
+/** Does this player have anything finished and waiting on supply? */
+function anySupplyBlocked(world: World, player: PlayerId): boolean {
+  const pool = world.pool;
+  for (let i = 0; i < pool.count; i++) {
+    if (pool.alive[i] !== 1 || pool.owner[i] !== player) continue;
+    if (supplyBlocked(world, i)) return true;
+  }
+  return false;
 }

@@ -705,6 +705,24 @@ class Game {
       world.pool.buildState[single] === BuildState.Complete
     ) {
       const def = defOf(world.pool.type[single]! as EntityType);
+      // Cancel the unit at the head of the queue. Without this a player whose
+      // supply cannot fit the finished unit has no way out except building a
+      // depot — the building simply stops producing, and nothing on screen
+      // offers a way to change their mind.
+      if (world.pool.prodCount[single]! > 0) {
+        buttons.push({
+          key: 'X',
+          label: 'Cancel',
+          enabled: true,
+          onClick: () =>
+            this.issue({
+              type: CommandType.CancelTrain,
+              player: this.localPlayer,
+              building: world.pool.idAt(single),
+              slot: 0,
+            }),
+        });
+      }
       for (const unit of def.produces) {
         const unitDef = defOf(unit);
         buttons.push({

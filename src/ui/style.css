@@ -99,6 +99,16 @@ body {
   letter-spacing: 0.07em;
 }
 
+/* Production that has finished but cannot be released. The bar is full and
+   nothing is happening, so it has to look like a warning rather than progress. */
+#production.blocked #prod-fill {
+  background: var(--warn);
+}
+#production.blocked #prod-label,
+#production.blocked #prod-eta {
+  color: var(--warn);
+}
+
 .supply-capped {
   color: var(--warn);
 }
