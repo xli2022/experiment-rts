@@ -27,6 +27,7 @@ import { FogRenderer } from './render/fog.js';
 import { audio } from './audio/audio.js';
 import { groundPointAt, pickAt, pickInBox, Selection } from './input/selection.js';
 import { Hud, type CommandButton } from './ui/hud.js';
+import { loadSwordMachine, SWORD_MACHINE_TYPE } from './render/models/swordMachine.js';
 import { showLobby, type MatchSetup } from './ui/lobby.js';
 import { onFullscreenChange } from './ui/fullscreen.js';
 
@@ -113,6 +114,17 @@ class Game {
 
     this.ghost = this.makeGhost();
     this.scene.add(this.ghost);
+
+    // The authored melee model arrives asynchronously and swaps itself in. The
+    // match is fully playable on the procedural stand-in until it does, so a
+    // slow asset delays nothing.
+    void loadSwordMachine()
+      .then(({ model, textures, scale }) => {
+        this.entities.useAnimatedModel(SWORD_MACHINE_TYPE, model, scale, textures);
+      })
+      .catch((err: unknown) => {
+        console.warn('sword machine model unavailable, keeping the procedural one', err);
+      });
 
     this.selection = new Selection(this.localPlayer);
     this.hud = new Hud(uiRoot, MAP_SIZE, this.localPlayer, (x, z, secondary) => {

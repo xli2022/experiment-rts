@@ -23,12 +23,14 @@ import * as THREE from 'three';
 import { defOf } from '../config/rules.js';
 import { ENTITY_CAPACITY } from '../sim/entities.js';
 import { toFloat } from '../sim/fixed.js';
-import { BuildState, EntityType, NEUTRAL } from '../sim/types.js';
+import { BuildState, EntityType, NEUTRAL, Order } from '../sim/types.js';
 import type { World } from '../sim/world.js';
 import { colourFor, PLAYER_COLOURS } from './models/procedural.js';
 import type { ModelProvider } from './models/provider.js';
 import type { FogRenderer } from './fog.js';
 import { MAX_CLIFF_HEIGHT } from './terrain.js';
+import { AnimatedUnitPool } from './animatedUnits.js';
+import type { AnimatedModel } from './models/animated.js';
 
 /** Instances allocated per pool. Comfortably above a 200-supply army. */
 const POOL_CAPACITY = 512;
@@ -54,6 +56,19 @@ export class EntityRenderer {
 
   private readonly pools = new Map<string, Pool>();
   private readonly disposables: { dispose(): void }[] = [];
+
+  /**
+   * Types drawn from a baked skinned model instead of primitive parts.
+   *
+   * Registered after load, so the game starts on the procedural model and the
+   * animated one takes over the moment its asset arrives — a unit type is never
+   * missing while a 600 KB download is in flight.
+   */
+  private readonly animated = new Map<
+    EntityType,
+    { model: AnimatedModel; scale: number; groundOffset: number }
+  >();
+  private readonly animatedPools = new Map<string, AnimatedUnitPool>();
 
   private readonly selectionRings: THREE.InstancedMesh;
   private readonly healthBg: THREE.InstancedMesh;
@@ -119,6 +134,44 @@ export class EntityRenderer {
 
     this.captureSnapshot(world);
     this.captureSnapshot(world); // prime both buffers so nothing lerps from origin
+  }
+
+  /**
+   * Draw this entity type from a baked skinned model from now on.
+   *
+   * The procedural pools for the type are hidden rather than destroyed, so this
+   * is reversible and costs nothing if the asset never loads.
+   */
+  useAnimatedModel(
+    type: EntityType,
+    model: AnimatedModel,
+    scale: number,
+    textures: (THREE.Texture | null)[],
+  ): void {
+    // Lift the model so the lowest point of its animation rests on the ground
+    // rather than the lowest point of its bind pose, which a run cycle dips well
+    // below.
+    this.animated.set(type, { model, scale, groundOffset: -model.lowestY * scale });
+
+    for (const owner of [0, 1]) {
+      const material = new THREE.MeshLambertMaterial({
+        map: textures[owner] ?? null,
+        // Without a texture the team colour has to carry the whole read, so the
+        // model is tinted flat rather than left white.
+        color: textures[owner] ? 0xffffff : (PLAYER_COLOURS[owner] ?? 0x9aa4b2),
+      });
+      const anim = new AnimatedUnitPool(model, material, POOL_CAPACITY);
+      this.animatedPools.set(animatedKey(type, owner), anim);
+      this.group.add(anim.mesh);
+    }
+
+    const spec = this.provider.get(type);
+    for (const owner of [0, 1]) {
+      for (let p = 0; p < spec.parts.length; p++) {
+        const entry = this.pools.get(poolKey(type, p, owner));
+        if (entry) entry.mesh.visible = false;
+      }
+    }
   }
 
   /** Create an instanced mesh for every (type, part, owner) combination. */
@@ -214,6 +267,7 @@ export class EntityRenderer {
   ): void {
     this.bobPhase = elapsedS * 2.2;
     for (const pool of this.pools.values()) pool.count = 0;
+    for (const anim of this.animatedPools.values()) anim.begin();
     let ringCount = 0;
     let barCount = 0;
 
@@ -263,7 +317,35 @@ export class EntityRenderer {
         sink = -(1 - progress) * spec.height * 0.8;
       }
 
-      for (let p = 0; p < spec.parts.length; p++) {
+      const animated = this.animated.get(type);
+      if (animated) {
+        const anim = this.animatedPools.get(animatedKey(type, owner));
+        if (anim) {
+          // Moving units run, engaged units swing, everything else holds the
+          // first frame of the run cycle as an idle. There is no authored idle
+          // clip, and a frozen stride reads better than a T-pose.
+          const moving = Math.hypot(this.currX[i]! - this.prevX[i]!, this.currZ[i]! - this.prevZ[i]!);
+          const order = pool.order[i]!;
+          const fighting = order === Order.Attack || order === Order.AttackMove;
+          // Offset each unit's phase by its slot so an army does not march in
+          // perfect lockstep, which reads as one object rather than many.
+          const phase = elapsedS + i * 0.37;
+
+          let clip = 'run';
+          let time = 0;
+          if (moving > MOVING_EPSILON) time = phase;
+          else if (fighting) clip = 'attack';
+          if (clip === 'attack') time = phase;
+
+          this.position.set(x, altitude + animated.groundOffset, z);
+          this.scale.setScalar(animated.scale);
+          this.matrix.compose(this.position, this.quat, this.scale);
+          this.scale.set(1, 1, 1);
+          anim.add(this.matrix, AnimatedUnitPool.frameFor(animated.model, clip, time, true));
+        }
+      }
+
+      for (let p = 0; p < spec.parts.length && !animated; p++) {
         const entry = this.pools.get(poolKey(type, p, owner));
         if (!entry || entry.count >= POOL_CAPACITY) continue;
         const part = spec.parts[p]!;
@@ -356,6 +438,8 @@ export class EntityRenderer {
     this.selectionRings.instanceMatrix.needsUpdate = true;
     this.healthBg.count = barCount;
     this.healthBg.instanceMatrix.needsUpdate = true;
+    for (const anim of this.animatedPools.values()) anim.commit();
+
     this.healthFill.count = barCount;
     this.healthFill.instanceMatrix.needsUpdate = true;
     if (this.healthFill.instanceColor) this.healthFill.instanceColor.needsUpdate = true;
@@ -368,6 +452,8 @@ export class EntityRenderer {
 
   dispose(): void {
     for (const d of this.disposables) d.dispose();
+    for (const anim of this.animatedPools.values()) anim.dispose();
+    this.animatedPools.clear();
     this.pools.clear();
     this.group.clear();
   }
@@ -416,6 +502,13 @@ const BAR_WIDTH_NDC = 0.1;
 const BAR_HEIGHT_NDC = 0.014;
 /** Gap between the top of the model and the bar. */
 const BAR_LIFT_NDC = 0.032;
+
+/** How far a unit must move between ticks to count as running. */
+const MOVING_EPSILON = 0.004;
+
+function animatedKey(type: EntityType, owner: number): string {
+  return `${type}:${owner}`;
+}
 
 function poolKey(type: EntityType, part: number, owner: number): string {
   return `${type}:${part}:${owner}`;
