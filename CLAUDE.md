@@ -206,11 +206,41 @@ affordability, ownership, placement legality — happens in
 `src/sim/systems/orders.ts`, never in the UI. The UI may grey out a button, but
 the simulation decides.
 
+### The data channel is unordered, and packets must stay under 16 KB
+
+A WebRTC data channel defaults to *ordered* delivery — head-of-line blocking,
+same as TCP. That is the wrong default here: each packet already repeats the
+previous two turns' commands, so the packet held up behind a lost one is usually
+the one carrying what the receiver is waiting for. Ordered delivery turns a loss
+the protocol was built to absorb into a round-trip stall for **both** players.
+So the channel is opened `{ordered: false}`, injected through Trystero's
+`rtcPolyfill` hook since it takes no data-channel options of its own.
+
+Reliability is deliberately kept. `maxRetransmits: 0` would lose the one-shot
+version handshake that rides the same channel, and would push all-copies-lost
+recovery onto the lockstep history resend, which is throttled to 120 ms — slower
+than SCTP retransmitting in one round trip. The bandwidth saved would be nil.
+
+**The constraint this creates:** Trystero splits payloads over ~16 KB into chunks
+and reassembles them *by arrival order*, with no sequence number — so a
+multi-chunk message is scrambled by the very reordering we asked for. Packets
+stay far under that because `MAX_SELECTION` is 24 and bot commands never cross
+the wire, but it is an invariant now, not a coincidence. `tests/wire.test.ts`
+fails loudly if a change to the selection cap or the packet shape breaks it.
+
+Reordering itself is harmless for a second, independent reason: the receive path
+is structurally order-free (turns keyed absolutely, first write wins). Measured,
+an "assume packets arrive in order" bug is *invisible* under pure reordering —
+the redundancy covers it — and only shows up, weakly, once 25% loss removes the
+covering copies.
+
 ### The AI is not special
 
 `src/ai/bot.ts` emits the same `Command` objects a human does, and because it is
 deterministic it runs identically on every peer at zero bandwidth. Single-player
-and multiplayer are therefore one code path, not two.
+and multiplayer are therefore one code path, not two. That also means the only
+producer of commands on the wire is local human input, which is what bounds
+packet size.
 
 ## Performance notes
 

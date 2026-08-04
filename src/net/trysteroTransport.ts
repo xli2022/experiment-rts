@@ -25,6 +25,22 @@
  * Only commands cross the wire, so a match uses a trickle of bandwidth no matter
  * how large the armies get. That matters far more on a peer connection between
  * two home broadband lines than it would against a datacentre.
+ *
+ * ## The channel is unordered on purpose
+ *
+ * A WebRTC data channel runs SCTP over DTLS over UDP, and defaults to *ordered*
+ * delivery — which means head-of-line blocking, exactly like TCP. A lost packet
+ * holds back every packet behind it until it has been retransmitted.
+ *
+ * That default fights the lockstep layer rather than helping it. Each packet
+ * already repeats the previous two turns' commands, so the packet queued behind
+ * a lost one usually carries the very commands the receiver is waiting for.
+ * Ordered delivery holds that packet in the receive buffer, turning a loss the
+ * protocol was built to absorb into a full round-trip stall for *both* players
+ * — a peer only advances when everyone's commands have arrived.
+ *
+ * So the channel is opened unordered. Reliability is deliberately kept: see
+ * `unorderedPeerConnection` for why dropping that too would be a step backwards.
  */
 
 import { joinRoom, selfId, type DataPayload, type MessageAction, type Room } from 'trystero/nostr';
@@ -33,6 +49,53 @@ import type { Packet, Transport } from './transport.js';
 
 /** Namespaces our rooms so unrelated Trystero apps never collide with ours. */
 const APP_ID = 'experiment-rts-v1';
+
+/**
+ * Payload bytes Trystero fits into one data-channel message.
+ *
+ * 16 KiB less its 36-byte framing header. This is not a tuning knob — it is the
+ * threshold above which Trystero splits a message into chunks, and chunking is
+ * what makes unordered delivery unsafe. See `TRANSPORT_CHUNK_BYTES` usage in
+ * `tests/wire.test.ts`.
+ */
+export const TRANSPORT_CHUNK_BYTES = 16 * 1024 - 36;
+
+/**
+ * Open the data channel unordered, leaving retransmission on.
+ *
+ * Trystero creates the channel itself and takes no options for it, but it does
+ * accept a replacement `RTCPeerConnection` class — so the options are injected
+ * by overriding the one method that opens it. The channel's reliability is
+ * negotiated by whichever peer creates it and then applies to both, and both
+ * peers run this code, so it does not matter which of them is the initiator.
+ *
+ * **Unordered, but still reliable.** Going further to `maxRetransmits: 0` is
+ * tempting and would be worse on both counts that matter:
+ *
+ * - Trystero's version handshake rides this same channel and is sent exactly
+ *   once. Losing it would let two peers on incompatible builds start a match
+ *   and desync, which is the failure this transport works hardest to prevent.
+ * - When all three redundant copies of a turn are lost, recovery falls to the
+ *   lockstep layer's history resend, which is throttled to 120ms. SCTP
+ *   retransmits in one round trip and without stalling anything else. Keeping
+ *   reliability makes the rare case faster, not slower.
+ *
+ * The bandwidth this costs is nil: packets are under a kilobyte, ten a second.
+ *
+ * Created lazily because `RTCPeerConnection` does not exist outside a browser
+ * and this module is imported by tests that only want the pure helpers.
+ */
+function unorderedPeerConnection(): typeof RTCPeerConnection | undefined {
+  if (typeof RTCPeerConnection === 'undefined') return undefined;
+  return class extends RTCPeerConnection {
+    override createDataChannel(
+      label: string,
+      options?: RTCDataChannelInit,
+    ): RTCDataChannel {
+      return super.createDataChannel(label, { ...options, ordered: false });
+    }
+  };
+}
 
 /**
  * Bumped whenever the simulation or wire format changes incompatibly.
@@ -90,8 +153,13 @@ export function slotFromPeerIds(localId: string, remoteId: string): PlayerId {
 export function joinOnlineRoom(config: HostConfig, timeoutMs = 90000): Promise<JoinResult> {
   const { roomCode, seed, turnConfig, onStatus } = config;
 
+  const rtcPolyfill = unorderedPeerConnection();
   const room: Room = joinRoom(
-    turnConfig ? { appId: APP_ID, turnConfig } : { appId: APP_ID },
+    {
+      appId: APP_ID,
+      ...(turnConfig ? { turnConfig } : {}),
+      ...(rtcPolyfill ? { rtcPolyfill } : {}),
+    },
     roomCode.trim().toLowerCase(),
   );
 
