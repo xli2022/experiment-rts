@@ -145,6 +145,20 @@ things about this were learned the hard way:
 - **Fit each model on the axis it reads by.** Walkers by height, aircraft by
   wingspan — fitting a wide ship on height sizes it by whatever fin sticks up.
 
+### Blending, and the idle that is not a clip
+
+Each instance names two rows of the bone texture and a weight between them. One
+mechanism, two jobs: neighbouring frames of one clip smooth the 30Hz bake up to
+display rate, and frames of two clips cross-fade so a unit eases into its swing.
+The lerp is componentwise on the matrices, which shortens a bone when the poses
+differ by a large rotation — measured on the real geometry, 0.0% between
+neighbouring frames and 1.3% at worst for the idle.
+
+No rig ships an idle clip, so `idle` is synthesised: two opposed frames of the
+run mixed near the middle, with the mix swayed slowly. Legs land roughly
+together and it reads as breathing. A unit frozen on one frame of a stride is
+worse than a T-pose — it looks like the game has hung.
+
 ### Pick the clip from events, not from state
 
 Which clip a unit plays is decided by `poseFor` in `src/render/entities.ts`,
@@ -267,6 +281,31 @@ deterministic it runs identically on every peer at zero bandwidth. Single-player
 and multiplayer are therefore one code path, not two. That also means the only
 producer of commands on the wire is local human input, which is what bounds
 packet size.
+
+### Movement has three movers, and they are easy to miss
+
+Direct steering, flow fields and A* path-following each advance units, and A* —
+which carries most individual orders — walks its waypoints in a loop of its own
+rather than through `stepToward`. Acceleration added to the shared helper alone
+changed nothing for it, and nothing failed to say so. `tests/accel.test.ts`
+pins the ramp for that reason.
+
+Units accelerate by a fraction of their top speed per tick and brake by
+`v = sqrt(2*a*d)` against the distance still to run — not to the next waypoint,
+or they stutter at every corner of a path. `Math.sqrt` is the one non-trivial
+function the sim may use; see the sealed-core rules above.
+
+### Spread the arrival, never the pathfinding goal
+
+A group move gives each unit its own destination so an army stops arriving in a
+heap. The obvious way to do it is a trap: grouped moves navigate by flow field
+and the field is cached **per goal tile**, so a per-unit goal turns one Dijkstra
+sweep into one per unit. Not a crash — just a silent collapse, measured at 5
+seconds to over 150 for the test match. The shared destination steers the group;
+the spread point only decides where each unit finally stands.
+
+The layout is a square spiral rather than a ring because a ring needs sine and
+cosine. Separation rounds the corners off it anyway.
 
 ## Performance notes
 

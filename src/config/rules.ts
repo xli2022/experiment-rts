@@ -46,6 +46,14 @@ export interface EntityDef {
   /** Buildings occupy footprint x footprint tiles. Zero for units. */
   readonly footprint: number;
   readonly speedPerTick: Fix;
+  /**
+   * How much of its top speed a unit can gain or shed in one tick.
+   *
+   * Expressed as a fraction of `speedPerTick`, so retuning a unit's speed does
+   * not silently retune how sharply it starts and stops. A whole 1.0 restores
+   * the old behaviour of snapping straight to full speed.
+   */
+  readonly accelFraction: Fix;
   /** Max chord step when turning toward a new facing, per tick. */
   readonly turnPerTick: Fix;
   readonly sightRange: Fix;
@@ -78,6 +86,7 @@ export const DEFS: readonly EntityDef[] = [
     radius: fromFloat(0.32),
     footprint: 0,
     speedPerTick: speed(3.2),
+    accelFraction: fromFloat(0.22),
     turnPerTick: fromFloat(0.5),
     sightRange: fromFloat(7),
     attackRange: fromFloat(0.6),
@@ -99,6 +108,7 @@ export const DEFS: readonly EntityDef[] = [
     radius: fromFloat(0.32),
     footprint: 0,
     speedPerTick: speed(2.9),
+    accelFraction: fromFloat(0.22),
     turnPerTick: fromFloat(0.5),
     sightRange: fromFloat(8),
     attackRange: fromFloat(5),
@@ -120,6 +130,7 @@ export const DEFS: readonly EntityDef[] = [
     radius: fromFloat(0.42),
     footprint: 0,
     speedPerTick: speed(3.6),
+    accelFraction: fromFloat(0.22),
     turnPerTick: fromFloat(0.6),
     sightRange: fromFloat(7),
     attackRange: fromFloat(0.9),
@@ -141,6 +152,7 @@ export const DEFS: readonly EntityDef[] = [
     radius: fromFloat(2.0),
     footprint: 4,
     speedPerTick: 0,
+    accelFraction: fromFloat(0.22),
     turnPerTick: 0,
     sightRange: fromFloat(9),
     attackRange: 0,
@@ -162,6 +174,7 @@ export const DEFS: readonly EntityDef[] = [
     radius: fromFloat(1.0),
     footprint: 2,
     speedPerTick: 0,
+    accelFraction: fromFloat(0.22),
     turnPerTick: 0,
     sightRange: fromFloat(6),
     attackRange: 0,
@@ -186,6 +199,7 @@ export const DEFS: readonly EntityDef[] = [
     radius: fromFloat(1.5),
     footprint: 3,
     speedPerTick: 0,
+    accelFraction: fromFloat(0.22),
     turnPerTick: 0,
     sightRange: fromFloat(7),
     attackRange: 0,
@@ -207,6 +221,7 @@ export const DEFS: readonly EntityDef[] = [
     radius: fromFloat(1.0),
     footprint: 2,
     speedPerTick: 0,
+    accelFraction: fromFloat(0.22),
     turnPerTick: fromFloat(0.9),
     sightRange: fromFloat(8),
     attackRange: fromFloat(6.5),
@@ -232,6 +247,7 @@ export const DEFS: readonly EntityDef[] = [
     radius: fromFloat(0.8),
     footprint: 2,
     speedPerTick: 0,
+    accelFraction: fromFloat(0.22),
     turnPerTick: 0,
     sightRange: 0,
     attackRange: 0,
@@ -254,6 +270,7 @@ export const DEFS: readonly EntityDef[] = [
     radius: fromFloat(0.45),
     footprint: 0,
     speedPerTick: speed(4.4),
+    accelFraction: fromFloat(0.22),
     turnPerTick: fromFloat(0.7),
     sightRange: fromFloat(9),
     attackRange: fromFloat(3.5),

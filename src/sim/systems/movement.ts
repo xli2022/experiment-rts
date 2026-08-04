@@ -22,6 +22,7 @@ import {
   fdiv,
   fmul,
   fromInt,
+  fsqrt,
   sqRange,
   vecDist,
   vecLenSqRaw,
@@ -214,18 +215,79 @@ function stepToward(
   const dx = tx - pool.posX[index]!;
   const dy = ty - pool.posY[index]!;
   const dist = vecDist(pool.posX[index]!, pool.posY[index]!, tx, ty);
-  if (dist === 0) return;
+  if (dist === 0) {
+    pool.speed[index] = 0;
+    return;
+  }
 
-  const step = dist < speed ? dist : speed;
-  const dir = vecNormalize(dx, dy);
-  const dirX = dir.x;
-  const dirY = dir.y;
-  pool.posX[index] = (pool.posX[index]! + fmul(dirX, step)) | 0;
-  pool.posY[index] = (pool.posY[index]! + fmul(dirY, step)) | 0;
+  const step = accelerate(world, index, dist, speed);
+  if (step > 0) {
+    const dir = vecNormalize(dx, dy);
+    pool.posX[index] = (pool.posX[index]! + fmul(dir.x, step)) | 0;
+    pool.posY[index] = (pool.posY[index]! + fmul(dir.y, step)) | 0;
+    // Facing is taken from the direction of travel, which is the same thing the
+    // old code used — but read before the position update rather than after, so
+    // a unit that arrives this tick still faces where it was going.
+    const face = vecRotateToward(pool.faceX[index]!, pool.faceY[index]!, dir.x, dir.y, turnRate);
+    pool.faceX[index] = face.x;
+    pool.faceY[index] = face.y;
+  }
+}
 
-  const face = vecRotateToward(pool.faceX[index]!, pool.faceY[index]!, dirX, dirY, turnRate);
-  pool.faceX[index] = face.x;
-  pool.faceY[index] = face.y;
+/**
+ * Roughly how far this unit still has to travel along its path.
+ *
+ * Straight-line to the last waypoint plus a tile per waypoint after the next,
+ * which overestimates a winding route and underestimates nothing — and only
+ * matters near the end, where the path is short and the estimate is tight. A
+ * unit needs this to know when to start easing off, not to navigate by.
+ */
+function distanceLeft(world: World, index: number, len: number, cursor: number): Fix {
+  const pool = world.pool;
+  const last = pool.pathNode(index, len - 1);
+  const lx = fromInt(world.map.tileXOf(last)) + FIX_HALF;
+  const ly = fromInt(world.map.tileYOf(last)) + FIX_HALF;
+  const direct = vecDist(pool.posX[index]!, pool.posY[index]!, lx, ly);
+  const corners = len - cursor - 1;
+  return corners > 0 ? direct + fromInt(corners) : direct;
+}
+
+/**
+ * Advance this unit's speed one tick and return the distance to move.
+ *
+ * Units used to travel at their top speed on the tick they were ordered and
+ * stop dead on the tick they arrived, which is most of what made movement look
+ * mechanical rather than heavy. Now they ramp.
+ *
+ * The braking term is `v = sqrt(2 * a * d)`: the fastest a unit can be going
+ * and still shed all of it before `d`. `Math.sqrt` is the one non-trivial
+ * function allowed in here — IEEE-754 requires it to be correctly rounded, so
+ * it agrees bit for bit across engines, which the transcendentals do not.
+ */
+function accelerate(world: World, index: number, dist: Fix, top: Fix): Fix {
+  const pool = world.pool;
+  const def = defOf(pool.type[index]! as EntityType);
+  const accel = fmul(top, def.accelFraction);
+  if (accel <= 0) {
+    // A unit with no ramp behaves exactly as before, which keeps the door open
+    // for something that genuinely should not ease in.
+    pool.speed[index] = top;
+    return dist < top ? dist : top;
+  }
+
+  // Fast enough to still stop in the distance left, and no faster than its legs.
+  const brake = fsqrt(fmul(fromInt(2), fmul(accel, dist)));
+  const want = brake < top ? brake : top;
+
+  let v = pool.speed[index]!;
+  if (v < want) v = v + accel > want ? want : v + accel;
+  else if (v > want) v = v - accel < want ? want : v - accel;
+  // A unit at rest with a target must get under way; without this floor, a
+  // stationary unit whose braking distance rounds to zero never starts.
+  if (v <= 0) v = accel < top ? accel : top;
+  pool.speed[index] = v;
+
+  return dist < v ? dist : v;
 }
 
 /**
@@ -332,7 +394,12 @@ function followPaths(world: World): void {
     }
 
     // Walk toward the current waypoint, consuming waypoints we have reached.
-    let remaining = def.speedPerTick;
+    //
+    // The travel budget is the accelerated speed, and it is measured against
+    // the distance still to run rather than to the next waypoint — braking for
+    // every corner of an A* path would make a unit stutter its way across the
+    // map instead of easing to a stop at the end of it.
+    let remaining = accelerate(world, i, distanceLeft(world, i, len, cursor), def.speedPerTick);
     while (remaining > 0 && cursor < len) {
       const tile = pool.pathNode(i, cursor);
       const wx = fromInt(world.map.tileXOf(tile)) + FIX_HALF;

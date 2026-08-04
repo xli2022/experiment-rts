@@ -16,6 +16,7 @@
 import { defOf, GROUP_PATH_THRESHOLD, MAX_PRODUCTION_QUEUE } from '../../config/rules.js';
 import { CommandType, type Command } from '../commands.js';
 import { idIndex } from '../entities.js';
+import { fromInt } from '../fixed.js';
 import { EntityType, NO_ENTITY, Order, type EntityId, type PlayerId } from '../types.js';
 import type { World } from '../world.js';
 
@@ -31,16 +32,22 @@ export function executeCommand(world: World, cmd: Command): void {
   switch (cmd.type) {
     case CommandType.Move: {
       const grouped = cmd.units.length >= GROUP_PATH_THRESHOLD;
+      let slot = 0;
       forEachOwned(world, cmd.units, player, (i) => {
-        setMoveOrder(world, i, Order.Move, cmd.x, cmd.y, grouped);
+        // The slot counts units the order actually applied to, in the order
+        // `forEachOwned` walks them — identical on every peer.
+        spreadDestination(world, cmd.units.length > 1 ? slot++ : 0, cmd.x, cmd.y, destOut);
+        setMoveOrder(world, i, Order.Move, destOut.x, destOut.y, grouped, cmd.x, cmd.y);
       });
       break;
     }
 
     case CommandType.AttackMove: {
       const grouped = cmd.units.length >= GROUP_PATH_THRESHOLD;
+      let slot = 0;
       forEachOwned(world, cmd.units, player, (i) => {
-        setMoveOrder(world, i, Order.AttackMove, cmd.x, cmd.y, grouped);
+        spreadDestination(world, cmd.units.length > 1 ? slot++ : 0, cmd.x, cmd.y, destOut);
+        setMoveOrder(world, i, Order.AttackMove, destOut.x, destOut.y, grouped, cmd.x, cmd.y);
       });
       break;
     }
@@ -137,6 +144,70 @@ function forEachOwned(
 }
 
 /**
+ * Where the `slot`-th unit of a group should actually stand.
+ *
+ * A group move used to send every unit to the same point, so they arrived in a
+ * heap and then spent a second shoving each other back out of it — separation
+ * doing the work a destination should have done. Spreading the destinations
+ * means they arrive in a loose formation and stop.
+ *
+ * The layout walks a square spiral, which looks less natural than a ring and is
+ * chosen anyway: a ring needs sine and cosine, and those are the functions that
+ * genuinely differ between JavaScript engines. Integer offsets cannot desync.
+ * Once units settle, separation rounds the corners off the square regardless.
+ */
+function spreadSlot(slot: number, out: { x: number; y: number }): void {
+  let x = 0;
+  let y = 0;
+  let dx = 0;
+  let dy = -1;
+  for (let i = 0; i < slot; i++) {
+    if (x === y || (x < 0 && x === -y) || (x > 0 && x === 1 - y)) {
+      const swap = dx;
+      dx = -dy;
+      dy = swap;
+    }
+    x += dx;
+    y += dy;
+  }
+  out.x = x;
+  out.y = y;
+}
+
+/** Scratch for `spreadSlot`; the sim is single-threaded and allocates nothing. */
+const slotOut = { x: 0, y: 0 };
+
+/** Gap between neighbouring units in a formation. Wider than any unit's girth. */
+const SPREAD_STEP = fromInt(1);
+
+/**
+ * Offset a group's destination so its members do not all target one tile.
+ *
+ * Falls back to the raw target whenever the spread tile is not somewhere a unit
+ * could stand, which keeps a formation ordered against a cliff edge from
+ * scattering its flank into the rock.
+ */
+function spreadDestination(
+  world: World,
+  slot: number,
+  x: number,
+  y: number,
+  out: { x: number; y: number },
+): void {
+  out.x = x;
+  out.y = y;
+  if (slot <= 0) return;
+  spreadSlot(slot, slotOut);
+  const sx = (x + slotOut.x * SPREAD_STEP) | 0;
+  const sy = (y + slotOut.y * SPREAD_STEP) | 0;
+  if (world.map.tileOfPos(sx, sy) < 0) return;
+  out.x = sx;
+  out.y = sy;
+}
+
+const destOut = { x: 0, y: 0 };
+
+/**
  * Point a unit at a destination.
  *
  * `grouped` selects the navigation strategy: a shared flow field when many units
@@ -150,6 +221,8 @@ function setMoveOrder(
   x: number,
   y: number,
   grouped: boolean,
+  goalX: number = x,
+  goalY: number = y,
 ): void {
   const pool = world.pool;
   pool.order[index] = order;
@@ -163,7 +236,13 @@ function setMoveOrder(
   if (defOf(pool.type[index]! as EntityType).flying) return;
 
   if (grouped) {
-    const goal = world.map.tileOfPos(x, y);
+    // The *shared* destination, not this unit's spread arrival point. One
+    // Dijkstra sweep serves the whole group, and that is the entire reason
+    // grouped moves exist — giving each unit its own goal tile silently turns
+    // one sweep into one per unit, which took the test match from 5s to over
+    // 150s. Arrival is still measured against the spread point below, so the
+    // formation survives.
+    const goal = world.map.tileOfPos(goalX, goalY);
     pool.flowGoal[index] = goal >= 0 ? goal : -1;
     return;
   }

@@ -65,6 +65,21 @@ export class EntityRenderer {
    */
   private readonly attackedAt = new Float32Array(ENTITY_CAPACITY).fill(-1e9);
 
+  /**
+   * The clip each unit was last drawn on, and when it changed.
+   *
+   * A unit that starts running, or stops to swing, would otherwise jump between
+   * poses on one frame. Holding the outgoing clip lets the shader ease out of
+   * it. Stored as small integers rather than the clip names themselves because
+   * this is per-entity state touched every frame.
+   */
+  private readonly poseClip = new Uint8Array(ENTITY_CAPACITY);
+  private readonly poseFrom = new Uint8Array(ENTITY_CAPACITY);
+  /** When the current transition started, in elapsed seconds. */
+  private readonly poseChangedAt = new Float32Array(ENTITY_CAPACITY).fill(-1e9);
+  /** Where the outgoing clip had got to when it was left behind. */
+  private readonly poseFromTime = new Float32Array(ENTITY_CAPACITY);
+
   private readonly pools = new Map<string, Pool>();
   private readonly disposables: { dispose(): void }[] = [];
 
@@ -90,6 +105,9 @@ export class EntityRenderer {
    * entity slot behind it is reused within seconds.
    */
   private readonly corpses: Corpse[] = [];
+
+  /** When the local player last issued an order, in elapsed seconds. */
+  private orderedAt = -1e9;
 
   private readonly selectionRings: THREE.InstancedMesh;
   private readonly healthBg: THREE.InstancedMesh;
@@ -155,6 +173,17 @@ export class EntityRenderer {
 
     this.captureSnapshot(world);
     this.captureSnapshot(world); // prime both buffers so nothing lerps from origin
+  }
+
+  /**
+   * Note that the local player just gave an order, so the rings acknowledge it.
+   *
+   * Called from input, not from the simulation: the whole point is that it
+   * happens on the frame of the click rather than turns later when the command
+   * executes.
+   */
+  noteOrderIssued(elapsedS: number): void {
+    this.orderedAt = elapsedS;
   }
 
   /**
@@ -430,14 +459,42 @@ export class EntityRenderer {
             elapsedS + i * 0.37,
           );
 
+          const target = framesForPose(animated.model, pose);
+          let from = target.from;
+          let to = target.to;
+          let blend = target.blend;
+
+          // Note the switch the frame it happens, so the fade is timed from the
+          // change rather than from whenever this unit was next drawn.
+          const id = CLIP_IDS[pose.clip] ?? 0;
+          if (this.poseClip[i] !== id) {
+            this.poseFrom[i] = this.poseClip[i]!;
+            this.poseFromTime[i] = pose.time;
+            this.poseChangedAt[i] = elapsedS;
+            this.poseClip[i] = id;
+          }
+
+          const fading = elapsedS - this.poseChangedAt[i]!;
+          if (fading >= 0 && fading < CROSSFADE_S) {
+            // Ease out of the old clip and into the new one. The outgoing pose
+            // is frozen where it was left: continuing to advance it would need a
+            // third and fourth texture read for no visible gain over an eighth
+            // of a second.
+            const previous = framesForPose(animated.model, {
+              clip: CLIP_NAMES[this.poseFrom[i]!] ?? 'run',
+              time: this.poseFromTime[i]!,
+              loop: true,
+            });
+            from = previous.from;
+            to = target.from;
+            blend = fading / CROSSFADE_S;
+          }
+
           this.position.set(x, altitude + animated.groundOffset, z);
           this.scale.setScalar(animated.scale);
           this.matrix.compose(this.position, this.quat, this.scale);
           this.scale.set(1, 1, 1);
-          anim.add(
-            this.matrix,
-            AnimatedUnitPool.frameFor(animated.model, pose.clip, pose.time, pose.loop),
-          );
+          anim.add(this.matrix, from, to, blend);
         }
       }
 
@@ -465,8 +522,20 @@ export class EntityRenderer {
       }
 
       if (selected.has(i) && ringCount < POOL_CAPACITY) {
+        // A ring that kicks outward the instant an order is given.
+        //
+        // Lockstep executes a command turns after it is issued, so nothing the
+        // unit itself does can happen on the frame you clicked. The ring can:
+        // it is drawn from the local selection, never from simulation state, so
+        // it costs nothing and cannot desync. This is the same trick that makes
+        // an RTS with real latency feel immediate.
+        const sinceOrder = elapsedS - this.orderedAt;
+        const kick =
+          sinceOrder >= 0 && sinceOrder < ACK_PULSE_S
+            ? 1 + ACK_PULSE_SIZE * (1 - sinceOrder / ACK_PULSE_S)
+            : 1;
         this.position.set(x, 0.06, z);
-        this.scale.set(spec.radius * 1.6, 1, spec.radius * 1.6);
+        this.scale.set(spec.radius * 1.6 * kick, 1, spec.radius * 1.6 * kick);
         this.matrix.compose(this.position, IDENTITY, this.scale);
         this.selectionRings.setMatrixAt(ringCount++, this.matrix);
         this.scale.set(1, 1, 1);
@@ -612,6 +681,35 @@ export interface Pose {
 }
 
 /**
+ * Seconds spent easing from one clip into the next.
+ *
+ * Long enough to remove the pop, short enough that a swing still lands on the
+ * frame the damage did — the attack clip is 1.5s, so an eighth of a second of
+ * lead-in costs nothing that reads.
+ */
+const CROSSFADE_S = 0.12;
+
+/**
+ * The stand-still pose, built out of the run cycle rather than authored.
+ *
+ * None of the three rigs ships an idle clip, and a unit frozen on one frame of
+ * a stride is the single most lifeless thing on screen — worse than a T-pose,
+ * because it looks like the game has hung. Blending opposite frames of the run
+ * puts the legs somewhere near together, and oscillating that blend slowly and
+ * shallowly reads as breathing. It costs no new baked data and no new asset.
+ */
+const IDLE_PERIOD_S = 3.1;
+const IDLE_DEPTH = 0.13;
+
+/** How long a selection ring stays kicked out after an order, and by how much. */
+const ACK_PULSE_S = 0.22;
+const ACK_PULSE_SIZE = 0.35;
+
+/** Clip names as small integers, so per-entity pose state stays a typed array. */
+const CLIP_NAMES = ['idle', 'run', 'attack', 'die'] as const;
+const CLIP_IDS: Record<string, number> = { idle: 0, run: 1, attack: 2, die: 3 };
+
+/**
  * Choose a unit's clip. Pure, because getting it wrong is invisible in a diff.
  *
  * Two things about this rule were learned from a bug report of "the melee unit
@@ -642,8 +740,29 @@ export function poseFor(
     return { clip: 'attack', time: sinceAttack, loop: false };
   }
   if (movedPerTick > MOVING_EPSILON) return { clip: 'run', time: phase, loop: true };
-  // No authored idle clip; a frozen stride reads better than a T-pose.
-  return { clip: 'run', time: 0, loop: true };
+  return { clip: 'idle', time: phase, loop: true };
+}
+
+/**
+ * Resolve a pose to the two bone-texture rows to draw it with.
+ *
+ * `idle` is not a baked clip: it is the run cycle sampled at two opposite
+ * points, mixed around the middle. Everything else is the clip's own two
+ * neighbouring frames, which is what turns the 30Hz bake into smooth motion.
+ */
+export function framesForPose(
+  model: AnimatedModel,
+  pose: Pose,
+): { from: number; to: number; blend: number } {
+  if (pose.clip !== 'idle') {
+    return AnimatedUnitPool.framePairFor(model, pose.clip, pose.time, pose.loop);
+  }
+  const run = model.clips.get('run');
+  if (!run) return { from: 0, to: 0, blend: 0 };
+  const half = run.frameCount >> 1;
+  // A slow, shallow sway about the midpoint between two opposed strides.
+  const breath = 0.5 + IDLE_DEPTH * Math.sin((pose.time / IDLE_PERIOD_S) * Math.PI * 2);
+  return { from: run.startFrame, to: run.startFrame + half, blend: breath };
 }
 
 /** Seconds a body lingers, sinking, once its death clip has played out. */

@@ -94,6 +94,16 @@ export class EntityPool {
   readonly tileX = new Int32Array(ENTITY_CAPACITY);
   readonly tileY = new Int32Array(ENTITY_CAPACITY);
 
+  /**
+   * Current speed along `face`, in Q16.16 units per tick.
+   *
+   * Tracked per entity rather than read from the unit's definition because
+   * units ramp up to their top speed and ease back down to a stop. Without it
+   * every unit starts and stops instantly, which is most of what makes movement
+   * look mechanical.
+   */
+  readonly speed = new Int32Array(ENTITY_CAPACITY);
+
   // --- economy ---
   readonly carrying = new Int32Array(ENTITY_CAPACITY);
   readonly harvestTimer = new Int32Array(ENTITY_CAPACITY);
@@ -163,6 +173,7 @@ export class EntityPool {
     this.orderX[index] = 0;
     this.orderY[index] = 0;
     this.attackCooldown[index] = 0;
+    this.speed[index] = 0;
     this.combatTarget[index] = NO_ENTITY;
     this.buildState[index] = def.isBuilding ? BuildState.Site : BuildState.Complete;
     this.buildProgress[index] = 0;
@@ -287,6 +298,7 @@ export class EntityPool {
     // them here is what lets the map skip hashing 16k tiles every tick.
     x = checksumArray(x, this.tileX, this.count);
     x = checksumArray(x, this.tileY, this.count);
+    x = checksumArray(x, this.speed, this.count);
     x = checksumArray(x, this.carrying, this.count);
     x = checksumArray(x, this.harvestTimer, this.count);
     x = checksumArray(x, this.harvestPatch, this.count);

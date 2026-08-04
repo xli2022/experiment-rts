@@ -483,6 +483,7 @@ class Game {
       toFloat(world.pool.posY[buildingIndex]!),
       0x7dff9b,
     );
+    this.entities.noteOrderIssued(this.elapsedS);
     audio.play('order', 0.9);
     return true;
   }
@@ -491,6 +492,7 @@ class Game {
     const units = this.selection.ids(this.sim.world);
     if (units.length === 0) return;
     this.projectiles.spawnClickMarker(x, z, attackMove ? 0xff7a4a : 0x7dff9b);
+    this.entities.noteOrderIssued(this.elapsedS);
     audio.play('order', 0.9);
     this.issue({
       type: attackMove ? CommandType.AttackMove : CommandType.Move,
