@@ -233,7 +233,7 @@ export class Hud {
       // What it hits for. Worth showing because it is now the true figure —
       // nothing scales it per matchup — so comparing two units on the panel
       // tells a player what actually happens when they meet.
-      if (def.damage > 0) parts.push(`${def.damage} damage`);
+      if (def.damage > 0) parts.push(`ATK ${def.damage}`);
       if (type === EntityType.MineralPatch) {
         parts.push(`${world.pool.resourceAmount[i]} minerals left`);
       }

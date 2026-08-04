@@ -441,6 +441,37 @@ Flyers are the exception in one direction only: `collides` is false for them
 because it also decides whether a thing occupies map tiles, so separation gives
 them their own rule and matches air against air.
 
+### Every unit must be able to stop
+
+Arrival is "within half a tile of the point you were given", and in a crowd most
+units can never satisfy that: their spot is taken, and separation pushes them
+out of it faster than they can walk back in. Nothing else ended the order, so
+they pushed at the destination for the rest of the match, still holding a
+`Move`. Measured on open ground, **20 of 24 units in one group move never came
+to rest** — some 3.5 tiles from their point.
+
+Three things fix it, and each covers a case the others do not:
+
+- **The last stretch is steered at the unit's own formation slot**, not at the
+  group's shared goal tile (`FORMATION_APPROACH`). The field aims everyone at
+  one tile; near the destination that tile is full, so units funnel into a scrum
+  and are shoved out of it forever. This is the half that makes a group *look*
+  right, and it settles a 24-unit march at tick 183 instead of 261.
+- **A unit that stops improving gives up** (`settleArrivals`). This is the
+  guarantee, and it is the only thing that handles a destination with no room at
+  all — ordered into a walled pocket, two units still never rested without it.
+- **Formation slots are checked for walkability.** The old check was
+  `tileOfPos(...) < 0`, which asks whether a point is *on the map*; solid rock is
+  very much on the map.
+
+The failure mode of a give-up rule is giving up too early, which reads as broken
+pathfinding, so it is fenced three ways: it only runs within `SETTLE_RANGE` of
+the destination (further out, a unit walking around an obstacle legitimately
+fails to close the straight-line gap for a long stretch), progress must beat the
+closest approach so far by a real margin rather than by separation jitter, and a
+unit with a live combat target is fighting, not failing to arrive.
+`tests/spread.test.ts` pins all three parts independently.
+
 ### Spread the arrival, never the pathfinding goal
 
 A group move gives each unit its own destination so an army stops arriving in a

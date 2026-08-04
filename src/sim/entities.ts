@@ -40,6 +40,9 @@ export const ENTITY_CAPACITY = 2048;
 /** Longest path we retain per unit. Longer routes are re-planned on arrival. */
 export const MAX_PATH = 48;
 
+/** `arriveBest` before a unit has measured its distance to a destination. */
+export const ARRIVE_BEST_NONE = 0x7fffffff;
+
 const INDEX_MASK = 0xffff;
 const GEN_MASK = 0x7fff;
 
@@ -161,6 +164,17 @@ export class EntityPool {
   readonly pursueY = new Int32Array(ENTITY_CAPACITY);
   readonly pursuing = new Uint8Array(ENTITY_CAPACITY);
   /**
+   * The closest this unit has come to its destination, and how many ticks it
+   * has gone without beating that.
+   *
+   * A unit ordered somewhere it cannot stand — a spot another unit has already
+   * taken, a formation slot against a cliff — otherwise pushes at it forever.
+   * It never counts as arrived, so it never goes idle, and a group move leaves
+   * a handful of units shoving at the crowd for the rest of the match.
+   */
+  readonly arriveBest = new Int32Array(ENTITY_CAPACITY).fill(ARRIVE_BEST_NONE);
+  readonly arriveStall = new Int32Array(ENTITY_CAPACITY);
+  /**
    * Ticks to wait before retrying a path that failed.
    *
    * Without this, a unit that cannot reach its target re-runs a full-budget A*
@@ -219,6 +233,8 @@ export class EntityPool {
     this.pursuing[index] = 0;
     this.pursueX[index] = 0;
     this.pursueY[index] = 0;
+    this.arriveBest[index] = ARRIVE_BEST_NONE;
+    this.arriveStall[index] = 0;
     this.rallyX[index] = 0;
     this.rallyY[index] = 0;
     this.hasRally[index] = 0;
@@ -341,6 +357,8 @@ export class EntityPool {
     x = checksumArray(x, this.pursuing, this.count);
     x = checksumArray(x, this.pursueX, this.count);
     x = checksumArray(x, this.pursueY, this.count);
+    x = checksumArray(x, this.arriveBest, this.count);
+    x = checksumArray(x, this.arriveStall, this.count);
     x = checksumArray(x, this.rallyX, this.count);
     x = checksumArray(x, this.rallyY, this.count);
     x = checksumArray(x, this.hasRally, this.count);

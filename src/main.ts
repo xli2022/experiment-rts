@@ -243,8 +243,11 @@ class Game {
       if (e.ctrlKey || e.metaKey) {
         this.selection.assignGroup(digit);
         e.preventDefault();
-      } else {
-        this.selection.recallGroup(digit, this.sim.world);
+      } else if (this.selection.recallGroup(digit, this.sim.world) === 'again') {
+        // Second press of a key whose group is already selected jumps the view
+        // to it, as StarCraft II does.
+        const at = this.selection.centroid(this.sim.world);
+        if (at) this.camera.lookAt(at.x, at.z);
       }
       return;
     }

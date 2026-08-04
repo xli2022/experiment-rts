@@ -710,7 +710,7 @@ const IDENTITY = new THREE.Quaternion();
  * same size whether the camera is at its closest or fully pulled back.
  */
 const BAR_WIDTH_NDC = 0.1;
-const BAR_HEIGHT_NDC = 0.014;
+const BAR_HEIGHT_NDC = 0.007;
 /** Gap between the top of the model and the bar. */
 const BAR_LIFT_NDC = 0.032;
 

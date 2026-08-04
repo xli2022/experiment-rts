@@ -16,7 +16,7 @@ import {
   reachSlackFor,
 } from '../../config/rules.js';
 import type { FlowFieldCache } from '../pathing/flowfield.js';
-import { idIndex, MAX_PATH } from '../entities.js';
+import { ARRIVE_BEST_NONE, idIndex, MAX_PATH } from '../entities.js';
 import {
   FIX_HALF,
   fdiv,
@@ -56,6 +56,70 @@ export function movementSystem(world: World, astar: AStar, fields: FlowFieldCach
   followPaths(world);
   engageNearby(world);
   separate(world);
+  settleArrivals(world);
+}
+
+/**
+ * Stop a unit that is as close to its destination as it is ever going to get.
+ *
+ * Arrival is "within half a tile of the point you were given", and a unit whose
+ * point is taken — by a unit that got there first, by a building, by rock —
+ * can never satisfy it. Nothing else ever ends the order, so it pushes at the
+ * spot forever: a group move left a fifth to a half of its units shoving at the
+ * crowd for the rest of the match, still holding a Move order.
+ *
+ * Three things keep this from stopping units that are merely taking a while:
+ *
+ *   - It only runs near the destination. Further out, a unit walking around an
+ *     obstacle genuinely fails to close the straight-line gap for a long
+ *     stretch, and stopping it there would strand it mid-route.
+ *   - Progress resets it, and progress means beating the closest approach so
+ *     far by a real margin — not the jitter separation puts on every unit in a
+ *     crowd every tick.
+ *   - Fighting is not failing to arrive, so a unit with a live target holds.
+ *
+ * Runs after `separate`, which is what does the pushing, so the distance it
+ * reads is where the unit actually ended the tick.
+ */
+function settleArrivals(world: World): void {
+  const pool = world.pool;
+
+  for (let i = 0; i < pool.count; i++) {
+    if (pool.alive[i] !== 1) continue;
+    const order = pool.order[i]!;
+    if (order !== Order.Move && order !== Order.AttackMove) continue;
+
+    const def = defOf(pool.type[i]! as EntityType);
+    if (def.isBuilding || def.speedPerTick === 0) continue;
+
+    const dist = vecDist(pool.posX[i]!, pool.posY[i]!, pool.orderX[i]!, pool.orderY[i]!);
+    if (dist > SETTLE_RANGE) {
+      pool.arriveBest[i] = ARRIVE_BEST_NONE;
+      pool.arriveStall[i] = 0;
+      continue;
+    }
+
+    const target = pool.combatTarget[i]!;
+    if (target !== NO_ENTITY && pool.isAlive(target)) {
+      pool.arriveStall[i] = 0;
+      continue;
+    }
+
+    if (dist + SETTLE_MARGIN < pool.arriveBest[i]!) {
+      pool.arriveBest[i] = dist;
+      pool.arriveStall[i] = 0;
+      continue;
+    }
+
+    pool.arriveStall[i]! += 1;
+    if (pool.arriveStall[i]! < SETTLE_TICKS) continue;
+
+    pool.clearPath(i);
+    pool.order[i] = Order.None;
+    pool.navGoal[i] = -1;
+    pool.arriveBest[i] = ARRIVE_BEST_NONE;
+    pool.arriveStall[i] = 0;
+  }
 }
 
 /**
@@ -280,6 +344,20 @@ function followFlowFields(world: World, fields: FlowFieldCache): void {
       continue;
     }
 
+    // The last stretch is walked straight at this unit's own place in the
+    // formation, not at the shared goal tile.
+    //
+    // The field steers the whole group at one tile, and near the destination
+    // that tile is already full. Units that cannot get onto it are steered into
+    // the scrum anyway, shoved back out by separation, and steered in again —
+    // for the rest of the match, since only their own spread point counts as
+    // arriving and they are being pushed away from it. Measured on open ground:
+    // 20 of 24 units in a group move never came to rest.
+    if (distToGoal <= FORMATION_APPROACH) {
+      stepToward(world, i, pool.orderX[i]!, pool.orderY[i]!, def.speedPerTick, def.turnPerTick);
+      continue;
+    }
+
     const field = fields.get(world.map, goal);
     const here = world.map.tileOfPos(pool.posX[i]!, pool.posY[i]!);
     if (here < 0 || field.isStranded(here)) {
@@ -454,6 +532,26 @@ function servePathRequests(world: World, astar: AStar): void {
  * to it, short enough that an idle line does not unravel into a chase.
  */
 const ENGAGE_LEASH = fromInt(5);
+
+/**
+ * How close a unit walks straight at its own formation slot rather than
+ * following the group's shared field. Short, because it cuts corners: the
+ * field is what routes around terrain.
+ */
+const FORMATION_APPROACH = fromInt(3);
+
+/**
+ * How near its destination a unit has to be before it may give up on reaching
+ * the exact point. Wide enough to cover a crowd around a busy destination,
+ * narrow enough that a unit still walking a route is never in it.
+ */
+const SETTLE_RANGE = fromInt(5);
+
+/** How much closer counts as progress, rather than as being shoved about. */
+const SETTLE_MARGIN = FIX_HALF >> 2;
+
+/** How long a unit tries for a spot it cannot reach. 1.5 seconds. */
+const SETTLE_TICKS = 30;
 
 /**
  * How far an attack-mover will stray from where it broke off to chase.

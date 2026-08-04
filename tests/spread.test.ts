@@ -51,21 +51,66 @@ function army(n: number): { sim: Simulation; ids: number[] } {
   return { sim, ids };
 }
 
-/** A walkable tile a good distance from the start, to march toward. */
-function target(sim: Simulation): { x: number; y: number } {
+/**
+ * Somewhere a good distance from the start to march to, with room around it.
+ *
+ * `clear` is the radius of open ground the caller needs. Taking the first
+ * walkable tile instead lands on the edge of a rock formation, where the
+ * formation slots legitimately fall back to the raw target — fine behaviour,
+ * but it makes "every unit gets its own point" untestable.
+ */
+function target(sim: Simulation, clear = 0): { x: number; y: number } {
   const { map } = sim.world;
   const start = map.starts[0]!;
+  const open = (x: number, y: number): boolean => {
+    for (let dy = -clear; dy <= clear; dy++) {
+      for (let dx = -clear; dx <= clear; dx++) {
+        if (!map.isWalkable(x + dx, y + dy)) return false;
+      }
+    }
+    return true;
+  };
   for (let r = 14; r < 40; r++) {
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
         const x = start.tileX + dx;
         const y = start.tileY + dy;
-        if (map.isWalkable(x, y)) return { x, y };
+        if (open(x, y)) return { x, y };
       }
     }
   }
   throw new Error('nowhere to march to');
+}
+
+/**
+ * A walkable tile boxed in by rock on `walls` of its four sides.
+ *
+ * The hard case for arrival, and the one that separates the two halves of the
+ * fix: with room to spread out, steering the last stretch at each unit's own
+ * slot settles a group on its own. A pocket has no room, so the units that
+ * cannot get in have to give up instead.
+ */
+function pocketTarget(sim: Simulation, walls = 3): { x: number; y: number } {
+  const { map } = sim.world;
+  const start = map.starts[0]!;
+  for (let r = 10; r < 40; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const x = start.tileX + dx;
+        const y = start.tileY + dy;
+        if (!map.isWalkable(x, y)) continue;
+        let solid = 0;
+        if (!map.isWalkable(x + 1, y)) solid++;
+        if (!map.isWalkable(x - 1, y)) solid++;
+        if (!map.isWalkable(x, y + 1)) solid++;
+        if (!map.isWalkable(x, y - 1)) solid++;
+        if (solid >= walls) return { x, y };
+      }
+    }
+  }
+  throw new Error(`no tile walled on ${walls} sides`);
 }
 
 function march(sim: Simulation, ids: number[], to: { x: number; y: number }): void {
@@ -82,7 +127,7 @@ function march(sim: Simulation, ids: number[], to: { x: number; y: number }): vo
 describe('arrival spread', () => {
   it('gives the members of a group distinct destinations', () => {
     const { sim, ids } = army(9);
-    const to = target(sim);
+    const to = target(sim, 3);
     march(sim, ids, to);
 
     const pool = sim.world.pool;
@@ -94,6 +139,24 @@ describe('arrival spread', () => {
     expect(`${seen.size} distinct destinations for ${ids.length} units`).toBe(
       `${ids.length} distinct destinations for ${ids.length} units`,
     );
+  });
+
+  it('never puts a formation slot inside rock', () => {
+    // The check used to be `tileOfPos(...) < 0`, which asks whether a point is
+    // on the map. Solid rock is on the map. A unit handed a slot inside a cliff
+    // walked at it, was stopped by the terrain, and shoved at it from then on,
+    // because it could never get near enough to count as having arrived.
+    const { sim, ids } = army(9);
+    const to = pocketTarget(sim);
+    march(sim, ids, to);
+
+    const { map, pool } = sim.world;
+    for (const id of ids) {
+      const i = id & 0xffff;
+      const tile = map.tileOfPos(pool.orderX[i]!, pool.orderY[i]!);
+      expect(tile).toBeGreaterThanOrEqual(0);
+      expect(map.isWalkable(map.tileXOf(tile), map.tileYOf(tile))).toBe(true);
+    }
   });
 
   it('still points the whole group at one flow-field goal', () => {
@@ -143,5 +206,121 @@ describe('arrival spread', () => {
     expect(arrived).toBeGreaterThan(4);
     // Each on its own tile, not piled onto one.
     expect(cells.size).toBeGreaterThan(arrived / 2);
+  });
+});
+
+/**
+ * A unit that cannot reach the exact point it was given has to stop anyway.
+ *
+ * Arrival is "within half a tile of your point", and in a crowd most units can
+ * never satisfy it: their spot is taken, and separation pushes them out of it
+ * faster than they can walk back in. Nothing else ended the order, so they
+ * shoved at the destination for the rest of the match — measured on open
+ * ground, 20 of 24 units in a single group move never came to rest.
+ */
+describe('coming to rest', () => {
+  function marchAndSettle(n: number, clear: number): {
+    sim: Simulation;
+    ids: number[];
+    to: { x: number; y: number };
+    restless: number;
+  } {
+    const { sim, ids } = army(n);
+    const to = target(sim, clear);
+    march(sim, ids, to);
+    for (let t = 0; t < 1200; t++) sim.step([]);
+
+    const pool = sim.world.pool;
+    const restless = ids.filter(
+      (id) => pool.alive[id & 0xffff] === 1 && pool.order[id & 0xffff] !== Order.None,
+    ).length;
+    return { sim, ids, to, restless };
+  }
+
+  it('brings a large group entirely to rest', () => {
+    expect(marchAndSettle(24, 4).restless).toBe(0);
+  });
+
+  it('brings a group to rest even ordered into a corner', () => {
+    // No room for the formation at all: the slots are mostly rock, so most of
+    // the group is aimed at the one tile the player clicked.
+    const { sim, ids } = army(12);
+    const to = pocketTarget(sim);
+    march(sim, ids, to);
+    for (let t = 0; t < 1200; t++) sim.step([]);
+
+    const pool = sim.world.pool;
+    const restless = ids.filter(
+      (id) => pool.alive[id & 0xffff] === 1 && pool.order[id & 0xffff] !== Order.None,
+    ).length;
+    expect(restless).toBe(0);
+  });
+
+  it('stops them at the destination, not short of it', () => {
+    // The failure mode of a give-up rule is giving up too early, which looks
+    // exactly like the pathfinding being broken. Every unit must finish within
+    // formation distance of where the player clicked.
+    const { sim, ids, to } = marchAndSettle(24, 4);
+    const pool = sim.world.pool;
+
+    let furthest = 0;
+    for (const id of ids) {
+      const i = id & 0xffff;
+      if (pool.alive[i] !== 1) continue;
+      furthest = Math.max(
+        furthest,
+        Math.hypot(toFloat(pool.posX[i]!) - (to.x + 0.5), toFloat(pool.posY[i]!) - (to.y + 0.5)),
+      );
+    }
+    // A 24-strong block at one-tile spacing reaches about 2.8 to its corner.
+    expect(furthest).toBeLessThan(4.5);
+  });
+
+  it('settles promptly rather than waiting out the give-up timer', () => {
+    // Both halves of the fix bring a group to rest, but only one does it well.
+    // Steering the last stretch at each unit's own slot fans the group into its
+    // formation; without it they funnel into the goal tile, scrum, and stop
+    // where they stand once the stall timer fires — tick 261 against 183 for
+    // this march, every one of those extra 78 spent shoving.
+    const { sim, ids } = army(24);
+    const to = target(sim, 4);
+    march(sim, ids, to);
+
+    const pool = sim.world.pool;
+    let settledAt = -1;
+    for (let t = 0; t < 800 && settledAt < 0; t++) {
+      sim.step([]);
+      const moving = ids.filter(
+        (id) => pool.alive[id & 0xffff] === 1 && pool.order[id & 0xffff] !== Order.None,
+      ).length;
+      if (moving === 0) settledAt = t;
+    }
+    expect(`settled at tick ${settledAt}`).toBe(
+      settledAt >= 0 && settledAt < 220 ? `settled at tick ${settledAt}` : 'settled before tick 220',
+    );
+  });
+
+  it('does not stop a unit that is still making progress', () => {
+    // The stall rule must not fire on a lone unit walking an ordinary route,
+    // which is the way a give-up rule usually goes wrong.
+    const { sim, ids } = army(1);
+    const to = target(sim, 2);
+    march(sim, ids, to);
+
+    const i = ids[0]! & 0xffff;
+    const pool = sim.world.pool;
+    let stoppedEarly = false;
+    for (let t = 0; t < 600; t++) {
+      sim.step([]);
+      if (pool.order[i] === Order.None) {
+        const gap = Math.hypot(
+          toFloat(pool.posX[i]!) - (to.x + 0.5),
+          toFloat(pool.posY[i]!) - (to.y + 0.5),
+        );
+        stoppedEarly = gap > 1.5;
+        break;
+      }
+    }
+    expect(stoppedEarly).toBe(false);
   });
 });

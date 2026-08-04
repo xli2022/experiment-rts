@@ -15,7 +15,7 @@
 
 import { defOf, GROUP_PATH_THRESHOLD, MAX_PRODUCTION_QUEUE } from '../../config/rules.js';
 import { CommandType, type Command } from '../commands.js';
-import { idIndex } from '../entities.js';
+import { ARRIVE_BEST_NONE, idIndex } from '../entities.js';
 import { fromInt } from '../fixed.js';
 import { BuildState, EntityType, NO_ENTITY, Order, type EntityId, type PlayerId } from '../types.js';
 import type { World } from '../world.js';
@@ -208,6 +208,12 @@ const SPREAD_STEP = fromInt(1);
  * Falls back to the raw target whenever the spread tile is not somewhere a unit
  * could stand, which keeps a formation ordered against a cliff edge from
  * scattering its flank into the rock.
+ *
+ * That fallback needs the walkability check and not just the bounds check it
+ * used to do: `tileOfPos` answers "is this on the map", and solid rock is very
+ * much on the map. A unit handed a slot inside a cliff walked at it until the
+ * terrain stopped it, then pushed against the rock indefinitely, because it
+ * could never get close enough to the point to count as arrived.
  */
 function spreadDestination(
   world: World,
@@ -222,7 +228,9 @@ function spreadDestination(
   spreadSlot(slot, slotOut);
   const sx = (x + slotOut.x * SPREAD_STEP) | 0;
   const sy = (y + slotOut.y * SPREAD_STEP) | 0;
-  if (world.map.tileOfPos(sx, sy) < 0) return;
+  const tile = world.map.tileOfPos(sx, sy);
+  if (tile < 0) return;
+  if (!world.map.isWalkable(world.map.tileXOf(tile), world.map.tileYOf(tile))) return;
   out.x = sx;
   out.y = sy;
 }
@@ -255,6 +263,8 @@ function setMoveOrder(
   pool.clearPath(index);
   pool.navGoal[index] = -1;
   pool.pursuing[index] = 0;
+  pool.arriveBest[index] = ARRIVE_BEST_NONE;
+  pool.arriveStall[index] = 0;
 
   // Flyers steer straight there; no path or field is ever built for them.
   if (defOf(pool.type[index]! as EntityType).flying) return;

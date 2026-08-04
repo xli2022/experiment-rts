@@ -13,7 +13,7 @@ import { defOf } from '../src/config/rules.js';
 import { toFloat } from '../src/sim/fixed.js';
 import { Simulation } from '../src/sim/tick.js';
 import { EntityType, type PlayerId } from '../src/sim/types.js';
-import { pickAt, RING_OVERSIZE } from '../src/input/selection.js';
+import { pickAt, RING_OVERSIZE, Selection } from '../src/input/selection.js';
 
 const FIX = 65536;
 
@@ -134,5 +134,92 @@ describe('clicking a unit', () => {
     // And well outside it does not.
     const far = ndcOf(cam, x + 4, z + 4);
     expect(pickAt(sim.world, cam, far.x, far.y, 0)).not.toBe(cp);
+  });
+});
+
+/**
+ * Control groups, and the second press.
+ *
+ * Pressing a group's key when that group is already selected jumps the camera
+ * to it — the StarCraft II behaviour. The interesting case is the one that
+ * must *not* jump: pressing the key after clicking elsewhere reselects the
+ * group and leaves the view alone, because the player is looking for the units,
+ * not for where they are.
+ */
+describe('control groups', () => {
+  function twoUnits(): { sim: Simulation; sel: Selection; ids: number[] } {
+    const sim = new Simulation(0x51ce7a11);
+    const spot = clearSpot(sim);
+    const pool = sim.world.pool;
+    const ids = [0, 1].map(
+      (k) =>
+        pool.spawn(
+          EntityType.Rifleman,
+          0 as PlayerId,
+          Math.round((spot.x + 0.5 + k * 2) * FIX),
+          Math.round((spot.y + 0.5) * FIX),
+        ) & 0xffff,
+    );
+    return { sim, sel: new Selection(0 as PlayerId), ids };
+  }
+
+  it('reports the second press of an already-selected group', () => {
+    const { sim, sel, ids } = twoUnits();
+    sel.set(ids);
+    sel.assignGroup(1);
+
+    expect(sel.recallGroup(1, sim.world)).toBe('again');
+  });
+
+  it('reports a plain reselect after the player clicks away', () => {
+    const { sim, sel, ids } = twoUnits();
+    sel.set(ids);
+    sel.assignGroup(1);
+
+    sel.clear();
+    expect(sel.recallGroup(1, sim.world)).toBe('selected');
+    // And now the group is live again, so the next press is the jump.
+    expect(sel.recallGroup(1, sim.world)).toBe('again');
+  });
+
+  it('reports a partial selection as a reselect, not a jump', () => {
+    // Half the group selected is not the group, so this press is the one that
+    // gathers them — jumping here would move the view out from under a player
+    // who was mid-click.
+    const { sim, sel, ids } = twoUnits();
+    sel.set(ids);
+    sel.assignGroup(1);
+
+    sel.set([ids[0]!]);
+    expect(sel.recallGroup(1, sim.world)).toBe('selected');
+  });
+
+  it('has nothing to recall for an unassigned key, and does not jump', () => {
+    const { sim, sel } = twoUnits();
+    expect(sel.recallGroup(7, sim.world)).toBe('missing');
+  });
+
+  it('centres on the middle of the selection', () => {
+    const { sim, sel, ids } = twoUnits();
+    sel.set(ids);
+    const pool = sim.world.pool;
+    const mid = sel.centroid(sim.world)!;
+    const want = {
+      x: (toFloat(pool.posX[ids[0]!]!) + toFloat(pool.posX[ids[1]!]!)) / 2,
+      z: (toFloat(pool.posY[ids[0]!]!) + toFloat(pool.posY[ids[1]!]!)) / 2,
+    };
+    expect(`${mid.x.toFixed(3)},${mid.z.toFixed(3)}`).toBe(
+      `${want.x.toFixed(3)},${want.z.toFixed(3)}`,
+    );
+  });
+
+  it('ignores the dead when centring', () => {
+    // A control group keeps its members until they die; centring on a corpse's
+    // last position would drag the view off the survivors.
+    const { sim, sel, ids } = twoUnits();
+    sel.set(ids);
+    sim.world.pool.alive[ids[1]!] = 0;
+    const mid = sel.centroid(sim.world)!;
+    expect(mid.x.toFixed(3)).toBe(toFloat(sim.world.pool.posX[ids[0]!]!).toFixed(3));
   });
 });

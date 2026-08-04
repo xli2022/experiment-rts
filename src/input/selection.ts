@@ -95,13 +95,39 @@ export class Selection {
     this.groups.set(key, [...this.indices]);
   }
 
-  recallGroup(key: number, world: World): boolean {
+  /**
+   * Select a control group, and report whether it was already selected.
+   *
+   * `'again'` is the second press of the same key, which is the caller's cue to
+   * jump the camera to the group — the StarCraft II behaviour. Comparing the
+   * live members against the current selection rather than timing a double-tap
+   * means it also does the right thing after clicking elsewhere and pressing the
+   * key again: that reselects, it does not jump.
+   */
+  recallGroup(key: number, world: World): 'missing' | 'selected' | 'again' {
     const stored = this.groups.get(key);
-    if (!stored) return false;
+    if (!stored) return 'missing';
     const live = stored.filter((i) => world.pool.alive[i] === 1);
-    if (live.length === 0) return false;
+    if (live.length === 0) return 'missing';
+
+    const already =
+      live.length === this.indices.size && live.every((i) => this.indices.has(i));
     this.set(live);
-    return true;
+    return already ? 'again' : 'selected';
+  }
+
+  /** Centre of the current selection in world space, or null when empty. */
+  centroid(world: World): { x: number; z: number } | null {
+    let x = 0;
+    let z = 0;
+    let n = 0;
+    for (const i of this.indices) {
+      if (world.pool.alive[i] !== 1) continue;
+      x += toFloat(world.pool.posX[i]!);
+      z += toFloat(world.pool.posY[i]!);
+      n++;
+    }
+    return n === 0 ? null : { x: x / n, z: z / n };
   }
 }
 
