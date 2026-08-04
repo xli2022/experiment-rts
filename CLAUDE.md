@@ -293,6 +293,25 @@ Units accelerate by a fraction of their top speed per tick and brake by
 or they stutter at every corner of a path. `Math.sqrt` is the one non-trivial
 function the sim may use; see the sealed-core rules above.
 
+### A building is a square, and units must approach its nearest face
+
+Two separate mistakes made workers walk around a Command Post rather than
+delivering where they stood, and each is worth avoiding again:
+
+- **Reach was measured against the circle inscribed in the footprint.** That
+  reaches half a tile past the middle of each face and falls short of every
+  corner — on a 4-tile footprint the corners sit at 2.83 from centre against a
+  reach of 2.67, so diagonal approaches could not deliver at all.
+  `distanceSqTo` now measures to the box for anything with a footprint.
+- **Units pathed at the building's centre.** That tile is not walkable, so A*
+  substitutes the nearest walkable tile to it — the *same* tile for every unit,
+  whichever side it came from. `approachPoint` clamps the unit's position to the
+  footprint so each one heads for its own near face.
+
+Measured on the opening harvest: 314 deliveries in 4000 ticks before, 513 after,
+and a loaded worker's detour fell from up to 2.6x the direct distance to about
+1.0x from every side. `tests/dropoff.test.ts`.
+
 ### Collision radius is the unit's size, everywhere
 
 `radius` is the collision size, the weapon-reach margin (`attackRange + target

@@ -31,6 +31,7 @@ import {
   type Fix,
 } from '../fixed.js';
 import { AStar, nearestWalkable } from '../pathing/astar.js';
+import { approachPoint } from './economy.js';
 import type { EntityDef } from '../../config/rules.js';
 import { EntityType, NO_ENTITY, Order } from '../types.js';
 import type { World } from '../world.js';
@@ -352,6 +353,9 @@ function servePathRequests(world: World, astar: AStar): void {
  */
 const ENGAGE_LEASH = fromInt(5);
 
+/** Scratch for `approachPoint`; the simulation allocates nothing per tick. */
+const approachOut = { x: 0 as Fix, y: 0 as Fix };
+
 function followPaths(world: World): void {
   const pool = world.pool;
 
@@ -370,7 +374,13 @@ function followPaths(world: World): void {
       const targetId = pool.orderTarget[i]!;
       if (targetId !== NO_ENTITY && pool.isAlive(targetId)) {
         const ti = idIndex(targetId);
-        maybeRepathToward(world, i, pool.posX[ti]!, pool.posY[ti]!);
+        // Head for the near face of a building rather than its middle. The
+        // centre of a footprint is not walkable, so A* substitutes the nearest
+        // walkable tile to it — the same tile for everyone, whichever side they
+        // came from, which is what made workers walk around a Command Post
+        // instead of delivering where they stood.
+        approachPoint(world, ti, pool.posX[i]!, pool.posY[i]!, approachOut);
+        maybeRepathToward(world, i, approachOut.x, approachOut.y);
       }
     }
 

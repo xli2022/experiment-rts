@@ -15,7 +15,7 @@ import {
   MINERALS_PER_TRIP,
 } from '../../config/rules.js';
 import { idIndex } from '../entities.js';
-import { fromInt, sqRange, vecLenSqRaw } from '../fixed.js';
+import { fromInt, sqRange, vecLenSqRaw, type Fix } from '../fixed.js';
 import { BuildState, EntityType, NO_ENTITY, Order, type PlayerId } from '../types.js';
 import type { World } from '../world.js';
 
@@ -148,6 +148,58 @@ function nearestPatch(world: World, i: number): number {
 }
 
 /**
+ * Squared distance from a point to the nearest part of entity `b`.
+ *
+ * Buildings are squares and were measured as the circle inscribed in their own
+ * footprint, which is wrong in both directions: it reaches half a tile past the
+ * middle of each face and falls short of every corner. On a Command Post, whose
+ * footprint is four tiles, that left the diagonals out of range entirely, so a
+ * worker arriving on one had to walk around to a face before it could deliver.
+ *
+ * Round things keep their radius; only footprints get the box treatment.
+ */
+export function distanceSqTo(world: World, b: number, px: Fix, py: Fix): number {
+  const pool = world.pool;
+  const def = defOf(pool.type[b]! as EntityType);
+  let dx = px - pool.posX[b]!;
+  let dy = py - pool.posY[b]!;
+
+  if (def.footprint > 0) {
+    // Outside the box on each axis independently; zero on an axis the point
+    // already overlaps, which is what makes a face as reachable as a corner.
+    const half = fromInt(def.footprint) >> 1;
+    dx = dx < 0 ? Math.min(0, dx + half) : Math.max(0, dx - half);
+    dy = dy < 0 ? Math.min(0, dy + half) : Math.max(0, dy - half);
+    return vecLenSqRaw(dx, dy);
+  }
+  // Round: pull the radius off the straight-line distance later, as before.
+  return vecLenSqRaw(dx, dy);
+}
+
+/**
+ * The point on `b` nearest to (px, py) — where a unit should actually walk to.
+ *
+ * For a building this is a spot on the face it is approaching from, so every
+ * side is an equally good way in. Pathing at the centre instead sent every unit
+ * to whichever single tile `nearestWalkable` happened to pick for the middle of
+ * the footprint, which is the long way round from three sides out of four.
+ */
+export function approachPoint(world: World, b: number, px: Fix, py: Fix, out: { x: Fix; y: Fix }): void {
+  const pool = world.pool;
+  const def = defOf(pool.type[b]! as EntityType);
+  const bx = pool.posX[b]!;
+  const by = pool.posY[b]!;
+  if (def.footprint <= 0) {
+    out.x = bx;
+    out.y = by;
+    return;
+  }
+  const half = fromInt(def.footprint) >> 1;
+  out.x = px < bx - half ? bx - half : px > bx + half ? bx + half : px;
+  out.y = py < by - half ? by - half : py > by + half ? by + half : py;
+}
+
+/**
  * Is `a` close enough to `b` to work on it, given that order's slack?
  *
  * Exported because the HUD has to ask the same question to tell a worker still
@@ -160,10 +212,10 @@ export function inReach(world: World, a: number, b: number, extra: number): bool
   const pool = world.pool;
   const defA = defOf(pool.type[a]! as EntityType);
   const defB = defOf(pool.type[b]! as EntityType);
-  const dx = pool.posX[b]! - pool.posX[a]!;
-  const dy = pool.posY[b]! - pool.posY[a]!;
-  const reach = defA.radius + defB.radius + extra;
-  return vecLenSqRaw(dx, dy) <= sqRange(reach);
+  const distSq = distanceSqTo(world, b, pool.posX[a]!, pool.posY[a]!);
+  // A footprint has already had its own extent removed by `distanceSqTo`.
+  const reach = defA.radius + extra + (defB.footprint > 0 ? 0 : defB.radius);
+  return distSq <= sqRange(reach);
 }
 
 // ---------------------------------------------------------------------------
