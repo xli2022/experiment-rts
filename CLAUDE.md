@@ -198,6 +198,32 @@ display rate and interpolates between the last two ticks; interpolation alpha is
 clamped to [0,1] so a network stall freezes units rather than extrapolating them
 through walls.
 
+### Input delay is per-peer, and each peer must be told what to do with it
+
+Commands execute `delayTurns` turns after they are issued. That number is *not*
+shared: the wire carries the absolute turn each command belongs to, so a peer
+files what it receives and never infers a schedule. Two peers can hold different
+delays for the whole match without diverging by a bit.
+
+Two things make it work, and both were arrived at the hard way:
+
+- **The turns a peer has scheduled must stay a contiguous prefix.** Raising the
+  delay opens a gap, and a turn nobody ever sends for blocks *everyone* forever,
+  so the gap is filled in the same packet. Lowering it cannot rewrite a turn
+  already sent — a peer may have executed it — so the schedule simply pauses and
+  lets the clock catch up.
+- **A peer cannot adapt from its own stalls.** A stall says the *other* peer is
+  late, and raising your own delay changes only your own sends. Driven that way,
+  the loop settles at one peer pinned to the ceiling and stalling permanently
+  while the other sits at the floor and never learns it is the problem —
+  measured at 120ms: 1133 stalled frames against 19 for the old fixed delay. So
+  each packet carries `peerHeadroom`, how early the sender is receiving *your*
+  packets, and each peer sizes its own delay from what it is told.
+
+Measured against the fixed 200ms it replaced: LAN drops to 100ms with no stalls,
+transpacific goes from 1893 stalled frames to 52, and a dire link runs 2.3x
+closer to real time. `tests/inputDelay.test.ts`.
+
 ### Commands are the only thing on the wire
 
 Player intent goes in, entity state never does. This is what keeps bandwidth

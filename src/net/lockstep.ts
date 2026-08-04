@@ -10,9 +10,16 @@
  * already received everyone's commands for it, so all of them can run the turn
  * independently and get the same answer.
  *
- * The cost is input latency — roughly 200ms here, which is why RTS games feel
- * slightly "heavy" compared to shooters. The benefit is that a 200-unit battle
- * costs the same bandwidth as a single click.
+ * The cost is input latency, which is why RTS games feel slightly "heavy"
+ * compared to shooters. The benefit is that a 200-unit battle costs the same
+ * bandwidth as a single click.
+ *
+ * How much latency is not fixed. Each peer sizes its own delay from feedback
+ * the other sends about how early its packets are landing — 100ms on a LAN,
+ * up to 500ms on a link that needs it. See `adaptDelay`, and note that the two
+ * peers can hold different values without any risk of divergence: the wire
+ * carries the absolute turn each command belongs to, so a schedule is stated
+ * rather than inferred.
  *
  * ## The rule that must never bend
  *
@@ -32,13 +39,39 @@ import type { Packet, Transport, TurnCommands } from './transport.js';
 export const TICKS_PER_TURN = 2;
 
 /**
- * How many turns ahead commands are scheduled.
+ * How many turns ahead commands are scheduled at the start of a match.
  *
  * Two turns at 100ms each gives peers ~200ms to get a packet across, which
  * covers most real connections. Lower feels snappier but stalls on any latency
- * spike; higher is mushy to play.
+ * spike; higher is mushy to play. From here it adapts — see `adaptDelay` — but
+ * the *starting* value has to be a constant every peer shares, because the
+ * first few turns are seeded rather than sent and each peer seeds its own.
  */
 export const INPUT_DELAY_TURNS = 2;
+
+/**
+ * Bounds on the adapted delay, in turns of 100ms.
+ *
+ * One turn is the floor because commands must land on a turn that has not
+ * executed yet; zero would mean scheduling into the present. Five is the
+ * ceiling because half a second of input lag is already worse than the stalls
+ * it is avoiding, and a link that bad wants the "waiting for player" overlay
+ * telling the truth rather than a game that merely feels broken.
+ */
+export const MIN_INPUT_DELAY_TURNS = 1;
+export const MAX_INPUT_DELAY_TURNS = 5;
+
+/** Turns between reconsiderations. Two seconds: slow enough not to oscillate. */
+const ADAPT_INTERVAL_TURNS = 20;
+
+/**
+ * Spare turns a remote peer's commands must arrive with before we speed up.
+ *
+ * Headroom is how far ahead of our current turn a packet's newest turn is when
+ * it lands. Zero means it arrived exactly as we needed it — no margin at all —
+ * so shrinking the delay is only considered when there are turns to spare.
+ */
+const HEADROOM_TO_SPEED_UP = 2;
 
 /** Older turns repeated in each packet, to ride out packet loss. */
 const REDUNDANT_TURNS = 2;
@@ -104,6 +137,32 @@ export class LockstepRunner {
 
   /** Local checksums by tick, kept until a peer confirms or contradicts them. */
   private readonly checksums = new Map<number, number>();
+
+  /**
+   * Turns we have already broadcast for, as a contiguous prefix `[0, sentThrough]`.
+   *
+   * Contiguity is the whole safety argument for a delay that moves. A peer
+   * blocks forever on a turn nobody ever sends, so the prefix may be *extended*
+   * — by several turns at once when the delay grows — but never left with a
+   * hole, and never revisited: a turn already sent may sit in a peer that has
+   * already executed it, so superseding it would desync rather than correct.
+   *
+   * Starts at the last seeded turn, since those are filled locally by every
+   * peer instead of being sent.
+   */
+  private sentThrough = INPUT_DELAY_TURNS - 1;
+
+  /** Turns between issuing a command and executing it. `sentThrough` follows it. */
+  private delayTurns = INPUT_DELAY_TURNS;
+
+  /** Newest turn each peer has been seen scheduling, indexed by player. */
+  private readonly peerHighWater: number[] = [];
+
+  /** Smallest headroom we have observed from remotes since our last packet. */
+  private observedHeadroom = Number.POSITIVE_INFINITY;
+  /** Smallest headroom a remote has reported *for us* since the last decision. */
+  private reportedHeadroom = Number.POSITIVE_INFINITY;
+  private lastAdaptTurn = 0;
 
   private stalledSinceMs = 0;
   private lastResendMs = 0;
@@ -207,9 +266,10 @@ export class LockstepRunner {
       commands = this.gather(slots);
       this.buffer.delete(turn);
 
+      this.adaptDelay(turn);
       // Broadcast local intent for a future turn, plus redundant copies of the
       // last few, before advancing.
-      this.broadcast(turn + INPUT_DELAY_TURNS);
+      this.broadcast(turn);
     }
 
     this.simulation.step(commands);
@@ -293,22 +353,84 @@ export class LockstepRunner {
     }
   }
 
-  /** Send local commands for `turn`, with redundant copies of recent turns. */
+  /**
+   * Reconsider how far ahead we schedule, from how the link is behaving.
+   *
+   * This is a purely local decision and needs no agreement, because the wire
+   * carries the absolute turn each command belongs to — a peer files what it
+   * receives at the stated turn and never infers a schedule. Two peers can run
+   * different delays indefinitely without diverging by a bit; the only thing at
+   * stake is how each one feels to the player holding it.
+   *
+   * The input is `peerHeadroom` — what the *other* peer reports about how early
+   * our packets reach it. Nothing else will do. Our own stalls are a statement
+   * about the other peer's schedule, and acting on them adjusts the wrong end:
+   * measured at 120ms, a stall-driven rule parks one peer at the maximum delay,
+   * stalling permanently, while the other sits at the minimum and never learns
+   * it is the one arriving late.
+   */
+  private adaptDelay(turn: number): void {
+    if (turn - this.lastAdaptTurn < ADAPT_INTERVAL_TURNS) return;
+    this.lastAdaptTurn = turn;
+
+    const reported = this.reportedHeadroom;
+    this.reportedHeadroom = Number.POSITIVE_INFINITY;
+
+    // Nothing heard back this window — a silent peer says nothing about our
+    // schedule, so leave it where it is.
+    if (!Number.isFinite(reported)) return;
+
+    if (reported <= 0 && this.delayTurns < MAX_INPUT_DELAY_TURNS) {
+      this.delayTurns++;
+    } else if (reported >= HEADROOM_TO_SPEED_UP && this.delayTurns > MIN_INPUT_DELAY_TURNS) {
+      this.delayTurns--;
+    }
+  }
+
+  /** Turns between issuing a command and its execution. Adapts during play. */
+  get inputDelayTurns(): number {
+    return this.delayTurns;
+  }
+
+  /**
+   * Extend our schedule past `turn`, and send it with recent history attached.
+   *
+   * How far past is `delayTurns`, so this covers three cases with one rule:
+   * normally it adds the single next turn; after the delay grows it adds
+   * several at once to keep the prefix contiguous; and after the delay shrinks
+   * it adds none at all, letting `turn` catch up to a schedule already sent.
+   *
+   * A packet still goes out in that last case. Empty turns are the heartbeat
+   * that carries redundant copies and the checksum, and going quiet because we
+   * had nothing new to schedule would drop both.
+   */
   private broadcast(turn: number): void {
-    const mine = this.pendingLocal;
-    this.pendingLocal = [];
+    const target = turn + this.delayTurns;
+    const first = this.sentThrough + 1;
 
-    const entry: TurnCommands = {
-      turn,
-      player: this.transport.localPlayer,
-      commands: mine,
-    };
-    this.recentSent.push(entry);
-    while (this.recentSent.length > SEND_HISTORY_TURNS) this.recentSent.shift();
+    for (let t = first; t <= target; t++) {
+      // Commands ride the first turn we open — the one we would have sent
+      // anyway. Turns beyond it are pure headroom and go out empty.
+      const mine = t === first ? this.pendingLocal : [];
+      this.recentSent.push({
+        turn: t,
+        player: this.transport.localPlayer,
+        commands: mine,
+      });
+      while (this.recentSent.length > SEND_HISTORY_TURNS) this.recentSent.shift();
 
-    // Record our own commands locally too — we are a peer like any other, and
-    // the turn cannot execute until every slot including ours is filled.
-    this.setTurn(turn, this.transport.localPlayer, mine);
+      // Record our own commands locally too — we are a peer like any other, and
+      // the turn cannot execute until every slot including ours is filled.
+      this.setTurn(t, this.transport.localPlayer, mine);
+    }
+
+    if (target >= first) {
+      // Only once something was actually scheduled: if the delay just shrank
+      // and we opened nothing, the commands must stay pending rather than
+      // vanish into a turn we never sent.
+      this.pendingLocal = [];
+      this.sentThrough = target;
+    }
 
     // Steady-state packets carry only a few turns; the rest of the history is
     // held back for stall recovery so normal packets stay small.
@@ -321,6 +443,13 @@ export class LockstepRunner {
     // channel as commands so it cannot arrive out of band.
     const latest = this.latestChecksum();
     if (latest) packet.checksum = latest;
+
+    // Tell the peer how early its packets have been reaching us, which is the
+    // only way it can learn whether *its* schedule is tight enough.
+    if (Number.isFinite(this.observedHeadroom)) {
+      packet.peerHeadroom = this.observedHeadroom;
+      this.observedHeadroom = Number.POSITIVE_INFINITY;
+    }
 
     this.transport.send(packet);
   }
@@ -337,6 +466,32 @@ export class LockstepRunner {
   }
 
   private receive(packet: Packet): void {
+    if (packet.player !== this.transport.localPlayer) {
+      // How much margin the peer's schedule is arriving with, in turns.
+      //
+      // Measured against a high-water mark rather than per packet, because the
+      // channel is deliberately unordered and every packet repeats the previous
+      // turns: a reordered or redundant copy carries old turn numbers and would
+      // read as a peer falling behind, which would ratchet the delay up on a
+      // link that is in fact perfectly healthy. Only genuine forward progress
+      // is a measurement.
+      let newest = -1;
+      for (const entry of packet.turns) {
+        if (entry.turn > newest) newest = entry.turn;
+      }
+      const seen = this.peerHighWater[packet.player] ?? -1;
+      if (newest > seen) {
+        this.peerHighWater[packet.player] = newest;
+        const headroom = newest - Math.floor(this.tick / TICKS_PER_TURN);
+        if (headroom < this.observedHeadroom) this.observedHeadroom = headroom;
+      }
+
+      // And what they say about ours, which is the only thing we can act on.
+      if (packet.peerHeadroom !== undefined && packet.peerHeadroom < this.reportedHeadroom) {
+        this.reportedHeadroom = packet.peerHeadroom;
+      }
+    }
+
     for (const entry of packet.turns) {
       // Turns already executed are dropped; redundant copies of them are the
       // normal case, not an error.

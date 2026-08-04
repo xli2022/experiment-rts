@@ -41,6 +41,23 @@ export interface Packet {
   turns: TurnCommands[];
   /** Periodic state fingerprint, for desync detection. */
   checksum?: { tick: number; value: number };
+  /**
+   * How early the sender has been receiving *your* packets, in turns.
+   *
+   * This is feedback, not information about the sender. A peer cannot see how
+   * late its own packets land — only how late the other's do — so each peer
+   * reports what it observes and adjusts its own schedule from what it is told.
+   * Without it the loop points the wrong way: a peer that stalls raises its own
+   * delay, which governs its own sends and so fixes nothing, while the peer
+   * actually running late sees a roomy link and tightens further. Measured,
+   * that settles at one peer pinned to the maximum delay and stalling
+   * permanently while the other sits at the minimum.
+   *
+   * With more than two players this is the minimum across the sender's remotes,
+   * which is conservative rather than precise. The game is 1v1, where it is
+   * exact.
+   */
+  peerHeadroom?: number;
 }
 
 export interface Transport {

@@ -103,8 +103,12 @@ function unorderedPeerConnection(): typeof RTCPeerConnection | undefined {
  * Two peers running different builds would desync within seconds, and the cause
  * is invisible from inside the game. Refusing to start is far kinder than
  * letting them play two diverging matches.
+ *
+ * 2: packets carry `peerHeadroom`, the feedback that lets each peer size its own
+ *    input delay. An older peer never sends it, so a newer one would sit at the
+ *    starting delay forever while the older one adapted against silence.
  */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export interface HostConfig {
   roomCode: string;
