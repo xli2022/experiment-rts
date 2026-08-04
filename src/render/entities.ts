@@ -714,13 +714,9 @@ const BAR_HEIGHT_NDC = 0.014;
 /** Gap between the top of the model and the bar. */
 const BAR_LIFT_NDC = 0.032;
 
-/**
- * Selection ring size relative to the collision radius.
- *
- * A shade over 1 so the ring reads as sitting around the unit rather than
- * cutting through its feet.
- */
-const RING_OVERSIZE = 1.15;
+// The ring is also the click target, so its size lives with the picking code
+// that has to agree with it.
+import { RING_OVERSIZE } from '../input/selection.js';
 
 /** Radians per second of the production glow's pulse. About one beat a second. */
 const PRODUCTION_PULSE_RATE = 5.4;

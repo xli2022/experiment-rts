@@ -328,6 +328,23 @@ Measured on the opening harvest: 314 deliveries in 4000 ticks before, 513 after,
 and a loaded worker's detour fell from up to 2.6x the direct distance to about
 1.0x from every side. `tests/dropoff.test.ts`.
 
+### The click target is the ring, and rally lives above the units check
+
+`pickAt` casts to the ground plane and tests the drawn selection ring, so what a
+player can click is exactly what they can see. A screen-space tolerance was
+tried and is worse: it does not shrink as the camera pulls back, so a distant
+clump becomes a lottery. Buildings hit-test their footprint square, not a
+circle. The ring size constant lives in `input/selection.ts` and the renderer
+imports it — the two drifting apart is the whole failure mode.
+
+Right-clicking the ground with a production building selected sets its rally
+point, and that check has to run **before** `hasOwnUnits`. That guard
+deliberately ignores buildings, since buildings take no movement orders — so a
+selection holding nothing but a Barracks returned from `issueContextOrder`
+before reaching the rally code, and the feature silently did nothing. It was
+verified by calling `issueGroundOrder` directly, which walks straight past the
+line that breaks it; only a real right-click finds this.
+
 ### Collision radius is the unit's size, everywhere
 
 `radius` is the collision size, the weapon-reach margin (`attackRange + target

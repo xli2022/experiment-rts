@@ -386,8 +386,16 @@ class Game {
    * matters more than any explicit button.
    */
   private issueContextOrder(): void {
-    if (!this.selection.hasOwnUnits(this.sim.world)) return;
     const world = this.sim.world;
+
+    // Rally points first, because the check below rejects the very case they
+    // exist for. `hasOwnUnits` deliberately ignores buildings — they take no
+    // movement orders — so a selection holding nothing but a Barracks bailed
+    // out of this function before it could ever reach the rally code.
+    const rallyPoint = groundPointAt(this.camera.camera, this.pointerNdc.x, this.pointerNdc.y);
+    const rallied = rallyPoint !== null && this.setRallyPoints(rallyPoint.x, rallyPoint.z);
+
+    if (!this.selection.hasOwnUnits(world)) return;
     const units = this.selection.ids(world);
     if (units.length === 0) return;
 
@@ -444,7 +452,7 @@ class Game {
     }
 
     const point = groundPointAt(this.camera.camera, this.pointerNdc.x, this.pointerNdc.y);
-    if (point) this.issueGroundOrder(point.x, point.z, false);
+    if (point) this.issueGroundOrder(point.x, point.z, false, rallied);
   }
 
   /**
@@ -516,8 +524,10 @@ class Game {
     return any;
   }
 
-  private issueGroundOrder(x: number, z: number, attackMove: boolean): void {
-    if (!attackMove && this.setRallyPoints(x, z)) return;
+  private issueGroundOrder(x: number, z: number, attackMove: boolean, alreadyRallied = false): void {
+    // A mixed selection does both: the buildings take the rally, the units take
+    // the move. They never compete, since buildings cannot move anyway.
+    if (!attackMove && !alreadyRallied && this.setRallyPoints(x, z)) return;
     const units = this.selection.ids(this.sim.world);
     if (units.length === 0) return;
     this.projectiles.spawnClickMarker(x, z, attackMove ? 0xff7a4a : 0x7dff9b);

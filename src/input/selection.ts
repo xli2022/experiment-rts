@@ -22,6 +22,18 @@ import type { World } from '../sim/world.js';
 /** Selecting more than this is unwieldy and slows command packets down. */
 export const MAX_SELECTION = 24;
 
+/**
+ * Selection ring size relative to collision radius.
+ *
+ * Must match the renderer's own constant: the ring is both what the player sees
+ * and what they click, so the two drifting apart makes the game feel like it is
+ * ignoring accurate clicks.
+ */
+export const RING_OVERSIZE = 1.15;
+
+/** How far outside a building's footprint still counts as clicking it. */
+const BUILDING_PICK_MARGIN = 0.35;
+
 export class Selection {
   /** Entity slot indices currently selected. */
   readonly indices = new Set<number>();
@@ -128,30 +140,44 @@ export function pickAt(
   localPlayer: PlayerId,
 ): number {
   const pool = world.pool;
+  const ground = groundPointAt(camera, ndcX, ndcY);
+  if (!ground) return -1;
+
   let best = -1;
   let bestScore = Number.POSITIVE_INFINITY;
 
   for (let i = 0; i < pool.count; i++) {
     if (pool.alive[i] !== 1) continue;
-    const p = project(camera, toFloat(pool.posX[i]!), toFloat(pool.posY[i]!), scratch);
-    if (!p) continue;
-
-    const dx = p.x - ndcX;
-    const dy = p.y - ndcY;
-    const dist = Math.hypot(dx, dy);
-
     const type = pool.type[i]! as EntityType;
     const def = defOf(type);
-    // Deliberately more generous than the unit is wide. A click that lands just
-    // off a two-pixel model is a miss the player reads as the game ignoring
-    // them, and the ranking below already resolves the overlap this creates.
-    const tolerance = def.isBuilding ? 0.09 : 0.055;
-    if (dist > tolerance) continue;
+
+    const ex = toFloat(pool.posX[i]!);
+    const ez = toFloat(pool.posY[i]!);
+    let dist: number;
+
+    if (def.footprint > 0) {
+      // Buildings are squares, so hit-test the square. Distance is zero
+      // anywhere inside the footprint, which is what makes the middle of a
+      // Command Post as clickable as its edge.
+      const half = def.footprint / 2;
+      const dx = Math.max(0, Math.abs(ground.x - ex) - half);
+      const dz = Math.max(0, Math.abs(ground.z - ez) - half);
+      dist = Math.hypot(dx, dz);
+      if (dist > BUILDING_PICK_MARGIN) continue;
+    } else {
+      // Exactly the selection ring, because the ring is drawn on the ground at
+      // this radius and a hit area that does not match what is drawn is a hit
+      // area the player cannot see. A screen-space tolerance was tried and is
+      // worse: it does not shrink when you zoom out, so a distant clump becomes
+      // a lottery.
+      dist = Math.hypot(ground.x - ex, ground.z - ez);
+      if (dist > toFloat(def.radius) * RING_OVERSIZE) continue;
+    }
 
     // Rank: own units first, then own buildings, then anything else.
     const owned = pool.owner[i] === localPlayer;
     const priority = owned && !def.isBuilding ? 0 : owned ? 1 : 2;
-    const score = priority * 10 + dist;
+    const score = priority * 1000 + dist;
     if (score < bestScore) {
       bestScore = score;
       best = i;
