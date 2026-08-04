@@ -140,6 +140,27 @@ export class EntityPool {
    */
   readonly flowGoal = new Int32Array(ENTITY_CAPACITY);
   /**
+   * The tile a move order navigates to, kept across a fight.
+   *
+   * `clearPath` wipes the active route — including `flowGoal` — which is right
+   * when a unit stops to shoot but leaves nothing to resume from. This holds the
+   * order's *intent* rather than its current route, so it survives combat. -1
+   * means the order navigates by its own A* path instead of a shared field.
+   */
+  readonly navGoal = new Int32Array(ENTITY_CAPACITY).fill(-1);
+  /**
+   * Where a unit stood when it broke off to chase something, and whether it is
+   * chasing at all.
+   *
+   * The leash has to be measured from here rather than from the unit's current
+   * position. Recomputed each tick against where it now stands, the window
+   * slides along with a retreating enemy and pursuit ratchets — measured, a
+   * unit dragged sideways followed a fleeing rifleman 14.6 tiles off its route.
+   */
+  readonly pursueX = new Int32Array(ENTITY_CAPACITY);
+  readonly pursueY = new Int32Array(ENTITY_CAPACITY);
+  readonly pursuing = new Uint8Array(ENTITY_CAPACITY);
+  /**
    * Ticks to wait before retrying a path that failed.
    *
    * Without this, a unit that cannot reach its target re-runs a full-budget A*
@@ -194,6 +215,10 @@ export class EntityPool {
     this.harvestPatch[index] = NO_ENTITY;
     this.resourceAmount[index] = 0;
     this.prodCount[index] = 0;
+    this.navGoal[index] = -1;
+    this.pursuing[index] = 0;
+    this.pursueX[index] = 0;
+    this.pursueY[index] = 0;
     this.rallyX[index] = 0;
     this.rallyY[index] = 0;
     this.hasRally[index] = 0;
@@ -312,6 +337,10 @@ export class EntityPool {
     x = checksumArray(x, this.tileX, this.count);
     x = checksumArray(x, this.tileY, this.count);
     x = checksumArray(x, this.speed, this.count);
+    x = checksumArray(x, this.navGoal, this.count);
+    x = checksumArray(x, this.pursuing, this.count);
+    x = checksumArray(x, this.pursueX, this.count);
+    x = checksumArray(x, this.pursueY, this.count);
     x = checksumArray(x, this.rallyX, this.count);
     x = checksumArray(x, this.rallyY, this.count);
     x = checksumArray(x, this.hasRally, this.count);

@@ -293,6 +293,47 @@ Units accelerate by a fraction of their top speed per tick and brake by
 or they stutter at every corner of a path. `Math.sqrt` is the one non-trivial
 function the sim may use; see the sealed-core rules above.
 
+### Attack-move is a loop, and the missing half is the return
+
+Attack-move has two transitions, not one. Stopping to fight was implemented;
+starting again was not, and the omission is invisible in the code because
+nothing looks wrong at the point where it should have happened.
+
+Engaging calls `clearPath`, which wipes the route **and** `flowGoal`. That is
+right — a unit holding its ground should not also be walking — but it deletes
+the only record of where the unit was going. So an army sent across the map
+stopped at the first thing it killed and stood there for the rest of the match,
+still holding an `AttackMove` order it could never complete: sixteen tiles
+short, order still set, looking for all the world like a pathfinding failure.
+
+Three pieces fix it, and each is load-bearing:
+
+- **`navGoal` holds the order's intent, not its route**, so it survives
+  `clearPath`. Resuming has to restore the *same shared flow-field goal* —
+  rebuilding per unit is one Dijkstra sweep each, the collapse described under
+  "Spread the arrival" above.
+- **`resumeAdvance` runs before the movers**, so a unit that resumes this tick
+  walks this tick, and it is what converts `AttackMove` to `None` on arrival.
+  Nothing else does; without it the order is permanent.
+- **`engageNearby` accepts `AttackMove`, not just `None`.** Idle units defend
+  themselves and attack-movers go and take what they saw; a plain `Move` does
+  neither, which is the entire reason attack-move exists as a separate order.
+
+**The pursuit leash must be anchored where the chase began.** Measured from the
+unit's current position the window slides along with a retreating enemy and the
+chase ratchets indefinitely — a unit dragged sideways followed a fleeing
+rifleman 14.6 tiles off its route. Past the leash the anchor is *kept*, so the
+unit turns back and can pick the fight up again on its way past; it resets only
+when the target is dead or gone beyond acquisition. `tests/attackMove.test.ts`.
+
+**Do not measure unit behaviour without checking the unit is alive.** A corpse
+keeps its last `order` and its last position, so a dead unit looks exactly like
+a unit that stopped and never resumed. Staging two identical riflemen against
+each other means the one under test usually dies, and the trap reports the bug
+you were looking for whether or not it exists — it cost a first attempt at this
+fix, "verified" against a body. Heal the unit under test, or give it something
+weak to kill, and assert `alive` before reading anything else.
+
 ### Acquiring a target is also an instruction to walk to it
 
 `engageNearby` steps an idle unit toward whatever combat picked out, so a target

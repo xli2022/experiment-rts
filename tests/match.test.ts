@@ -55,6 +55,7 @@ function playMatch(seed: number, maxTicks = MAX_TICKS) {
   let deaths = 0;
   let shots = 0;
   let peakArmy = 0;
+  const peakWorkers = [0, 0];
   let ticks = 0;
 
   for (let t = 0; t < maxTicks; t++) {
@@ -63,10 +64,12 @@ function playMatch(seed: number, maxTicks = MAX_TICKS) {
     deaths += sim.world.events.deaths.length;
     shots += sim.world.events.shots.length / 2;
     peakArmy = Math.max(peakArmy, tally(sim, 0).army + tally(sim, 1).army);
+    peakWorkers[0] = Math.max(peakWorkers[0]!, tally(sim, 0).workers);
+    peakWorkers[1] = Math.max(peakWorkers[1]!, tally(sim, 1).workers);
     if (sim.world.matchOver) break;
   }
 
-  return { sim, deaths, shots, peakArmy, ticks };
+  return { sim, deaths, shots, peakArmy, peakWorkers, ticks };
 }
 
 describe('bot-vs-bot match', () => {
@@ -79,12 +82,13 @@ describe('bot-vs-bot match', () => {
   });
 
   it('has both sides build a working economy', () => {
-    // Checked at the end, so the loser having been wiped out is expected; the
-    // winner must have grown well past its six starting workers at some point.
+    // Peak rather than final, which is what "built an economy" means. Checking
+    // the closing tally instead made this a measure of how badly the winner was
+    // mauled on the way — it started failing the moment attack-move began
+    // actually delivering armies to enemy bases.
     const winner = result.sim.world.winner;
-    const w = tally(result.sim, winner);
-    expect(w.workers).toBeGreaterThan(6);
-    expect(w.buildings).toBeGreaterThan(3);
+    expect(result.peakWorkers[winner]).toBeGreaterThan(6);
+    expect(tally(result.sim, winner).buildings).toBeGreaterThan(3);
   });
 
   it('actually fights', () => {

@@ -253,6 +253,8 @@ function setMoveOrder(
   pool.orderTarget[index] = NO_ENTITY;
   pool.combatTarget[index] = NO_ENTITY;
   pool.clearPath(index);
+  pool.navGoal[index] = -1;
+  pool.pursuing[index] = 0;
 
   // Flyers steer straight there; no path or field is ever built for them.
   if (defOf(pool.type[index]! as EntityType).flying) return;
@@ -266,6 +268,10 @@ function setMoveOrder(
     // formation survives.
     const goal = world.map.tileOfPos(goalX, goalY);
     pool.flowGoal[index] = goal >= 0 ? goal : -1;
+    // Remembered separately: stopping to fight wipes the active route, and an
+    // attack-move has to pick its advance back up on the *same shared field*
+    // afterwards. Rebuilding it per unit is one Dijkstra sweep each.
+    pool.navGoal[index] = pool.flowGoal[index]!;
     return;
   }
 

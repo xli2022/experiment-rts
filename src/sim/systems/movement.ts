@@ -50,11 +50,112 @@ const PATH_RETRY_COOLDOWN = 40;
 
 export function movementSystem(world: World, astar: AStar, fields: FlowFieldCache): void {
   moveFlyers(world);
+  resumeAdvance(world);
   servePathRequests(world, astar);
   followFlowFields(world, fields);
   followPaths(world);
   engageNearby(world);
   separate(world);
+}
+
+/**
+ * Put an attack-moving unit back on the road once its fight is over.
+ *
+ * Stopping to shoot calls `clearPath`, which wipes the route *and* the shared
+ * flow-field goal. That is correct — a unit holding its ground should not also
+ * be walking — but nothing ever put it back. So an army given one attack-move
+ * across the map stopped at the first thing it killed and stood there for the
+ * rest of the match, still holding an `AttackMove` order it would never
+ * complete. It reads as a movement bug; it is a missing transition.
+ *
+ * Runs before the movers so a unit that resumes this tick walks this tick.
+ */
+function resumeAdvance(world: World): void {
+  const pool = world.pool;
+
+  for (let i = 0; i < pool.count; i++) {
+    if (pool.alive[i] !== 1) continue;
+    if (pool.order[i] !== Order.AttackMove) continue;
+    // Already routed, or waiting on a search we asked for.
+    if (pool.pathLen[i]! > 0 || pool.flowGoal[i]! >= 0 || pool.pathPending[i] === 1) continue;
+
+    const def = defOf(pool.type[i]! as EntityType);
+    if (def.isBuilding || def.speedPerTick === 0) continue;
+    // Flyers steer straight at the order point and never hold a route.
+    if (def.flying) continue;
+
+    // Something still worth walking at? Then this is a pause in the advance,
+    // not the end of it, and `engageNearby` owns the unit until it is gone.
+    if (shouldPursue(world, i, def)) continue;
+
+    // Otherwise: arrived, or the fight is over and the advance continues.
+    if (vecDist(pool.posX[i]!, pool.posY[i]!, pool.orderX[i]!, pool.orderY[i]!) <= ARRIVAL_REACH) {
+      pool.order[i] = Order.None;
+      pool.navGoal[i] = -1;
+      continue;
+    }
+
+    if (pool.pathCooldown[i]! > 0) {
+      pool.pathCooldown[i]! -= 1;
+      continue;
+    }
+
+    if (pool.navGoal[i]! >= 0) {
+      pool.flowGoal[i] = pool.navGoal[i]!;
+    } else {
+      pool.pathPending[i] = 1;
+      world.pathQueue.push(i);
+    }
+  }
+}
+
+/**
+ * Should this unit walk at its combat target rather than at its destination?
+ *
+ * The target has to be worth stepping to — inside the acquisition leash — and,
+ * for an attack-mover, the chase has to stay near where it began. The anchor is
+ * the whole point: measured from the unit's *current* position, the window
+ * slides along with a retreating enemy and the chase ratchets indefinitely. A
+ * unit dragged sideways followed a fleeing rifleman 14.6 tiles off its route.
+ *
+ * Beyond the anchor leash this returns false but keeps the anchor, so the unit
+ * turns back to its objective and can pick the fight up again if it comes back
+ * within range on its way past. The anchor resets only when the fight is
+ * genuinely over — target dead, or gone beyond acquisition.
+ */
+function shouldPursue(world: World, index: number, def: EntityDef): boolean {
+  const pool = world.pool;
+  if (def.attackRange === 0) return false;
+
+  const targetId = pool.combatTarget[index]!;
+  if (targetId === NO_ENTITY || !pool.isAlive(targetId)) {
+    pool.pursuing[index] = 0;
+    return false;
+  }
+
+  const ti = idIndex(targetId);
+  const dx = pool.posX[ti]! - pool.posX[index]!;
+  const dy = pool.posY[ti]! - pool.posY[index]!;
+  const reach = def.attackRange + defOf(pool.type[ti]! as EntityType).radius;
+  if (vecLenSqRaw(dx, dy) > sqRange(reach + ENGAGE_LEASH)) {
+    pool.pursuing[index] = 0;
+    return false;
+  }
+
+  if (pool.order[index] !== Order.AttackMove) return true;
+
+  if (pool.pursuing[index] === 0) {
+    pool.pursuing[index] = 1;
+    pool.pursueX[index] = pool.posX[index]!;
+    pool.pursueY[index] = pool.posY[index]!;
+  }
+  const strayed = vecDist(
+    pool.posX[index]!,
+    pool.posY[index]!,
+    pool.pursueX[index]!,
+    pool.pursueY[index]!,
+  );
+  return strayed <= PURSUE_LEASH;
 }
 
 /**
@@ -78,22 +179,23 @@ function engageNearby(world: World): void {
     if (pool.alive[i] !== 1) continue;
     const def = defOf(pool.type[i]! as EntityType);
     if (def.isBuilding || def.speedPerTick === 0 || def.attackRange === 0) continue;
-    if (pool.order[i] !== Order.None) continue;
+    const order = pool.order[i]!;
+    // Idle units defend themselves; attack-movers go and take what they saw. A
+    // plain Move does neither, which is the whole reason attack-move exists.
+    if (order !== Order.None && order !== Order.AttackMove) continue;
+    if (!shouldPursue(world, i, def)) continue;
 
-    const targetId = pool.combatTarget[i]!;
-    if (targetId === NO_ENTITY || !pool.isAlive(targetId)) continue;
-
-    const ti = idIndex(targetId);
+    const ti = idIndex(pool.combatTarget[i]!);
     const dx = pool.posX[ti]! - pool.posX[i]!;
     const dy = pool.posY[ti]! - pool.posY[i]!;
-    const distSq = vecLenSqRaw(dx, dy);
-
     // Combat measures to the target's edge, so this has to agree with it or the
     // unit creeps forward for one more tick after it can already shoot.
     const reach = def.attackRange + defOf(pool.type[ti]! as EntityType).radius;
-    if (distSq <= sqRange(reach)) continue;
-    if (distSq > sqRange(reach + ENGAGE_LEASH)) continue;
+    if (vecLenSqRaw(dx, dy) <= sqRange(reach)) continue;
 
+    // Drop the route while closing, so path-following does not drag the unit
+    // onward in the same tick. `resumeAdvance` restores it when the fight ends.
+    if (order === Order.AttackMove) pool.clearPath(i);
     stepToward(world, i, pool.posX[ti]!, pool.posY[ti]!, def.speedPerTick, def.turnPerTick);
   }
 }
@@ -352,6 +454,14 @@ function servePathRequests(world: World, astar: AStar): void {
  * to it, short enough that an idle line does not unravel into a chase.
  */
 const ENGAGE_LEASH = fromInt(5);
+
+/**
+ * How far an attack-mover will stray from where it broke off to chase.
+ *
+ * Enough to close on anything it can acquire, short enough that a retreating
+ * enemy cannot walk an army off its objective one tile at a time.
+ */
+const PURSUE_LEASH = fromInt(6);
 
 /** Scratch for `approachPoint`; the simulation allocates nothing per tick. */
 const approachOut = { x: 0 as Fix, y: 0 as Fix };
