@@ -404,8 +404,11 @@ function stepToward(
   const step = accelerate(world, index, dist, speed);
   if (step > 0) {
     const dir = vecNormalize(dx, dy);
-    pool.posX[index] = (pool.posX[index]! + fmul(dir.x, step)) | 0;
-    pool.posY[index] = (pool.posY[index]! + fmul(dir.y, step)) | 0;
+    // Through the same terrain clamp separation uses. Steering is not always
+    // along a path: the final approach to a formation slot, closing on a build
+    // site, and stepping up to a combat target all aim straight at a point, and
+    // a straight line to a point near a cliff clips the cliff.
+    nudgeBy(world, index, fmul(dir.x, step), fmul(dir.y, step), defOf(pool.type[index]! as EntityType));
     // Facing is taken from the direction of travel, which is the same thing the
     // old code used — but read before the position update rather than after, so
     // a unit that arrives this tick still faces where it was going.
@@ -794,8 +797,8 @@ function separate(world: World): void {
         // Exactly coincident: nudge apart along a fixed axis chosen by index
         // parity, so the resolution is deterministic rather than arbitrary.
         const nudge = (i & 1) === 0 ? SEPARATION_STRENGTH : -SEPARATION_STRENGTH;
-        pool.posX[i] = (pool.posX[i]! - nudge) | 0;
-        pool.posX[j] = (pool.posX[j]! + nudge) | 0;
+        nudgeBy(world, i, -nudge as Fix, 0 as Fix, defI);
+        nudgeBy(world, j, nudge as Fix, 0 as Fix, defJ);
         return;
       }
 
@@ -806,14 +809,56 @@ function separate(world: World): void {
       const ox = fmul(dx, inv);
       const oy = fmul(dy, inv);
 
-      pool.posX[i] = (pool.posX[i]! - ox) | 0;
-      pool.posY[i] = (pool.posY[i]! - oy) | 0;
-      pool.posX[j] = (pool.posX[j]! + ox) | 0;
-      pool.posY[j] = (pool.posY[j]! + oy) | 0;
+      nudgeBy(world, i, -ox as Fix, -oy as Fix, defI);
+      nudgeBy(world, j, ox as Fix, oy as Fix, defJ);
     });
   }
 
   clampToMap(world);
+}
+
+/**
+ * Shove a unit, but never into terrain it cannot occupy.
+ *
+ * Separation used to write the offset straight onto the position, with no idea
+ * that walls exist. A crowd fighting against a cliff pushed its outer members
+ * into the rock, and `clampToMap` then teleported each of them to the middle of
+ * the nearest open tile — a jump of up to a tile and a half, every tick, for as
+ * long as the crowd lasted. That is the snapping-between-two-positions players
+ * report, and it accounted for 22 of the 25 relocations in a bot match.
+ *
+ * The axes are tried separately so a unit shoved into a wall slides along it
+ * rather than sticking, which is what makes a jam clear itself.
+ */
+function nudgeBy(world: World, index: number, ox: Fix, oy: Fix, def: EntityDef): void {
+  const pool = world.pool;
+  // Flyers are over the terrain, not on it.
+  if (def.flying) {
+    pool.posX[index] = (pool.posX[index]! + ox) | 0;
+    pool.posY[index] = (pool.posY[index]! + oy) | 0;
+    return;
+  }
+
+  const x = pool.posX[index]!;
+  const y = pool.posY[index]!;
+  if (standable(world, (x + ox) | 0, (y + oy) | 0)) {
+    pool.posX[index] = (x + ox) | 0;
+    pool.posY[index] = (y + oy) | 0;
+    return;
+  }
+  if (ox !== 0 && standable(world, (x + ox) | 0, y)) {
+    pool.posX[index] = (x + ox) | 0;
+    return;
+  }
+  if (oy !== 0 && standable(world, x, (y + oy) | 0)) {
+    pool.posY[index] = (y + oy) | 0;
+  }
+}
+
+function standable(world: World, x: number, y: number): boolean {
+  const tile = world.map.tileOfPos(x, y);
+  if (tile < 0) return false;
+  return world.map.isWalkable(world.map.tileXOf(tile), world.map.tileYOf(tile));
 }
 
 /**

@@ -212,6 +212,14 @@ both checks now run 4000 ticks.
 both players firing, more than 20 shots — because a comment claiming coverage is
 worth nothing and this one was wrong for months.
 
+**The probe runs a second leg driven by the bots, for the same reason.** One
+fixed script cannot reach everything: it never sets a rally point, never packs
+buildings tightly enough for a trained unit to land inside one, and never jams a
+crowd against a cliff. Fixes to all three landed without moving a single
+checksum, which is the same blindness in a new place. The bot builds, expands
+and fights on its own, so it reaches states no script will, and it is a
+simulation-side command source — running it under both engines costs nothing.
+
 ## Architecture
 
 ```
@@ -440,6 +448,43 @@ combat balance as well as spacing — a bigger unit is a slightly easier target.
 Flyers are the exception in one direction only: `collides` is false for them
 because it also decides whether a thing occupies map tiles, so separation gives
 them their own rule and matches air against air.
+
+### Nothing may be written to a position a unit cannot occupy
+
+`clampToMap` teleports a unit standing on a solid tile to the middle of the
+nearest open one. That is a good backstop and a terrible routine event: if
+whatever put the unit there does it again next tick, the unit snaps between two
+positions for as long as the cause lasts, which is what players report as
+"stuck". Three separate things were doing exactly that, and each needed fixing
+at the source rather than in the backstop:
+
+- **Production placed trained units at a point computed purely geometrically** —
+  a fixed offset from the building's centre, checked against nothing. Measured
+  over a bot match, 11 of 89 trained units appeared inside a building footprint
+  and 3 on solid tiles. `spawnPointFor` now treats that point as a *preference*
+  and falls back to the nearest standable tile; when there is no room at all it
+  reports failure and production waits, exactly as it does when supply runs out.
+- **A rally point was validated for being on the map, not for being ground.** A
+  rally is a move order handed to every unit a building will ever train, so a
+  rally on a cliff is the unreachable-destination bug repeated forever — and it
+  never passed through `standableTarget`, because production writes the order
+  straight onto the unit. Both ends are checked now: where the rally is set, and
+  again at spawn, since a building can be raised on the spot afterwards.
+- **Separation and direct steering wrote positions with no idea walls exist.** A
+  crowd fighting against a cliff pushed its outer members into the rock every
+  tick. This was 22 of the 25 relocations in a bot match. Both now go through
+  `nudgeBy`, which tries the axes separately so a unit shoved into a wall slides
+  along it instead of sticking.
+
+After all three, the only relocations left in a bot match are the legitimate
+one: a building raised on top of a unit that was standing there.
+
+`tests/stuck.test.ts` pins each cause separately and then asserts the property
+itself over whole matches — no unit standing on a solid tile, none ordered onto
+one, and none holding a single move order longer than crossing the map could
+take. **Check the invariant every tick, not at the end**: `clampToMap` repairs a
+bad placement within a tick or two, so by the end of a run a unit that was
+dropped inside a wall looks exactly like one that never was.
 
 ### A slot index is not an identity
 

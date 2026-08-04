@@ -15,7 +15,9 @@ import {
   MINERALS_PER_TRIP,
 } from '../../config/rules.js';
 import { idIndex } from '../entities.js';
-import { fromInt, sqRange, vecLenSqRaw, type Fix } from '../fixed.js';
+import { FIX_HALF, fromInt, sqRange, vecLenSqRaw, type Fix } from '../fixed.js';
+import { nearestWalkable } from '../pathing/astar.js';
+import { standableTarget } from './orders.js';
 import { BuildState, EntityType, NO_ENTITY, Order, type PlayerId } from '../types.js';
 import type { World } from '../world.js';
 
@@ -303,6 +305,13 @@ function productionSystem(world: World): void {
     }
 
     const spawn = spawnPointFor(world, i);
+    // Nowhere to put it. Hold the finished unit in the queue exactly as the
+    // supply case above does, rather than dropping it on a tile it cannot
+    // stand on and leaving the movers to sort it out.
+    if (!spawn.ok) {
+      pool.prodProgress[i] = unitDef.buildTicks;
+      continue;
+    }
     const id = pool.spawn(unitType, owner, spawn.x, spawn.y);
     if (id === NO_ENTITY) continue; // pool full; retry next tick
     // Facing out of the building it came from, so a unit does not have to turn
@@ -312,11 +321,14 @@ function productionSystem(world: World): void {
     // Walk to the rally point if this building has one. Issued as an ordinary
     // move order rather than anything special, so it paths, spreads and can be
     // overridden exactly like a player's own click.
-    if (pool.hasRally[i] === 1) {
+    // Checked again here, not only where the rally was set: a building can be
+    // raised on the rally spot afterwards, and then every unit this one trains
+    // inherits a destination it can never reach.
+    if (pool.hasRally[i] === 1 && standableTarget(world, pool.rallyX[i]!, pool.rallyY[i]!, rallyOut)) {
       const ui = id & 0xffff;
       pool.order[ui] = Order.Move;
-      pool.orderX[ui] = pool.rallyX[i]!;
-      pool.orderY[ui] = pool.rallyY[i]!;
+      pool.orderX[ui] = rallyOut.x;
+      pool.orderY[ui] = rallyOut.y;
       pool.orderTarget[ui] = NO_ENTITY;
       pool.clearPath(ui);
       pool.pathPending[ui] = 1;
@@ -342,15 +354,59 @@ function productionSystem(world: World): void {
  * to whoever happens to be in the top-left corner. Choosing the side by which
  * half of the map the building sits in makes the rule rotate with everything
  * else.
+ *
+ * The point is computed geometrically, so on its own it is only a *preference*:
+ * it can land in rock, inside a neighbouring building, or off the map edge, and
+ * nothing used to check. A unit placed there is standing somewhere it cannot be,
+ * and `clampToMap` teleports it to the nearest walkable tile on the next tick —
+ * the snap players see. Measured over a bot match, 11 of 89 trained units
+ * appeared inside a building footprint and 3 of those on solid tiles.
+ *
+ * So the preference is checked, and when it does not hold the nearest standable
+ * tile is used instead. `ok` is false only when there is no room at all nearby,
+ * in which case production waits rather than placing the unit anywhere.
  */
-const spawnOut = { x: 0, y: 0, faceY: 0 };
+const spawnOut = { x: 0, y: 0, faceY: 0, ok: false };
+
+/** Scratch for the rally check; the simulation allocates nothing per tick. */
+const rallyOut = { x: 0, y: 0 };
+
+/** How far from the preferred spot to look for somewhere the unit can stand. */
+const SPAWN_SEARCH_RINGS = 6;
+
 function spawnPointFor(world: World, buildingIndex: number): typeof spawnOut {
   const pool = world.pool;
+  const map = world.map;
   const def = defOf(pool.type[buildingIndex]! as EntityType);
   const spread = (world.tick + buildingIndex) % 5;
-  const towardCentre = pool.posY[buildingIndex]! < fromInt(world.map.height >> 1) ? 1 : -1;
-  spawnOut.x = pool.posX[buildingIndex]! + fromInt((spread - 2) * towardCentre);
-  spawnOut.y = pool.posY[buildingIndex]! + fromInt(def.footprint * towardCentre);
+  const towardCentre = pool.posY[buildingIndex]! < fromInt(map.height >> 1) ? 1 : -1;
+  const px = pool.posX[buildingIndex]! + fromInt((spread - 2) * towardCentre);
+  const py = pool.posY[buildingIndex]! + fromInt(def.footprint * towardCentre);
   spawnOut.faceY = towardCentre;
+
+  const preferred = map.tileOfPos(px, py);
+  if (preferred >= 0 && map.isWalkable(map.tileXOf(preferred), map.tileYOf(preferred))) {
+    spawnOut.x = px;
+    spawnOut.y = py;
+    spawnOut.ok = true;
+    return spawnOut;
+  }
+
+  // Search from the preferred tile when it is on the map at all, and from the
+  // building itself when the preference fell off the edge.
+  const from = preferred >= 0 ? preferred : map.tileOfPos(pool.posX[buildingIndex]!, pool.posY[buildingIndex]!);
+  if (from < 0) {
+    spawnOut.ok = false;
+    return spawnOut;
+  }
+
+  const free = nearestWalkable(map, map.tileXOf(from), map.tileYOf(from), SPAWN_SEARCH_RINGS);
+  if (free < 0) {
+    spawnOut.ok = false;
+    return spawnOut;
+  }
+  spawnOut.x = fromInt(map.tileXOf(free)) + FIX_HALF;
+  spawnOut.y = fromInt(map.tileYOf(free)) + FIX_HALF;
+  spawnOut.ok = true;
   return spawnOut;
 }

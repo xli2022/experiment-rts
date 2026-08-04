@@ -132,9 +132,13 @@ export function executeCommand(world: World, cmd: Command): void {
       if (world.pool.owner[bi] !== player) break;
       const bDef = defOf(world.pool.type[bi]! as EntityType);
       if (bDef.produces.length === 0) break;
-      if (world.map.tileOfPos(cmd.x, cmd.y) < 0) break;
-      world.pool.rallyX[bi] = cmd.x;
-      world.pool.rallyY[bi] = cmd.y;
+      // Snapped like any other destination. A rally is a move order handed to
+      // every unit the building will ever train, so a rally on a cliff is the
+      // same unreachable-destination bug repeated forever — and it does not
+      // even go through this file when production issues it.
+      if (!standableTarget(world, cmd.x, cmd.y, targetOut)) break;
+      world.pool.rallyX[bi] = targetOut.x;
+      world.pool.rallyY[bi] = targetOut.y;
       world.pool.hasRally[bi] = 1;
       break;
     }
@@ -232,7 +236,7 @@ const DESTINATION_SNAP_RINGS = 8;
  * Returns false when there is nowhere to stand nearby, in which case the order
  * is dropped and the units carry on with what they were doing.
  */
-function standableTarget(
+export function standableTarget(
   world: World,
   x: number,
   y: number,

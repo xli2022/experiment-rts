@@ -17,6 +17,8 @@
  */
 
 import { checksumToHex } from '../src/sim/checksum.js';
+import { Simulation } from '../src/sim/tick.js';
+import type { PlayerId } from '../src/sim/types.js';
 import { recordMatch } from '../tests/helpers/scripted.js';
 
 const SEED = 0x1234abcd;
@@ -28,13 +30,39 @@ const SEED = 0x1234abcd;
 const TICKS = 4000;
 const CHECKPOINTS = [1, 100, 500, 1000, 1500, 2000, 2500, 3000, 3500, 4000];
 
-const { checksums } = recordMatch(SEED, TICKS);
+const lines: string[] = [];
 
-const lines: string[] = [`seed=${SEED.toString(16)} ticks=${TICKS}`];
+lines.push(`scripted  seed=${SEED.toString(16)} ticks=${TICKS}`);
+const { checksums } = recordMatch(SEED, TICKS);
 for (const t of CHECKPOINTS) {
   const c = checksums[t - 1];
   if (c === undefined) continue;
-  lines.push(`tick ${String(t).padStart(5)}  ${checksumToHex(c)}`);
+  lines.push(`  tick ${String(t).padStart(5)}  ${checksumToHex(c)}`);
+}
+
+/**
+ * A second leg driven by the bots.
+ *
+ * The scripted match is one fixed sequence, and a whole class of behaviour
+ * simply never comes up in it: it does not set rally points, does not pack
+ * buildings tightly enough for a trained unit to land in one, and does not jam
+ * a crowd against a cliff. Fixes to all three landed without moving a single
+ * checksum here, which means this check was blind to them. The bot builds,
+ * expands and fights on its own, so it reaches states no fixed script will, and
+ * it is deterministic — it is a simulation-side command source, so it costs
+ * nothing to run under both engines.
+ */
+const BOT_SEED = 0x51ce7a11;
+const BOT_TICKS = 6000;
+lines.push('', `bot-vs-bot  seed=${BOT_SEED.toString(16)} ticks=${BOT_TICKS}`);
+const bots = new Simulation(BOT_SEED);
+bots.botPlayers.add(0 as PlayerId);
+bots.botPlayers.add(1 as PlayerId);
+for (let t = 1; t <= BOT_TICKS; t++) {
+  bots.step([]);
+  if (t % 1000 === 0 || t === 1) {
+    lines.push(`  tick ${String(t).padStart(5)}  ${checksumToHex(bots.checksum())}`);
+  }
 }
 
 console.log(lines.join('\n'));
