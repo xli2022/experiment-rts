@@ -142,8 +142,10 @@ export function pickAt(
 
     const type = pool.type[i]! as EntityType;
     const def = defOf(type);
-    // Bigger things are easier to click, roughly matching their footprint.
-    const tolerance = def.isBuilding ? 0.075 : 0.035;
+    // Deliberately more generous than the unit is wide. A click that lands just
+    // off a two-pixel model is a miss the player reads as the game ignoring
+    // them, and the ranking below already resolves the overlap this creates.
+    const tolerance = def.isBuilding ? 0.09 : 0.055;
     if (dist > tolerance) continue;
 
     // Rank: own units first, then own buildings, then anything else.

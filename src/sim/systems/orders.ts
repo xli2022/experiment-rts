@@ -17,7 +17,7 @@ import { defOf, GROUP_PATH_THRESHOLD, MAX_PRODUCTION_QUEUE } from '../../config/
 import { CommandType, type Command } from '../commands.js';
 import { idIndex } from '../entities.js';
 import { fromInt } from '../fixed.js';
-import { EntityType, NO_ENTITY, Order, type EntityId, type PlayerId } from '../types.js';
+import { BuildState, EntityType, NO_ENTITY, Order, type EntityId, type PlayerId } from '../types.js';
 import type { World } from '../world.js';
 
 /**
@@ -111,6 +111,22 @@ export function executeCommand(world: World, cmd: Command): void {
     case CommandType.CancelTrain:
       executeCancelTrain(world, cmd.building, cmd.slot, player);
       break;
+
+    case CommandType.SetRally: {
+      // Only your own finished production building, and only somewhere on the
+      // map. Validated here rather than in the UI like every other command.
+      const b = cmd.building;
+      if (!world.pool.isAlive(b)) break;
+      const bi = idIndex(b);
+      if (world.pool.owner[bi] !== player) break;
+      const bDef = defOf(world.pool.type[bi]! as EntityType);
+      if (bDef.produces.length === 0) break;
+      if (world.map.tileOfPos(cmd.x, cmd.y) < 0) break;
+      world.pool.rallyX[bi] = cmd.x;
+      world.pool.rallyY[bi] = cmd.y;
+      world.pool.hasRally[bi] = 1;
+      break;
+    }
 
     case CommandType.Surrender:
       world.player(player).defeated = true;
@@ -269,10 +285,10 @@ function executeBuild(
   const def = defOf(building);
   if (!def.isBuilding || building === EntityType.MineralPatch) return;
 
-  // Issuing a build order onto one of our own structures means "work on that" —
-  // finish it if it is a site, patch it up if it is damaged. Without this the
-  // order would be rejected by the placement check below, which is what let
-  // abandoned sites sit half-built forever with nobody assigned to them.
+  // Issuing a build order onto one of our own unfinished structures means
+  // "finish that". Without it the order would be rejected by the placement
+  // check below, which is what let abandoned sites sit half-built forever with
+  // nobody assigned to them.
   const existing = findWorkableAt(world, player, tileX, tileY);
   if (existing !== NO_ENTITY) {
     assignBuilder(world, wi, existing);
@@ -314,11 +330,11 @@ function assignBuilder(world: World, workerIndex: number, siteId: EntityId): voi
 }
 
 /**
- * A building of ours at this tile that a worker could usefully work on.
+ * An unfinished building of ours at this tile, for a worker to finish.
  *
- * That means either unfinished (build it) or damaged (repair it). A finished,
- * undamaged building is not workable, so ordering a worker onto one does
- * nothing rather than parking it there forever.
+ * Damaged-but-complete structures are deliberately not workable: repair used to
+ * live here and was removed for being too strong. A finished building is not a
+ * job, so ordering a worker onto one does nothing rather than parking it there.
  *
  * Scans the pool in ascending index order, so every peer finds the same one.
  */
@@ -336,9 +352,7 @@ function findWorkableAt(
     const def = defOf(pool.type[i]! as EntityType);
     if (!def.isBuilding) continue;
 
-    const unfinished = pool.buildState[i] !== 2;
-    const damaged = pool.hp[i]! < def.maxHp;
-    if (unfinished || damaged) return pool.idAt(i);
+    if (pool.buildState[i] !== BuildState.Complete) return pool.idAt(i);
   }
   return NO_ENTITY;
 }

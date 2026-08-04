@@ -109,6 +109,9 @@ export class EntityRenderer {
   /** When the local player last issued an order, in elapsed seconds. */
   private orderedAt = -1e9;
 
+  /** Pulsing disc under a building that is training something. */
+  private readonly productionRings: THREE.InstancedMesh;
+
   private readonly selectionRings: THREE.InstancedMesh;
   private readonly healthBg: THREE.InstancedMesh;
   private readonly healthFill: THREE.InstancedMesh;
@@ -145,6 +148,22 @@ export class EntityRenderer {
     this.selectionRings.frustumCulled = false;
     this.group.add(this.selectionRings);
     this.disposables.push(ringGeo, ringMat);
+
+    // A filled disc rather than a ring, so it reads as a glow at the base of the
+    // building rather than a second selection marker.
+    const prodGeo = new THREE.CircleGeometry(1, 24);
+    prodGeo.rotateX(-Math.PI / 2);
+    const prodMat = new THREE.MeshBasicMaterial({
+      transparent: true,
+      opacity: 0.34,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    this.productionRings = new THREE.InstancedMesh(prodGeo, prodMat, POOL_CAPACITY);
+    this.productionRings.frustumCulled = false;
+    this.productionRings.count = 0;
+    this.group.add(this.productionRings);
+    this.disposables.push(prodGeo, prodMat);
 
     // The bar quad is anchored at its LEFT edge, not its centre. Scaling a
     // centre-anchored quad shrinks it toward the middle, so a damaged bar would
@@ -398,6 +417,7 @@ export class EntityRenderer {
     for (const anim of this.animatedPools.values()) anim.begin();
     let ringCount = 0;
     let barCount = 0;
+    let prodCount = 0;
 
     const pool = world.pool;
     const a = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
@@ -521,6 +541,24 @@ export class EntityRenderer {
         entry.count++;
       }
 
+      // A building mid-production gets a slow pulse of light at its base, so a
+      // busy barracks is legible from across the map without selecting it.
+      if (
+        pool.prodCount[i]! > 0 &&
+        pool.buildState[i] === BuildState.Complete &&
+        ringCount < POOL_CAPACITY
+      ) {
+        const beat = 0.72 + 0.28 * Math.sin(elapsedS * PRODUCTION_PULSE_RATE + i);
+        const r = spec.radius * 1.35 * beat;
+        this.position.set(x, 0.05, z);
+        this.scale.set(r, 1, r);
+        this.matrix.compose(this.position, IDENTITY, this.scale);
+        this.productionRings.setMatrixAt(prodCount, this.matrix);
+        this.productionRings.setColorAt(prodCount, this.colour.setHex(PLAYER_COLOURS[owner] ?? 0xffffff));
+        prodCount++;
+        this.scale.set(1, 1, 1);
+      }
+
       if (selected.has(i) && ringCount < POOL_CAPACITY) {
         // A ring that kicks outward the instant an order is given.
         //
@@ -534,8 +572,12 @@ export class EntityRenderer {
           sinceOrder >= 0 && sinceOrder < ACK_PULSE_S
             ? 1 + ACK_PULSE_SIZE * (1 - sinceOrder / ACK_PULSE_S)
             : 1;
+        // Sized from the simulation's collision radius, not the art. The ring
+        // is what tells a player how much room a unit takes up, so reading it
+        // off the model would make it lie whenever the two disagree.
+        const ringR = toFloat(def.radius) * RING_OVERSIZE * kick;
         this.position.set(x, 0.06, z);
-        this.scale.set(spec.radius * 1.6 * kick, 1, spec.radius * 1.6 * kick);
+        this.scale.set(ringR, 1, ringR);
         this.matrix.compose(this.position, IDENTITY, this.scale);
         this.selectionRings.setMatrixAt(ringCount++, this.matrix);
         this.scale.set(1, 1, 1);
@@ -599,6 +641,9 @@ export class EntityRenderer {
       entry.mesh.count = entry.count;
       entry.mesh.instanceMatrix.needsUpdate = true;
     }
+    this.productionRings.count = prodCount;
+    this.productionRings.instanceMatrix.needsUpdate = true;
+    if (this.productionRings.instanceColor) this.productionRings.instanceColor.needsUpdate = true;
     this.selectionRings.count = ringCount;
     this.selectionRings.instanceMatrix.needsUpdate = true;
     this.healthBg.count = barCount;
@@ -669,6 +714,17 @@ const BAR_HEIGHT_NDC = 0.014;
 /** Gap between the top of the model and the bar. */
 const BAR_LIFT_NDC = 0.032;
 
+/**
+ * Selection ring size relative to the collision radius.
+ *
+ * A shade over 1 so the ring reads as sitting around the unit rather than
+ * cutting through its feet.
+ */
+const RING_OVERSIZE = 1.15;
+
+/** Radians per second of the production glow's pulse. About one beat a second. */
+const PRODUCTION_PULSE_RATE = 5.4;
+
 /** How far a unit must move between ticks to count as running. */
 const MOVING_EPSILON = 0.004;
 
@@ -689,25 +745,13 @@ export interface Pose {
  */
 const CROSSFADE_S = 0.12;
 
-/**
- * The stand-still pose, built out of the run cycle rather than authored.
- *
- * None of the three rigs ships an idle clip, and a unit frozen on one frame of
- * a stride is the single most lifeless thing on screen — worse than a T-pose,
- * because it looks like the game has hung. Blending opposite frames of the run
- * puts the legs somewhere near together, and oscillating that blend slowly and
- * shallowly reads as breathing. It costs no new baked data and no new asset.
- */
-const IDLE_PERIOD_S = 3.1;
-const IDLE_DEPTH = 0.13;
-
 /** How long a selection ring stays kicked out after an order, and by how much. */
 const ACK_PULSE_S = 0.22;
 const ACK_PULSE_SIZE = 0.35;
 
 /** Clip names as small integers, so per-entity pose state stays a typed array. */
-const CLIP_NAMES = ['idle', 'run', 'attack', 'die'] as const;
-const CLIP_IDS: Record<string, number> = { idle: 0, run: 1, attack: 2, die: 3 };
+const CLIP_NAMES = ['run', 'attack', 'die'] as const;
+const CLIP_IDS: Record<string, number> = { run: 0, attack: 1, die: 2 };
 
 /**
  * Choose a unit's clip. Pure, because getting it wrong is invisible in a diff.
@@ -740,29 +784,21 @@ export function poseFor(
     return { clip: 'attack', time: sinceAttack, loop: false };
   }
   if (movedPerTick > MOVING_EPSILON) return { clip: 'run', time: phase, loop: true };
-  return { clip: 'idle', time: phase, loop: true };
+  // No authored idle clip; a frozen stride reads better than a T-pose.
+  return { clip: 'run', time: 0, loop: true };
 }
 
 /**
  * Resolve a pose to the two bone-texture rows to draw it with.
  *
- * `idle` is not a baked clip: it is the run cycle sampled at two opposite
- * points, mixed around the middle. Everything else is the clip's own two
- * neighbouring frames, which is what turns the 30Hz bake into smooth motion.
+ * The pair is the clip's own two neighbouring frames, which is what turns the
+ * 30Hz bake into motion smooth at display rate.
  */
 export function framesForPose(
   model: AnimatedModel,
   pose: Pose,
 ): { from: number; to: number; blend: number } {
-  if (pose.clip !== 'idle') {
-    return AnimatedUnitPool.framePairFor(model, pose.clip, pose.time, pose.loop);
-  }
-  const run = model.clips.get('run');
-  if (!run) return { from: 0, to: 0, blend: 0 };
-  const half = run.frameCount >> 1;
-  // A slow, shallow sway about the midpoint between two opposed strides.
-  const breath = 0.5 + IDLE_DEPTH * Math.sin((pose.time / IDLE_PERIOD_S) * Math.PI * 2);
-  return { from: run.startFrame, to: run.startFrame + half, blend: breath };
+  return AnimatedUnitPool.framePairFor(model, pose.clip, pose.time, pose.loop);
 }
 
 /** Seconds a body lingers, sinking, once its death clip has played out. */

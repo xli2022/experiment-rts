@@ -189,9 +189,10 @@ describe('what a worker is doing', () => {
     expect(activityOf(sim.world, worker)).toBe('moving');
   });
 
-  it('distinguishes repair from construction', () => {
-    // Same order, same worker, entirely different job — and a repairing worker
-    // is the one that looks most like a forgotten one.
+  it('does not repair a finished building, however damaged', () => {
+    // Repair was removed for being too strong: any attack that failed to kill a
+    // structure outright was wasted effort. A worker sent at a hurt building
+    // must be released rather than quietly healing it.
     const { sim, worker } = withWorker();
     const pool = sim.world.pool;
     const start = sim.world.map.starts[0]!;
@@ -213,9 +214,12 @@ describe('what a worker is doing', () => {
       },
     ]);
 
-    const seen = statusesUntil(sim, worker, 400, () => pool.hp[depot]! >= def.maxHp).map(shape);
-    expect(seen).toContain(`repairing ${DEPOT}`);
+    const hurt = pool.hp[depot]!;
+    const seen = statusesUntil(sim, worker, 200, () => false).map(shape);
+    expect(seen).not.toContain(`repairing ${DEPOT}`);
     expect(seen).not.toContain(`building ${DEPOT}`);
+    expect(`depot hp after 200 ticks: ${pool.hp[depot]}`).toBe(`depot hp after 200 ticks: ${hurt}`);
+    expect(seen).toContain('idle');
   });
 
   it('reports no activity for a building', () => {

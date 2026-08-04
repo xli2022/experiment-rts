@@ -114,6 +114,16 @@ export class EntityPool {
 
   // --- production ---
   readonly prodQueue = new Uint8Array(ENTITY_CAPACITY * MAX_PRODUCTION_QUEUE);
+  /**
+   * Where units trained here walk to, or NO_RALLY when there is none.
+   *
+   * Kept per building rather than per player: a barracks near the front and one
+   * at home want different answers, which is the entire point of a rally point.
+   */
+  readonly rallyX = new Int32Array(ENTITY_CAPACITY);
+  readonly rallyY = new Int32Array(ENTITY_CAPACITY);
+  readonly hasRally = new Uint8Array(ENTITY_CAPACITY);
+
   readonly prodCount = new Uint8Array(ENTITY_CAPACITY);
   readonly prodProgress = new Int32Array(ENTITY_CAPACITY);
 
@@ -184,6 +194,9 @@ export class EntityPool {
     this.harvestPatch[index] = NO_ENTITY;
     this.resourceAmount[index] = 0;
     this.prodCount[index] = 0;
+    this.rallyX[index] = 0;
+    this.rallyY[index] = 0;
+    this.hasRally[index] = 0;
     this.prodProgress[index] = 0;
     this.pathLen[index] = 0;
     this.pathCursor[index] = 0;
@@ -299,6 +312,9 @@ export class EntityPool {
     x = checksumArray(x, this.tileX, this.count);
     x = checksumArray(x, this.tileY, this.count);
     x = checksumArray(x, this.speed, this.count);
+    x = checksumArray(x, this.rallyX, this.count);
+    x = checksumArray(x, this.rallyY, this.count);
+    x = checksumArray(x, this.hasRally, this.count);
     x = checksumArray(x, this.carrying, this.count);
     x = checksumArray(x, this.harvestTimer, this.count);
     x = checksumArray(x, this.harvestPatch, this.count);

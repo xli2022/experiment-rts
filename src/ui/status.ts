@@ -3,7 +3,7 @@
  *
  * A worker spends most of the match doing something invisible. Walking to a
  * construction site, standing on it building, standing on a patch mining,
- * repairing a wall — from the outside all of those look identical to a worker
+ * walking back with a load — from the outside all look identical to a worker
  * that has been forgotten about, and the panel used to say nothing at all
  * unless it happened to be carrying minerals. So the one state a player must
  * act on, genuinely idle, was indistinguishable from four states they must not.
@@ -23,8 +23,8 @@ import type { World } from '../sim/world.js';
  * worth reporting beyond what the rest of the panel already shows.
  *
  * Phrased as what the unit is doing rather than which order it holds: a worker
- * on `Order.Build` may be walking, building, or repairing, and those are three
- * different answers to "why is it not mining?".
+ * on `Order.Build` may be walking or building, and those are different answers
+ * to "why is it not mining?".
  */
 export function activityOf(world: World, index: number): string | null {
   const pool = world.pool;
@@ -35,16 +35,8 @@ export function activityOf(world: World, index: number): string | null {
   const order = pool.order[index]!;
 
   if (type === EntityType.Worker) {
-    switch (order) {
-      case Order.Build:
-        return buildActivity(world, index);
-      case Order.Harvest:
-        return harvestActivity(world, index);
-      case Order.None:
-        return 'idle';
-      default:
-        break;
-    }
+    if (order === Order.Build) return buildActivity(world, index);
+    if (order === Order.Harvest) return harvestActivity(world, index);
   }
 
   switch (order) {
@@ -57,11 +49,17 @@ export function activityOf(world: World, index: number): string | null {
     case Order.Hold:
       return 'holding position';
     default:
-      return null;
+      // Every unit reports, not just workers: a soldier standing about is the
+      // same question a player is asking, and answering it for one kind of unit
+      // and not another reads as the panel being broken rather than terse. A
+      // soldier with something in range is fighting even with no order at all.
+      return pool.combatTarget[index] !== NO_ENTITY && pool.isAlive(pool.combatTarget[index]!)
+        ? 'engaging'
+        : 'idle';
   }
 }
 
-/** Building or repairing — and whether the worker has arrived yet. */
+/** Building — and whether the worker has arrived yet. */
 function buildActivity(world: World, index: number): string | null {
   const pool = world.pool;
   const siteId = pool.orderTarget[index]!;
@@ -71,18 +69,13 @@ function buildActivity(world: World, index: number): string | null {
 
   const site = idIndex(siteId);
   const def = defOf(pool.type[site]! as EntityType);
-  const arrived = inReach(world, index, site, BUILD_REACH);
 
-  if (pool.buildState[site] !== BuildState.Complete) {
-    if (!arrived) return `walking to ${def.name} site`;
-    const pct = pct100(pool.buildProgress[site]!, def.buildTicks);
-    return `building ${def.name} ${pct}%`;
-  }
+  // The order outlives a finished building by a tick, while the worker is being
+  // released. There is no repair to report.
+  if (pool.buildState[site] === BuildState.Complete) return 'idle';
 
-  // Same order, different job: a finished building is repaired rather than
-  // built, and the progress that matters is its health.
-  if (!arrived) return `walking to repair ${def.name}`;
-  return `repairing ${def.name} ${pct100(pool.hp[site]!, def.maxHp)}%`;
+  if (!inReach(world, index, site, BUILD_REACH)) return `walking to ${def.name} site`;
+  return `building ${def.name} ${pct100(pool.buildProgress[site]!, def.buildTicks)}%`;
 }
 
 /** The harvest cycle: out to the patch, mining, and back with a load. */

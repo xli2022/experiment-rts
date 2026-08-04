@@ -145,19 +145,17 @@ things about this were learned the hard way:
 - **Fit each model on the axis it reads by.** Walkers by height, aircraft by
   wingspan — fitting a wide ship on height sizes it by whatever fin sticks up.
 
-### Blending, and the idle that is not a clip
+### Blending between clips
 
 Each instance names two rows of the bone texture and a weight between them. One
 mechanism, two jobs: neighbouring frames of one clip smooth the 30Hz bake up to
 display rate, and frames of two clips cross-fade so a unit eases into its swing.
 The lerp is componentwise on the matrices, which shortens a bone when the poses
 differ by a large rotation — measured on the real geometry, 0.0% between
-neighbouring frames and 1.3% at worst for the idle.
+neighbouring frames.
 
-No rig ships an idle clip, so `idle` is synthesised: two opposed frames of the
-run mixed near the middle, with the mix swayed slowly. Legs land roughly
-together and it reads as breathing. A unit frozen on one frame of a stride is
-worse than a T-pose — it looks like the game has hung.
+No rig ships an idle clip and none is synthesised: standing still holds frame
+zero of the run.
 
 ### Pick the clip from events, not from state
 
@@ -294,6 +292,15 @@ Units accelerate by a fraction of their top speed per tick and brake by
 `v = sqrt(2*a*d)` against the distance still to run — not to the next waypoint,
 or they stutter at every corner of a path. `Math.sqrt` is the one non-trivial
 function the sim may use; see the sealed-core rules above.
+
+### Collision radius is the unit's size, everywhere
+
+`radius` is the collision size, the weapon-reach margin (`attackRange + target
+radius`) and what the selection ring is drawn from. Changing it therefore moves
+combat balance as well as spacing — a bigger unit is a slightly easier target.
+Flyers are the exception in one direction only: `collides` is false for them
+because it also decides whether a thing occupies map tiles, so separation gives
+them their own rule and matches air against air.
 
 ### Spread the arrival, never the pathfinding goal
 

@@ -546,10 +546,11 @@ function separate(world: World): void {
     if (pool.alive[i] !== 1) continue;
     const defI = defOf(pool.type[i]! as EntityType);
     if (defI.isBuilding) continue;
-    // Non-colliding units (workers) pass through everything else, so they are
-    // neither pushed nor pushing. They are still ejected from buildings and
-    // cliffs by clampToMap below.
-    if (!defI.collides) continue;
+    // Workers pass through everything: neither pushed nor pushing. Flyers do
+    // collide, but only with each other — `collides` is false for them because
+    // it also decides whether a thing occupies map tiles, and nothing in the
+    // air should block the ground.
+    if (!defI.collides && !defI.flying) continue;
 
     const px = pool.posX[i]!;
     const py = pool.posY[i]!;
@@ -560,7 +561,10 @@ function separate(world: World): void {
       if (pool.alive[j] !== 1) return;
       const defJ = defOf(pool.type[j]! as EntityType);
       if (defJ.isBuilding) return;
-      if (!defJ.collides) return;
+      // Same layer or no interaction. Air and ground share the map but not the
+      // space, so a gunship never shoulders a brawler aside.
+      if (defI.flying !== defJ.flying) return;
+      if (!defJ.collides && !defJ.flying) return;
 
       const dx = pool.posX[j]! - px;
       const dy = pool.posY[j]! - py;

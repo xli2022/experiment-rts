@@ -13,7 +13,6 @@ import {
   HARVEST_REACH,
   HARVEST_TICKS,
   MINERALS_PER_TRIP,
-  REPAIR_HP_PER_TICK,
 } from '../../config/rules.js';
 import { idIndex } from '../entities.js';
 import { fromInt, sqRange, vecLenSqRaw } from '../fixed.js';
@@ -188,11 +187,11 @@ function constructionSystem(world: World): void {
 
     const si = idIndex(siteId);
     const def = defOf(pool.type[si]! as EntityType);
-    const finished = pool.buildState[si] === BuildState.Complete;
 
-    // A finished building at full health needs nothing; release the worker so it
-    // does not stand there indefinitely.
-    if (finished && pool.hp[si]! >= def.maxHp) {
+    // A finished building needs nothing further. Workers used to repair one
+    // back to full for free, which made any attack that did not outright kill a
+    // structure a waste of time — release the worker instead.
+    if (pool.buildState[si] === BuildState.Complete) {
       pool.order[i] = Order.None;
       pool.orderTarget[i] = NO_ENTITY;
       continue;
@@ -202,17 +201,6 @@ function constructionSystem(world: World): void {
 
     // The worker is on site; stop moving and work.
     pool.clearPath(i);
-
-    // Repair: same order, same worker, different job depending on whether the
-    // structure is unfinished or merely hurt.
-    if (finished) {
-      pool.hp[si] = Math.min(def.maxHp, pool.hp[si]! + REPAIR_HP_PER_TICK);
-      if (pool.hp[si]! >= def.maxHp) {
-        pool.order[i] = Order.None;
-        pool.orderTarget[i] = NO_ENTITY;
-      }
-      continue;
-    }
 
     pool.buildState[si] = BuildState.UnderConstruction;
     pool.buildProgress[si]! += 1;
@@ -268,6 +256,20 @@ function productionSystem(world: World): void {
     // Facing out of the building it came from, so a unit does not have to turn
     // around before it can walk anywhere — and so it mirrors with the spawn.
     pool.faceY[id & 0xffff] = fromInt(spawn.faceY);
+
+    // Walk to the rally point if this building has one. Issued as an ordinary
+    // move order rather than anything special, so it paths, spreads and can be
+    // overridden exactly like a player's own click.
+    if (pool.hasRally[i] === 1) {
+      const ui = id & 0xffff;
+      pool.order[ui] = Order.Move;
+      pool.orderX[ui] = pool.rallyX[i]!;
+      pool.orderY[ui] = pool.rallyY[i]!;
+      pool.orderTarget[ui] = NO_ENTITY;
+      pool.clearPath(ui);
+      pool.pathPending[ui] = 1;
+      world.pathQueue.push(ui);
+    }
 
     pool.prodRemove(i, 0);
     pool.prodProgress[i] = 0;

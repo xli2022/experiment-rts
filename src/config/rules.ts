@@ -105,7 +105,7 @@ export const DEFS: readonly EntityDef[] = [
     collides: true,
     flying: false,
     maxHp: 45,
-    radius: fromFloat(0.32),
+    radius: fromFloat(0.4),
     footprint: 0,
     speedPerTick: speed(2.9),
     accelFraction: fromFloat(0.22),
@@ -127,7 +127,7 @@ export const DEFS: readonly EntityDef[] = [
     collides: true,
     flying: false,
     maxHp: 90,
-    radius: fromFloat(0.42),
+    radius: fromFloat(0.525),
     footprint: 0,
     speedPerTick: speed(3.6),
     accelFraction: fromFloat(0.22),
@@ -267,7 +267,7 @@ export const DEFS: readonly EntityDef[] = [
     collides: false,
     flying: true,
     maxHp: 70,
-    radius: fromFloat(0.45),
+    radius: fromFloat(0.5625),
     footprint: 0,
     speedPerTick: speed(4.4),
     accelFraction: fromFloat(0.22),
@@ -370,16 +370,6 @@ export const BUILD_REACH = fromFloat(1.7);
  * as broken. Workers should have to travel — that trip is the economy.
  */
 export const HARVEST_REACH = fromFloat(0.35);
-
-/**
- * Hit points a worker restores per tick when repairing.
- *
- * Repair is free in minerals but not in time: the worker has to stand there and
- * is not mining while it does. At this rate a badly damaged Command Post takes
- * most of a minute with one worker, which is worth defending rather than an
- * instant undo of an attack.
- */
-export const REPAIR_HP_PER_TICK = 6;
 
 /**
  * How much slack an order gets when deciding "am I close enough yet".

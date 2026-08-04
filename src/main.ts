@@ -418,14 +418,11 @@ class Game {
         });
         return;
       }
-      // Own building that needs work: send every selected worker to build or
-      // repair it. Same verb the player already uses for everything else.
+      // Own unfinished building: send every selected worker to finish it. Same
+      // verb the player already uses for everything else.
       if (owner === this.localPlayer) {
         const def = defOf(type);
-        const needsWork =
-          def.isBuilding &&
-          (world.pool.buildState[hit] !== BuildState.Complete ||
-            world.pool.hp[hit]! < def.maxHp);
+        const needsWork = def.isBuilding && world.pool.buildState[hit] !== BuildState.Complete;
         if (needsWork && this.orderWorkersTo(hit)) return;
       }
 
@@ -488,7 +485,39 @@ class Game {
     return true;
   }
 
+  /**
+   * Right-clicking the ground with production buildings selected sets a rally.
+   *
+   * Returns false when the selection has no production building in it, so a
+   * mixed selection still moves the units. Buildings cannot move, so there is
+   * no ambiguity to resolve — the two orders never compete for the same click.
+   */
+  private setRallyPoints(x: number, z: number): boolean {
+    const world = this.sim.world;
+    let any = false;
+    for (const i of this.selection.indices) {
+      if (world.pool.alive[i] !== 1) continue;
+      if (world.pool.owner[i] !== this.localPlayer) continue;
+      if (world.pool.buildState[i] !== BuildState.Complete) continue;
+      if (defOf(world.pool.type[i]! as EntityType).produces.length === 0) continue;
+      this.issue({
+        type: CommandType.SetRally,
+        player: this.localPlayer,
+        building: world.pool.idAt(i),
+        x: fromFloat(x),
+        y: fromFloat(z),
+      });
+      any = true;
+    }
+    if (any) {
+      this.projectiles.spawnClickMarker(x, z, 0x8fd0ff);
+      audio.play('order', 0.9);
+    }
+    return any;
+  }
+
   private issueGroundOrder(x: number, z: number, attackMove: boolean): void {
+    if (!attackMove && this.setRallyPoints(x, z)) return;
     const units = this.selection.ids(this.sim.world);
     if (units.length === 0) return;
     this.projectiles.spawnClickMarker(x, z, attackMove ? 0xff7a4a : 0x7dff9b);
@@ -707,24 +736,6 @@ class Game {
       world.pool.buildState[single] === BuildState.Complete
     ) {
       const def = defOf(world.pool.type[single]! as EntityType);
-      // Cancel the unit at the head of the queue. Without this a player whose
-      // supply cannot fit the finished unit has no way out except building a
-      // depot — the building simply stops producing, and nothing on screen
-      // offers a way to change their mind.
-      if (world.pool.prodCount[single]! > 0) {
-        buttons.push({
-          key: 'X',
-          label: 'Cancel',
-          enabled: true,
-          onClick: () =>
-            this.issue({
-              type: CommandType.CancelTrain,
-              player: this.localPlayer,
-              building: world.pool.idAt(single),
-              slot: 0,
-            }),
-        });
-      }
       for (const unit of def.produces) {
         const unitDef = defOf(unit);
         buttons.push({
@@ -738,6 +749,28 @@ class Game {
               player: this.localPlayer,
               building: world.pool.idAt(single),
               unit,
+            }),
+        });
+      }
+      // Cancel the unit at the head of the queue. Without this a player whose
+      // supply cannot fit the finished unit has no way out except building a
+      // depot — the building simply stops producing, and nothing on screen
+      // offers a way to change their mind.
+      //
+      // Last in the card, after the units it cancels: it appears and disappears
+      // with the queue, and putting it first made every train button jump
+      // sideways the moment production started.
+      if (world.pool.prodCount[single]! > 0) {
+        buttons.push({
+          key: 'X',
+          label: 'Cancel',
+          enabled: true,
+          onClick: () =>
+            this.issue({
+              type: CommandType.CancelTrain,
+              player: this.localPlayer,
+              building: world.pool.idAt(single),
+              slot: 0,
             }),
         });
       }

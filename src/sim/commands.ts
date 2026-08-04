@@ -32,6 +32,7 @@ export enum CommandType {
   Train = 7,
   CancelTrain = 8,
   Surrender = 9,
+  SetRally = 10,
 }
 
 interface Base {
@@ -74,6 +75,14 @@ export interface BuildCommand extends Base {
   tileY: number;
 }
 
+/** Point a production building's output at a spot on the ground. */
+export interface SetRallyCommand extends Base {
+  type: CommandType.SetRally;
+  building: EntityId;
+  x: Fix;
+  y: Fix;
+}
+
 export interface StopCommand extends Base {
   type: CommandType.Stop;
   units: EntityId[];
@@ -110,7 +119,8 @@ export type Command =
   | HoldCommand
   | TrainCommand
   | CancelTrainCommand
-  | SurrenderCommand;
+  | SurrenderCommand
+  | SetRallyCommand;
 
 /**
  * All commands a single player issued for one turn.
@@ -156,6 +166,7 @@ function firstUnitId(c: Command): number {
       return c.worker;
     case CommandType.Train:
     case CommandType.CancelTrain:
+    case CommandType.SetRally:
       return c.building;
     case CommandType.Surrender:
       return -1;

@@ -64,21 +64,22 @@ describe('choosing a clip', () => {
     expect(after.loop).toBe(true);
   });
 
-  it('idles when still and not fighting', () => {
-    // Not a frozen frame of the run cycle, which is the single most lifeless
-    // thing that can be on screen — it reads as the game having hung.
-    expect(poseFor(SWING + 0.01, SWING, 0, 99).clip).toBe('idle');
+  it('holds the first frame of the stride when still and not fighting', () => {
+    // No rig ships an idle clip and none is synthesised, so standing still is
+    // frame zero of the run.
+    const idle = poseFor(SWING + 0.01, SWING, 0, 99);
+    expect(`${idle.clip} @ ${idle.time}`).toBe('run @ 0');
   });
 
   it('never asks for a swing a model does not have', () => {
     // Duration 0 means the clip is missing; posing on it would read the wrong
     // rows of the bone texture entirely.
-    expect(poseFor(0, 0, 0, 99).clip).toBe('idle');
+    expect(poseFor(0, 0, 0, 99).clip).toBe('run');
   });
 
   it('ignores a unit that has never attacked', () => {
     // Fresh slots are stamped far in the past rather than at zero.
-    expect(poseFor(1e9, SWING, 0, 99).clip).toBe('idle');
+    expect(poseFor(1e9, SWING, 0, 99).clip).toBe('run');
   });
 });
 
@@ -199,30 +200,14 @@ describe('resolving a pose to bone-texture rows', () => {
     expect(`${done.from} -> ${done.to}`).toBe('64 -> 64');
   });
 
-  it('builds idle out of two opposed frames of the run', () => {
-    // No rig ships an idle clip, so it is synthesised: opposite points of the
-    // stride mixed near the middle put the legs roughly together.
-    const idle = framesForPose(model, { clip: 'idle', time: 0, loop: true });
-    expect(`${idle.from} -> ${idle.to}`).toBe('0 -> 10');
-    expect(idle.blend).toBeGreaterThan(0.3);
-    expect(idle.blend).toBeLessThan(0.7);
-  });
-
-  it('makes the idle move, but only a little', () => {
-    // Enough to read as breathing, not enough to look like walking on the spot.
-    const samples = [];
-    for (let t = 0; t < 6; t += 0.05) {
-      samples.push(framesForPose(model, { clip: 'idle', time: t, loop: true }).blend);
-    }
-    const lo = Math.min(...samples);
-    const hi = Math.max(...samples);
-    expect(hi - lo).toBeGreaterThan(0.05);
-    expect(hi - lo).toBeLessThan(0.4);
+  it('parks on the clip’s own first frame when asked for time zero', () => {
+    const still = framesForPose(model, { clip: 'run', time: 0, loop: true });
+    expect(`${still.from} -> ${still.to} @ ${still.blend}`).toBe('0 -> 1 @ 0');
   });
 
   it('survives a model missing the clip entirely', () => {
     const bare = fakeModel({});
-    expect(framesForPose(bare, { clip: 'idle', time: 1, loop: true }).from).toBe(0);
     expect(framesForPose(bare, { clip: 'run', time: 1, loop: true }).from).toBe(0);
+    expect(framesForPose(bare, { clip: 'attack', time: 1, loop: false }).from).toBe(0);
   });
 });
