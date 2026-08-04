@@ -59,6 +59,15 @@ export interface EntityDef {
   readonly sightRange: Fix;
   /** Zero means this entity cannot attack. */
   readonly attackRange: Fix;
+  /**
+   * Whether this entity's weapon can reach a flying target.
+   *
+   * False makes air a hard counter rather than a soft one, which is what the
+   * genre does with melee: a unit that swings a sword at something twenty feet
+   * up is not missing by a little. It also stops melee units trailing after
+   * gunships they could never hit.
+   */
+  readonly canHitAir: boolean;
   readonly damage: number;
   readonly attackCooldown: number;
   readonly mineralCost: number;
@@ -90,6 +99,7 @@ export const DEFS: readonly EntityDef[] = [
     turnPerTick: fromFloat(0.5),
     sightRange: fromFloat(7),
     attackRange: fromFloat(0.6),
+    canHitAir: false,
     damage: 5,
     attackCooldown: seconds(1.0),
     mineralCost: 50,
@@ -112,6 +122,7 @@ export const DEFS: readonly EntityDef[] = [
     turnPerTick: fromFloat(0.5),
     sightRange: fromFloat(8),
     attackRange: fromFloat(5),
+    canHitAir: true,
     damage: 6,
     attackCooldown: seconds(0.8),
     mineralCost: 50,
@@ -134,6 +145,7 @@ export const DEFS: readonly EntityDef[] = [
     turnPerTick: fromFloat(0.6),
     sightRange: fromFloat(7),
     attackRange: fromFloat(0.9),
+    canHitAir: false,
     damage: 13,
     attackCooldown: seconds(1.2),
     mineralCost: 75,
@@ -156,6 +168,7 @@ export const DEFS: readonly EntityDef[] = [
     turnPerTick: 0,
     sightRange: fromFloat(9),
     attackRange: 0,
+    canHitAir: true,
     damage: 0,
     attackCooldown: 0,
     mineralCost: 400,
@@ -178,6 +191,7 @@ export const DEFS: readonly EntityDef[] = [
     turnPerTick: 0,
     sightRange: fromFloat(6),
     attackRange: 0,
+    canHitAir: true,
     damage: 0,
     attackCooldown: 0,
     mineralCost: 100,
@@ -203,6 +217,7 @@ export const DEFS: readonly EntityDef[] = [
     turnPerTick: 0,
     sightRange: fromFloat(7),
     attackRange: 0,
+    canHitAir: true,
     damage: 0,
     attackCooldown: 0,
     mineralCost: 150,
@@ -225,6 +240,7 @@ export const DEFS: readonly EntityDef[] = [
     turnPerTick: fromFloat(0.9),
     sightRange: fromFloat(8),
     attackRange: fromFloat(6.5),
+    canHitAir: true,
     damage: 11,
     attackCooldown: seconds(0.8),
     mineralCost: 100,
@@ -251,6 +267,7 @@ export const DEFS: readonly EntityDef[] = [
     turnPerTick: 0,
     sightRange: 0,
     attackRange: 0,
+    canHitAir: true,
     damage: 0,
     attackCooldown: 0,
     mineralCost: 0,
@@ -274,6 +291,7 @@ export const DEFS: readonly EntityDef[] = [
     turnPerTick: fromFloat(0.7),
     sightRange: fromFloat(9),
     attackRange: fromFloat(3.5),
+    canHitAir: true,
     damage: 10,
     attackCooldown: seconds(1.0),
     mineralCost: 100,

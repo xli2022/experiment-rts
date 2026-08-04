@@ -98,8 +98,17 @@ describe('bot-vs-bot match', () => {
   it('spends its minerals rather than hoarding', () => {
     // Guards the stalled-construction bug, where the AI sat on thousands of
     // minerals it could not spend because one orphaned site blocked everything.
+    //
+    // Deliberately an order-of-magnitude bound rather than a tight one. A
+    // stalled bot banks its entire income and fields nothing; the balance
+    // between income and spending is not what this is measuring, and tying the
+    // number to it makes the test fail whenever either side is tuned — which is
+    // exactly what happened when workers stopped walking around the Command
+    // Post and income rose by about 60%.
     const winner = result.sim.world.winner;
-    expect(result.sim.world.player(winner).minerals).toBeLessThan(6000);
+    expect(result.sim.world.player(winner).minerals).toBeLessThan(12000);
+    // And it plainly did spend: the army and buildings above are what it bought.
+    expect(result.peakArmy).toBeGreaterThan(10);
   });
 
   it('ends by elimination rather than by running out of time', () => {

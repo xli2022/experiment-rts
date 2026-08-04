@@ -293,6 +293,22 @@ Units accelerate by a fraction of their top speed per tick and brake by
 or they stutter at every corner of a path. `Math.sqrt` is the one non-trivial
 function the sim may use; see the sealed-core rules above.
 
+### Acquiring a target is also an instruction to walk to it
+
+`engageNearby` steps an idle unit toward whatever combat picked out, so a target
+a unit cannot actually shoot is not merely a wasted swing — it is a chase. That
+is why `canHitAir` is enforced in `acquireTarget` rather than only at the moment
+of firing: refusing the target and stopping the chase are the same fix.
+
+Melee is ground-only, and that includes workers — a 0.6-tile reach is a swing by
+any reading. Explicit attack orders are refused per unit rather than per order,
+so a mixed selection still sends its riflemen. `tests/air.test.ts`.
+
+**Workers have a weapon.** Range 0.6, and they will shoot anything that comes
+near their base. Any combat measurement staged near a start location is
+measuring the workers as much as the units under test, which is how a melee unit
+first appeared to be landing impossible blows on an aircraft.
+
 ### A building is a square, and units must approach its nearest face
 
 Two separate mistakes made workers walk around a Command Post rather than

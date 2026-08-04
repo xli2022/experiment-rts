@@ -34,7 +34,11 @@ export function combatSystem(world: World): void {
     let targetIndex = -1;
     if (order === Order.Attack) {
       const t = pool.orderTarget[i]!;
-      if (pool.isAlive(t)) {
+      // A pinned target is still subject to what the weapon can reach. Orders
+      // are refused at source, so this only catches a target that became
+      // unreachable afterwards — but it is the difference between a unit that
+      // stands there and one that lands impossible blows.
+      if (pool.isAlive(t) && (def.canHitAir || !defOf(pool.type[idIndex(t)]! as EntityType).flying)) {
         targetIndex = idIndex(t);
       } else {
         // Target died: fall back to free acquisition rather than standing idle.
@@ -101,6 +105,7 @@ export function combatSystem(world: World): void {
 function acquireTarget(world: World, index: number, range: number): number {
   const pool = world.pool;
   const owner = pool.owner[index]!;
+  const canHitAir = defOf(pool.type[index]! as EntityType).canHitAir;
   const px = pool.posX[index]!;
   const py = pool.posY[index]!;
 
@@ -112,6 +117,10 @@ function acquireTarget(world: World, index: number, range: number): number {
     if (pool.alive[j] !== 1) return;
     if (!pool.isHostile(j, owner)) return;
     // Mineral patches are neutral, so `isHostile` already excludes them.
+    // Something we cannot shoot is not a target, and must not be picked as one:
+    // acquisition is what `engageNearby` walks toward, so a melee unit that
+    // acquired a gunship would trail after it without ever landing a blow.
+    if (!canHitAir && defOf(pool.type[j]! as EntityType).flying) return;
 
     const dx = pool.posX[j]! - px;
     const dy = pool.posY[j]! - py;

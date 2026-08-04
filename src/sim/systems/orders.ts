@@ -56,10 +56,16 @@ export function executeCommand(world: World, cmd: Command): void {
       const target = cmd.target;
       if (!world.pool.isAlive(target)) break;
       const ti = idIndex(target);
+      const targetFlies = defOf(world.pool.type[ti]! as EntityType).flying;
       forEachOwned(world, cmd.units, player, (i) => {
         // Attacking your own units is not a thing; ignore rather than misfire.
         if (world.pool.owner[ti] === player) return;
-        if (defOf(world.pool.type[i]! as EntityType).attackRange === 0) return;
+        const attacker = defOf(world.pool.type[i]! as EntityType);
+        if (attacker.attackRange === 0) return;
+        // Dropped per unit rather than for the whole order, so a mixed
+        // selection still sends its riflemen while the brawlers stay put
+        // instead of jogging after something they cannot reach.
+        if (targetFlies && !attacker.canHitAir) return;
         world.pool.order[i] = Order.Attack;
         world.pool.orderTarget[i] = target;
         world.pool.clearPath(i);
