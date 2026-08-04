@@ -193,6 +193,25 @@ npm run determinism:cross   # same match under V8 and JavaScriptCore, diffed
 and Bun ship independent JavaScript engines, so agreement between them is real
 evidence of portability rather than a self-consistency tautology.
 
+**A determinism check is only as good as the systems the scripted match reaches,
+and nothing tells you when it stops reaching one.** Both checks run
+`tests/helpers/scripted.ts`, and for a long time that match could not afford a
+Barracks — a single build attempt at tick 120 against a 150-mineral cost and a
+50-mineral bank, rejected silently because validation lives in the simulation
+and not in the helper. No barracks, no army, no fighting: **one shot in 6000
+ticks, worker on worker.** Every claim about combat being deterministic was
+untested, and the file's own comment said "long enough to reach combat".
+
+Three things were needed to fix it and each was independently missing — retry
+(the first attempt is unaffordable), staffing (the builder wanders back to
+minerals and the shell sits unfinished), and one-site-at-a-time (or each retry
+lays another foundation nobody finishes). Contact happens around tick 2800, so
+both checks now run 4000 ticks.
+
+`determinism.test.ts > covers combat, not just economy` asserts the coverage —
+both players firing, more than 20 shots — because a comment claiming coverage is
+worth nothing and this one was wrong for months.
+
 ## Architecture
 
 ```
@@ -333,6 +352,33 @@ each other means the one under test usually dies, and the trap reports the bug
 you were looking for whether or not it exists — it cost a first attempt at this
 fix, "verified" against a body. Heal the unit under test, or give it something
 weak to kill, and assert `alive` before reading anything else.
+
+### Damage is one number, and the panel shows it
+
+There was a counter triangle — Rifleman/Gunship/Brawler, each dealing **double**
+to one other, applied as a percentage inside `combatSystem`. It is gone. The
+multiplier appeared nowhere on screen, so no honest damage figure could be shown
+next to a unit; now `def.damage` is what a unit deals to everything it can
+shoot, and the info panel prints it.
+
+What decides matchups is what a player can read — range, speed, health — plus
+one structural rule that is not a number at all: `canHitAir`, so a Brawler
+cannot touch a flyer. `tests/units.test.ts` stages a real fight for every armed
+pair and asserts the blow equals the listed damage, which is the only way to
+catch a multiplier creeping back in between the def and `applyDamage`.
+
+**This makes the Rifleman the best buy at equal supply, and by a wide margin.**
+Measured, 6 supply a side, both armies attack-moving into each other:
+
+| | dps/supply | hp/supply | range | result |
+|---|---|---|---|---|
+| Rifleman | 7.50 | 45 | 5.0 | beats Brawlers 5–0 and Gunships 6–0 |
+| Brawler | 5.42 | 45 | 0.9 | — |
+| Gunship | 5.00 | 35 | 3.5 | — |
+
+The triangle was carrying the roster. Nothing is wrong with the *code* — the
+numbers in `config/rules.ts` were tuned around a 2x that no longer exists, and
+retuning them is the outstanding job.
 
 ### Acquiring a target is also an instruction to walk to it
 

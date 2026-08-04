@@ -20,8 +20,13 @@ import { checksumToHex } from '../src/sim/checksum.js';
 import { recordMatch } from '../tests/helpers/scripted.js';
 
 const SEED = 0x1234abcd;
-const TICKS = 1500;
-const CHECKPOINTS = [1, 100, 250, 500, 750, 1000, 1250, 1500];
+// Long enough to reach a fight. The scripted match needs a Depot, then a
+// Barracks, then units, then the walk to contact — first shot fired by a combat
+// unit lands around tick 2800. Stopping at 1500, as this did, meant the
+// strongest determinism check in the project covered combat with exactly one
+// shot in the whole run, worker on worker.
+const TICKS = 4000;
+const CHECKPOINTS = [1, 100, 500, 1000, 1500, 2000, 2500, 3000, 3500, 4000];
 
 const { checksums } = recordMatch(SEED, TICKS);
 

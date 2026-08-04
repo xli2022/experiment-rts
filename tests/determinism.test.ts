@@ -11,11 +11,20 @@
 import { describe, expect, it } from 'vitest';
 import { checksumToHex } from '../src/sim/checksum.js';
 import { Simulation } from '../src/sim/tick.js';
+import { EntityType } from '../src/sim/types.js';
 import { cloneCommands, describeWorld, recordMatch, replayMatch } from './helpers/scripted.js';
 
 const SEED = 0x1234abcd;
-/** Long enough to reach combat, production, and exhausted mineral patches. */
-const TICKS = 2400; // two simulated minutes at 20Hz
+/**
+ * Long enough to reach combat, production, and exhausted mineral patches.
+ *
+ * That claim used to be false and nothing said so: the scripted match could
+ * never afford a Barracks, so no army existed and 2400 ticks of "the most
+ * important test in the project" checked economy and pathfinding only. First
+ * shot by a combat unit now lands around tick 2800, hence the raise — and
+ * `covers combat` below asserts it rather than trusting this comment.
+ */
+const TICKS = 4000; // three and a bit simulated minutes at 20Hz
 
 describe('deterministic simulation', () => {
   it('replays a recorded match to identical state at every tick', () => {
@@ -77,6 +86,35 @@ describe('deterministic simulation', () => {
     // Both players should have gathered minerals and built something by now.
     expect(world.player(0).supplyMax).toBeGreaterThan(0);
     expect(world.player(0).supplyUsed).toBeGreaterThan(0);
+  });
+
+  it('covers combat, not just economy', () => {
+    // The coverage assertion for everything above it. A determinism check that
+    // never fires a shot proves nothing about target acquisition, damage or
+    // death, and that was the real state of this file: one shot in 6000 ticks,
+    // worker on worker, because the scripted match could not afford a Barracks.
+    // Nothing failed to say so — silent gaps in coverage never do.
+    const sim = new Simulation(SEED);
+    const { log } = recordMatch(SEED, TICKS);
+
+    let combatShots = 0;
+    const shooters = new Set<number>();
+    for (const commands of log) {
+      sim.step(cloneCommands(commands));
+      const shots = sim.world.events.shots;
+      for (let k = 0; k < shots.length; k += 2) {
+        const type = sim.world.pool.type[shots[k]!]!;
+        if (type === EntityType.Rifleman || type === EntityType.Brawler) {
+          combatShots++;
+          shooters.add(sim.world.pool.owner[shots[k]!]!);
+        }
+      }
+    }
+
+    expect(combatShots).toBeGreaterThan(20);
+    // Both sides, or one player is simply being farmed and the losing side's
+    // combat code never runs.
+    expect(shooters.size).toBe(2);
   });
 
   it('is unaffected by how commands are batched across ticks', () => {

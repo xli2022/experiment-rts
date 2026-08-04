@@ -40,17 +40,18 @@ trains workers, Supply Depots raise the supply cap, Barracks train the three
 combat units, and Turrets defend. Build a second Command Post on an expansion to
 mine two lines at once. You lose when your last structure falls.
 
-### The counter triangle
+### The three combat units
 
-|  |  |
-|---|---|
-| **Rifleman** (ranged) | double damage to Gunships |
-| **Gunship** (air) | double damage to Brawlers, and ignores terrain entirely |
-| **Brawler** (melee) | double damage to Riflemen |
+| | Damage | Range | Health | Supply | Notes |
+|---|---|---|---|---|---|
+| **Rifleman** (ranged) | 6 every 0.8s | 5.0 | 45 | 1 | Cheapest, outranges everything |
+| **Brawler** (melee) | 13 every 1.2s | 0.9 | 90 | 2 | Cannot touch air at all |
+| **Gunship** (air) | 10 every 1.0s | 3.5 | 70 | 2 | Ignores terrain entirely |
 
-It is a cycle with no dominant pick, and it is expressed as a damage multiplier
-rather than "cannot target" — committing to one unit type leaves you at a
-disadvantage, never helpless.
+A unit deals its listed damage to everything it can shoot — there is no hidden
+per-matchup multiplier, and the figure on the info panel is the figure you get.
+What beats what is decided by the numbers above plus one hard rule: **a Brawler
+cannot reach a flyer**, so an army of them needs company.
 
 Fog of war hides what you are not currently watching. It is a rendering feature
 rather than a secret: peer-to-peer lockstep gives every client the whole game

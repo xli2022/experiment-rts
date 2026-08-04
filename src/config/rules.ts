@@ -307,30 +307,16 @@ export function defOf(type: EntityType): EntityDef {
 }
 
 /**
- * Counter bonus, as a percentage of base damage.
+ * `damage` is the whole story: a unit deals it to everything it can shoot.
  *
- * A rock-paper-scissors triangle between the three combat units:
- *
- *     Rifleman (ranged)  ->  Gunship (air)
- *     Gunship  (air)     ->  Brawler (melee)
- *     Brawler  (melee)   ->  Rifleman (ranged)
- *
- * Expressed as a damage multiplier rather than "cannot target", so a player who
- * has committed to one unit type is disadvantaged but never completely helpless
- * — a hard counter turns the match into a coin flip decided before contact.
- *
- * Integer percent, applied with integer arithmetic, so it stays exact and
- * deterministic.
+ * There used to be a rock-paper-scissors triangle here — ranged/air/melee, each
+ * dealing double to one other — applied as a percentage inside `combatSystem`.
+ * It is gone, and deliberately so: the multiplier existed nowhere on screen, so
+ * the number a player could see was never the number they got. Damage is now a
+ * single figure shown on the unit info panel, and what units beat what is
+ * decided by the stats a player can read: range, speed, health, and whether the
+ * weapon can reach a flyer at all (`canHitAir`).
  */
-export function counterBonusPct(attacker: EntityType, target: EntityType): number {
-  if (attacker === EntityType.Rifleman && target === EntityType.Gunship) return COUNTER_PCT;
-  if (attacker === EntityType.Gunship && target === EntityType.Brawler) return COUNTER_PCT;
-  if (attacker === EntityType.Brawler && target === EntityType.Rifleman) return COUNTER_PCT;
-  return 100;
-}
-
-/** How hard a counter hits. 200 = double damage. */
-export const COUNTER_PCT = 200;
 
 // ---------------------------------------------------------------------------
 // Global economy and match rules

@@ -95,7 +95,7 @@ interface Survey {
   sites: number[];
   patches: number[];
   enemyTargets: number[];
-  /** Enemy combat units by class, for picking a counter. */
+  /** Enemy combat units by class. Only the air count changes what gets built. */
   enemyRanged: number;
   enemyMelee: number;
   enemyAir: number;
@@ -253,26 +253,26 @@ function manageProduction(
 }
 
 /**
- * Choose the next unit, countering whatever the opponent has most of.
+ * Choose the next unit: a rotating spread, skewed by the one matchup rule left.
  *
- * The roster is a triangle — ranged beats air, air beats melee, melee beats
- * ranged — and an AI that ignored it would make the whole mechanic invisible in
- * play. Falls back to a rotating mix when the enemy composition is unknown or
- * balanced, because committing to one type against an unseen army is how you
- * get hard-countered yourself.
+ * There used to be a damage triangle to play against, and this read the enemy
+ * composition to counter it. With damage now a single number per unit, that
+ * reasoning would be picking units against a mechanic that no longer exists —
+ * and would get it backwards, since it answered massed Riflemen with Brawlers.
+ *
+ * What survives is structural rather than numeric: a Brawler cannot reach a
+ * flyer at all. So a scouted air force forces something that can shoot back,
+ * and otherwise the bot keeps a mix, which is what stops one lucky read
+ * deciding a match.
  */
 function pickUnitToTrain(world: World, s: Survey, building: number): EntityType {
-  const { enemyRanged, enemyMelee, enemyAir } = s;
-  const known = enemyRanged + enemyMelee + enemyAir;
+  const phase = (Math.floor(world.tick / THINK_INTERVAL) + building) % 4;
 
-  if (known >= 3) {
-    if (enemyAir >= enemyMelee && enemyAir >= enemyRanged) return EntityType.Rifleman;
-    if (enemyMelee >= enemyRanged && enemyMelee >= enemyAir) return EntityType.Gunship;
-    if (enemyRanged >= enemyMelee && enemyRanged >= enemyAir) return EntityType.Brawler;
+  // Enough air out there to matter: only build what can answer it.
+  if (s.enemyAir >= 2 && s.enemyAir * 2 >= s.enemyRanged + s.enemyMelee) {
+    return phase === 1 ? EntityType.Gunship : EntityType.Rifleman;
   }
 
-  // Nothing decisive scouted: keep a spread so no single counter beats us.
-  const phase = (Math.floor(world.tick / THINK_INTERVAL) + building) % 4;
   if (phase === 0) return EntityType.Brawler;
   if (phase === 1) return EntityType.Gunship;
   return EntityType.Rifleman;

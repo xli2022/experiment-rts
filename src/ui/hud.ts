@@ -230,6 +230,10 @@ export class Hud {
       const def = defOf(type);
       this.selectionTitle.textContent = def.name;
       const parts = [`${world.pool.hp[i]} / ${def.maxHp} HP`];
+      // What it hits for. Worth showing because it is now the true figure —
+      // nothing scales it per matchup — so comparing two units on the panel
+      // tells a player what actually happens when they meet.
+      if (def.damage > 0) parts.push(`${def.damage} damage`);
       if (type === EntityType.MineralPatch) {
         parts.push(`${world.pool.resourceAmount[i]} minerals left`);
       }

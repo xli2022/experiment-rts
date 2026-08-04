@@ -15,12 +15,46 @@ import { defOf } from '../../src/config/rules.js';
 import { idIndex } from '../../src/sim/entities.js';
 import { fromInt } from '../../src/sim/fixed.js';
 import { Rng } from '../../src/sim/rng.js';
-import { EntityType, MAX_PLAYERS, NO_ENTITY, Order } from '../../src/sim/types.js';
+import { BuildState, EntityType, MAX_PLAYERS, NO_ENTITY, Order } from '../../src/sim/types.js';
 import { Simulation } from '../../src/sim/tick.js';
 import type { World } from '../../src/sim/world.js';
 
 /** Commands issued on one tick. */
 export type CommandLog = Command[][];
+
+/**
+ * The player's own mineral patches, nearest their Command Post first.
+ *
+ * Workers used to be handed patches by a fixed offset into every patch on the
+ * map, which sent one player's opening across the map to mine at the other's
+ * base. That player's income never recovered: it sat supply-blocked at 10 for
+ * two thousand ticks, unable to afford even a Depot, so only one side of the
+ * scripted match ever fielded an army.
+ *
+ * Ordered by tile distance and then by index — a strict total order, computed
+ * in exact integer arithmetic, so record and replay agree.
+ */
+function homePatches(world: World, player: number): number[] {
+  const pool = world.pool;
+  const hqs = ownedIndices(world, player, EntityType.CommandPost);
+  if (hqs.length === 0) return [];
+  const hx = pool.tileX[hqs[0]!]!;
+  const hy = pool.tileY[hqs[0]!]!;
+
+  const out: number[] = [];
+  for (let i = 0; i < pool.count; i++) {
+    if (pool.alive[i] === 1 && pool.type[i] === EntityType.MineralPatch) out.push(i);
+  }
+  const distSq = (i: number) => {
+    const dx = pool.tileX[i]! - hx;
+    const dy = pool.tileY[i]! - hy;
+    return dx * dx + dy * dy;
+  };
+  out.sort((a, b) => distSq(a) - distSq(b) || a - b);
+  // Only the home cluster; anything past it is the enemy's line or an expansion
+  // across open ground, and walking there is how the income vanished.
+  return out.filter((i) => distSq(i) <= 20 * 20);
+}
 
 function ownedIndices(world: World, player: number, type?: EntityType): number[] {
   const pool = world.pool;
@@ -49,13 +83,10 @@ function generateFor(world: World, player: number, rng: Rng): Command[] {
   // Opening: put every worker on minerals.
   if (tick === 2) {
     const workers = ownedIndices(world, player, EntityType.Worker);
-    const patches: number[] = [];
-    for (let i = 0; i < pool.count; i++) {
-      if (pool.alive[i] === 1 && pool.type[i] === EntityType.MineralPatch) patches.push(i);
-    }
+    const patches = homePatches(world, player);
     if (patches.length > 0) {
       for (let k = 0; k < workers.length; k++) {
-        const patch = patches[(k + player * 3) % patches.length]!;
+        const patch = patches[k % patches.length]!;
         cmds.push({
           type: CommandType.Harvest,
           player,
@@ -66,8 +97,11 @@ function generateFor(world: World, player: number, rng: Rng): Command[] {
     }
   }
 
-  // Keep the Command Post producing workers.
-  if (tick % 60 === 10 + player) {
+  // Keep the Command Post producing workers, but stop short of the supply cap
+  // so there is always room to train an army.
+  const ps = world.player(player);
+  const workerCount = ownedIndices(world, player, EntityType.Worker).length;
+  if (tick % 60 === 10 + player && workerCount < 14) {
     const hqs = ownedIndices(world, player, EntityType.CommandPost);
     if (hqs.length > 0) {
       cmds.push({
@@ -79,13 +113,70 @@ function generateFor(world: World, player: number, rng: Rng): Command[] {
     }
   }
 
-  // Put down a barracks early, then train army out of it.
-  if (tick === 120 + player * 7) {
+  // --- construction -------------------------------------------------------
+  //
+  // This whole section exists to get an army onto the field, and for a long
+  // time it did not. A Barracks costs 150 and the players start with 50, so a
+  // single attempt at tick 120 was always rejected for affordability —
+  // silently, because validation lives in the simulation and not here. The
+  // result: no barracks, no army, and the determinism checks this helper feeds
+  // covered combat to the tune of one shot in 6000 ticks, worker on worker.
+  //
+  // Three things are needed and each was missing:
+  //   - retry, since the first attempt cannot be afforded;
+  //   - staffing, or the builder wanders back to minerals and the shell sits;
+  //   - one site at a time, or every retry lays another foundation nobody
+  //     finishes and the player ends up with five simultaneous half-depots.
+  const sites: number[] = [];
+  for (const i of ownedIndices(world, player)) {
+    if (!defOf(pool.type[i]! as EntityType).isBuilding) continue;
+    if (pool.buildState[i] !== BuildState.Complete) sites.push(i);
+  }
+
+  if (sites.length > 0 && tick % 20 === player) {
+    const staffed = new Set<number>();
+    const free: number[] = [];
+    for (const w of ownedIndices(world, player, EntityType.Worker)) {
+      if (pool.order[w] !== Order.Build) {
+        free.push(w);
+        continue;
+      }
+      const target = pool.orderTarget[w]!;
+      if (target !== NO_ENTITY && pool.isAlive(target)) staffed.add(idIndex(target));
+    }
+    const orphan = sites.find((i) => !staffed.has(i));
+    if (orphan !== undefined && free.length > 0) {
+      cmds.push({
+        type: CommandType.Build,
+        player,
+        worker: pool.idAt(free[0]!),
+        building: pool.type[orphan]! as EntityType,
+        tileX: pool.tileX[orphan]!,
+        tileY: pool.tileY[orphan]!,
+      });
+    }
+  }
+
+  // One depot, then the barracks, then depots as needed. Depot first because a
+  // player pinned at the Command Post's 10 supply saves for a Barracks it could
+  // not train out of anyway; barracks next because it takes 45 seconds to raise
+  // and nothing fights until it is up.
+  const hasRacks = ownedIndices(world, player, EntityType.Barracks).length > 0;
+  const wantDepot = ps.supplyMax - ps.supplyUsed < 5 && ps.supplyMax < 60;
+  const want =
+    !hasRacks && ps.supplyMax > 10
+      ? EntityType.Barracks
+      : wantDepot
+        ? EntityType.Depot
+        : !hasRacks
+          ? EntityType.Barracks
+          : undefined;
+  if (want !== undefined && sites.length === 0 && tick > 120 && tick % 50 === player * 7) {
     const workers = ownedIndices(world, player, EntityType.Worker);
     const hqs = ownedIndices(world, player, EntityType.CommandPost);
     if (workers.length > 0 && hqs.length > 0) {
       const hq = hqs[0]!;
-      const def = defOf(EntityType.Barracks);
+      const def = defOf(want);
       // Search outward for a legal spot so the command is not silently dropped.
       let placed = false;
       for (let r = 5; r < 14 && !placed; r++) {
@@ -97,7 +188,7 @@ function generateFor(world: World, player: number, rng: Rng): Command[] {
             type: CommandType.Build,
             player,
             worker: pool.idAt(workers[workers.length - 1]!),
-            building: EntityType.Barracks,
+            building: want,
             tileX: tx,
             tileY: ty,
           });
@@ -119,8 +210,12 @@ function generateFor(world: World, player: number, rng: Rng): Command[] {
     }
   }
 
-  // Periodically throw the army at a random point, which produces pathfinding
-  // load, unit collisions, and eventually combat between the two players.
+  // Throw the army about, which produces pathfinding load, unit collisions and
+  // combat between the two players.
+  //
+  // Mostly at the enemy start rather than always at a random tile: two armies
+  // sent to independent random points wander past each other, and combat is the
+  // half of the simulation these checks most need to cover.
   if (tick > 100 && tick % 25 === 3 + player * 2) {
     const army: number[] = [];
     for (const i of ownedIndices(world, player)) {
@@ -128,8 +223,10 @@ function generateFor(world: World, player: number, rng: Rng): Command[] {
       if (t === EntityType.Rifleman || t === EntityType.Brawler) army.push(pool.idAt(i));
     }
     if (army.length > 0) {
-      const tx = fromInt(rng.nextInt(world.map.width));
-      const ty = fromInt(rng.nextInt(world.map.height));
+      const enemyStart = world.map.starts[1 - player];
+      const wander = rng.nextInt(4) === 0 || enemyStart === undefined;
+      const tx = wander ? fromInt(rng.nextInt(world.map.width)) : fromInt(enemyStart.tileX);
+      const ty = wander ? fromInt(rng.nextInt(world.map.height)) : fromInt(enemyStart.tileY);
       cmds.push({ type: CommandType.AttackMove, player, units: army, x: tx, y: ty });
     }
   }
@@ -142,14 +239,8 @@ function generateFor(world: World, player: number, rng: Rng): Command[] {
     if (workers.length > 0) {
       const pick = workers[rng.nextInt(workers.length)]!;
       const patches: number[] = [];
-      for (let i = 0; i < pool.count; i++) {
-        if (
-          pool.alive[i] === 1 &&
-          pool.type[i] === EntityType.MineralPatch &&
-          pool.resourceAmount[i]! > 0
-        ) {
-          patches.push(i);
-        }
+      for (const i of homePatches(world, player)) {
+        if (pool.resourceAmount[i]! > 0) patches.push(i);
       }
       if (patches.length > 0) {
         cmds.push({
