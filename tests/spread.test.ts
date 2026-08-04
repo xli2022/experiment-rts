@@ -324,3 +324,92 @@ describe('coming to rest', () => {
     expect(stoppedEarly).toBe(false);
   });
 });
+
+/**
+ * A destination a unit cannot stand on.
+ *
+ * Nothing stopped a right-click on a cliff being issued as an order, and the
+ * unit then had a destination it could never reach: A* aims at the nearest
+ * walkable tile and stops there, but arrival is measured against the ordered
+ * point. For a group it was worse — the flow field cannot route to a solid
+ * tile, so the whole formation pushed at the rock for the rest of the match,
+ * six tiles short, and the give-up rule never applied because it only runs
+ * near the destination.
+ */
+describe('ordered onto solid rock', () => {
+  /** Rock with walkable ground somewhere near it — a cliff, not the map edge. */
+  function rock(sim: Simulation): { x: number; y: number } {
+    const { map } = sim.world;
+    const start = map.starts[0]!;
+    for (let r = 12; r < 44; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          const x = start.tileX + dx;
+          const y = start.tileY + dy;
+          if (map.isWalkable(x, y)) continue;
+          // Solid for a tile in every direction, so this is not a lone pebble.
+          let solid = 0;
+          for (let a = -1; a <= 1; a++) {
+            for (let b = -1; b <= 1; b++) if (!map.isWalkable(x + a, y + b)) solid++;
+          }
+          if (solid === 9) return { x, y };
+        }
+      }
+    }
+    throw new Error('no rock');
+  }
+
+  function marchIntoRock(n: number): { sim: Simulation; ids: number[] } {
+    const { sim, ids } = army(n);
+    march(sim, ids, rock(sim));
+    for (let t = 0; t < 1500; t++) sim.step([]);
+    return { sim, ids };
+  }
+
+  it('gives every unit a destination it can stand on', () => {
+    const { sim, ids } = army(12);
+    march(sim, ids, rock(sim));
+    const { map, pool } = sim.world;
+    for (const id of ids) {
+      const i = id & 0xffff;
+      const tile = map.tileOfPos(pool.orderX[i]!, pool.orderY[i]!);
+      expect(tile).toBeGreaterThanOrEqual(0);
+      expect(map.isWalkable(map.tileXOf(tile), map.tileYOf(tile))).toBe(true);
+    }
+  });
+
+  it('brings a lone unit to rest', () => {
+    const { sim, ids } = marchIntoRock(1);
+    expect(sim.world.pool.order[ids[0]! & 0xffff]).toBe(Order.None);
+  });
+
+  it('brings a whole group to rest', () => {
+    const { sim, ids } = marchIntoRock(12);
+    const pool = sim.world.pool;
+    const restless = ids.filter(
+      (id) => pool.alive[id & 0xffff] === 1 && pool.order[id & 0xffff] !== Order.None,
+    ).length;
+    expect(restless).toBe(0);
+  });
+
+  it('walks them to the substituted point rather than abandoning the order', () => {
+    // Stopping is not enough on its own — giving up where they stood would also
+    // "come to rest". They have to actually get to the ground they were sent to.
+    const { sim, ids } = marchIntoRock(12);
+    const pool = sim.world.pool;
+    let furthest = 0;
+    for (const id of ids) {
+      const i = id & 0xffff;
+      if (pool.alive[i] !== 1) continue;
+      furthest = Math.max(
+        furthest,
+        Math.hypot(
+          toFloat(pool.posX[i]!) - toFloat(pool.orderX[i]!),
+          toFloat(pool.posY[i]!) - toFloat(pool.orderY[i]!),
+        ),
+      );
+    }
+    expect(furthest).toBeLessThan(4.5);
+  });
+});

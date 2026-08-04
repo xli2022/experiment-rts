@@ -16,7 +16,8 @@
 import * as THREE from 'three';
 import { defOf } from '../config/rules.js';
 import { toFloat } from '../sim/fixed.js';
-import { EntityType, NEUTRAL, type PlayerId } from '../sim/types.js';
+import { idIndex } from '../sim/entities.js';
+import { EntityType, NEUTRAL, NO_ENTITY, type EntityId, type PlayerId } from '../sim/types.js';
 import type { World } from '../sim/world.js';
 
 /** Selecting more than this is unwieldy and slows command packets down. */
@@ -37,18 +38,34 @@ const BUILDING_PICK_MARGIN = 0.35;
 export class Selection {
   /** Entity slot indices currently selected. */
   readonly indices = new Set<number>();
-  private readonly groups = new Map<number, number[]>();
+  /**
+   * The handle each selected slot was selected *as*.
+   *
+   * A slot index is not an identity. Slots are recycled, and the pool bumps a
+   * generation on every free precisely so a stale reference can be spotted —
+   * `isAlive` checks it. Tracking only the index means a dead unit's slot,
+   * refilled by the next unit trained, quietly rejoins the selection: a control
+   * group whose members all died came back holding three Gunships that had
+   * never been put in it.
+   */
+  private readonly handles = new Map<number, EntityId>();
+  private readonly groups = new Map<number, EntityId[]>();
 
   constructor(private readonly localPlayer: PlayerId) {}
 
   clear(): void {
     this.indices.clear();
+    this.handles.clear();
   }
 
   /** Drop anything that has died since the last frame. */
   prune(world: World): void {
     for (const i of [...this.indices]) {
-      if (world.pool.alive[i] !== 1) this.indices.delete(i);
+      const id = this.handles.get(i);
+      if (id === undefined || !world.pool.isAlive(id)) {
+        this.indices.delete(i);
+        this.handles.delete(i);
+      }
     }
   }
 
@@ -56,7 +73,8 @@ export class Selection {
   ids(world: World): number[] {
     const out: number[] = [];
     for (const i of this.indices) {
-      if (world.pool.alive[i] === 1) out.push(world.pool.idAt(i));
+      const id = this.handles.get(i);
+      if (id !== undefined && world.pool.isAlive(id)) out.push(id);
     }
     return out;
   }
@@ -74,25 +92,44 @@ export class Selection {
     return this.indices.size === 1 ? [...this.indices][0]! : -1;
   }
 
-  set(indices: number[]): void {
-    this.indices.clear();
-    for (const i of indices.slice(0, MAX_SELECTION)) this.indices.add(i);
+  set(indices: number[], world: World): void {
+    this.clear();
+    this.add(indices, world);
   }
 
-  toggle(index: number): void {
-    if (this.indices.has(index)) this.indices.delete(index);
-    else if (this.indices.size < MAX_SELECTION) this.indices.add(index);
-  }
-
-  add(indices: number[]): void {
-    for (const i of indices) {
-      if (this.indices.size >= MAX_SELECTION) break;
-      this.indices.add(i);
+  toggle(index: number, world: World): void {
+    if (this.indices.has(index)) {
+      this.indices.delete(index);
+      this.handles.delete(index);
+    } else if (this.indices.size < MAX_SELECTION) {
+      this.remember(index, world);
     }
   }
 
-  assignGroup(key: number): void {
-    this.groups.set(key, [...this.indices]);
+  add(indices: number[], world: World): void {
+    for (const i of indices) {
+      if (this.indices.size >= MAX_SELECTION) break;
+      this.remember(i, world);
+    }
+  }
+
+  private remember(index: number, world: World): void {
+    const id = world.pool.idAt(index);
+    if (id === NO_ENTITY) return;
+    this.indices.add(index);
+    this.handles.set(index, id);
+  }
+
+  /**
+   * Store the current selection under `key`.
+   *
+   * Handles rather than slot indices, so the group names the units that were in
+   * it and not whatever ends up in their slots. An empty selection leaves the
+   * existing group alone, which is what StarCraft II does.
+   */
+  assignGroup(key: number, world: World): void {
+    const ids = this.ids(world);
+    if (ids.length > 0) this.groups.set(key, ids);
   }
 
   /**
@@ -103,16 +140,30 @@ export class Selection {
    * live members against the current selection rather than timing a double-tap
    * means it also does the right thing after clicking elsewhere and pressing the
    * key again: that reselects, it does not jump.
+   *
+   * A group whose members are all dead is forgotten rather than left empty. Left
+   * in place it does not stay empty for long — the slots its members vacated are
+   * reused, and the group comes back holding strangers.
    */
   recallGroup(key: number, world: World): 'missing' | 'selected' | 'again' {
     const stored = this.groups.get(key);
     if (!stored) return 'missing';
-    const live = stored.filter((i) => world.pool.alive[i] === 1);
-    if (live.length === 0) return 'missing';
 
+    const live = stored.filter((id) => world.pool.isAlive(id));
+    if (live.length === 0) {
+      this.groups.delete(key);
+      return 'missing';
+    }
+    if (live.length !== stored.length) this.groups.set(key, live);
+
+    // The comparison has to be against a selection with no corpses in it, or a
+    // group that lost a member reads as a different set every time.
+    this.prune(world);
+    const wanted = live.map((id) => idIndex(id));
     const already =
-      live.length === this.indices.size && live.every((i) => this.indices.has(i));
-    this.set(live);
+      wanted.length === this.indices.size && wanted.every((i) => this.indices.has(i));
+
+    this.set(wanted, world);
     return already ? 'again' : 'selected';
   }
 
@@ -121,8 +172,8 @@ export class Selection {
     let x = 0;
     let z = 0;
     let n = 0;
-    for (const i of this.indices) {
-      if (world.pool.alive[i] !== 1) continue;
+    for (const id of this.ids(world)) {
+      const i = idIndex(id);
       x += toFloat(world.pool.posX[i]!);
       z += toFloat(world.pool.posY[i]!);
       n++;

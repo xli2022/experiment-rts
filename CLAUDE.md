@@ -441,6 +441,39 @@ Flyers are the exception in one direction only: `collides` is false for them
 because it also decides whether a thing occupies map tiles, so separation gives
 them their own rule and matches air against air.
 
+### A slot index is not an identity
+
+The pool recycles slots and bumps a generation on every free, and `isAlive`
+checks it, precisely so a stale reference can be spotted. Anything outside the
+simulation that remembers an entity must remember the **handle**, not the index.
+
+`Selection` remembered indices. So a dead unit's slot, refilled by the next unit
+trained, quietly rejoined the selection — and a control group whose three
+members had all died came back holding three Gunships that were never put in it.
+Both the live selection and the stored groups had it, since both were index
+lists; `prune` sees `alive === 1` on a reused slot and keeps it.
+
+A group whose members are all dead is now forgotten rather than left empty:
+empty is not a stable state, because those slots get reused. `tests/picking.test.ts`
+covers the case the delete-on-empty alone does not — the player never presses
+the key while the slots are empty, only later, when strangers are standing in
+them.
+
+### An order must name somewhere a unit can stand
+
+Nothing stopped a right-click on a cliff being issued, and the resulting order
+could never complete: A\* aims at the nearest walkable tile and stops there, but
+arrival is measured against the ordered point. A lone unit stopped and kept its
+order; a *group* was worse, because a flow field cannot route to a solid tile at
+all — twelve units pushed at the rock for the rest of the match, six tiles short,
+and `settleArrivals` never applied because it only runs near the destination.
+
+`standableTarget` snaps the commanded point to the nearest walkable tile before
+anything else sees it, and refuses the order outright if there is nowhere within
+`DESTINATION_SNAP_RINGS`. Fixing it at the point the order is created rather than
+in the movers is what keeps it simple: every arrival rule downstream already
+copes with a destination that exists.
+
 ### Every unit must be able to stop
 
 Arrival is "within half a tile of the point you were given", and in a crowd most

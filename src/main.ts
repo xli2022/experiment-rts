@@ -241,7 +241,7 @@ class Game {
     const digit = e.code.startsWith('Digit') ? Number(e.code.slice(5)) : -1;
     if (digit >= 0 && digit <= 9) {
       if (e.ctrlKey || e.metaKey) {
-        this.selection.assignGroup(digit);
+        this.selection.assignGroup(digit, this.sim.world);
         e.preventDefault();
       } else if (this.selection.recallGroup(digit, this.sim.world) === 'again') {
         // Second press of a key whose group is already selected jumps the view
@@ -349,8 +349,8 @@ class Game {
       if (!additive) this.selection.clear();
       return;
     }
-    if (additive) this.selection.toggle(hit);
-    else this.selection.set([hit]);
+    if (additive) this.selection.toggle(hit, this.sim.world);
+    else this.selection.set([hit], this.sim.world);
     audio.play('select', 0.7);
   }
 
@@ -377,8 +377,8 @@ class Game {
       Math.max(ay, by),
       this.localPlayer,
     );
-    if (additive) this.selection.add(found);
-    else this.selection.set(found);
+    if (additive) this.selection.add(found, this.sim.world);
+    else this.selection.set(found, this.sim.world);
   }
 
   /**

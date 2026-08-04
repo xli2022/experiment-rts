@@ -165,16 +165,16 @@ describe('control groups', () => {
 
   it('reports the second press of an already-selected group', () => {
     const { sim, sel, ids } = twoUnits();
-    sel.set(ids);
-    sel.assignGroup(1);
+    sel.set(ids, sim.world);
+    sel.assignGroup(1, sim.world);
 
     expect(sel.recallGroup(1, sim.world)).toBe('again');
   });
 
   it('reports a plain reselect after the player clicks away', () => {
     const { sim, sel, ids } = twoUnits();
-    sel.set(ids);
-    sel.assignGroup(1);
+    sel.set(ids, sim.world);
+    sel.assignGroup(1, sim.world);
 
     sel.clear();
     expect(sel.recallGroup(1, sim.world)).toBe('selected');
@@ -187,10 +187,10 @@ describe('control groups', () => {
     // gathers them — jumping here would move the view out from under a player
     // who was mid-click.
     const { sim, sel, ids } = twoUnits();
-    sel.set(ids);
-    sel.assignGroup(1);
+    sel.set(ids, sim.world);
+    sel.assignGroup(1, sim.world);
 
-    sel.set([ids[0]!]);
+    sel.set([ids[0]!], sim.world);
     expect(sel.recallGroup(1, sim.world)).toBe('selected');
   });
 
@@ -201,7 +201,7 @@ describe('control groups', () => {
 
   it('centres on the middle of the selection', () => {
     const { sim, sel, ids } = twoUnits();
-    sel.set(ids);
+    sel.set(ids, sim.world);
     const pool = sim.world.pool;
     const mid = sel.centroid(sim.world)!;
     const want = {
@@ -217,9 +217,105 @@ describe('control groups', () => {
     // A control group keeps its members until they die; centring on a corpse's
     // last position would drag the view off the survivors.
     const { sim, sel, ids } = twoUnits();
-    sel.set(ids);
+    sel.set(ids, sim.world);
     sim.world.pool.alive[ids[1]!] = 0;
     const mid = sel.centroid(sim.world)!;
     expect(mid.x.toFixed(3)).toBe(toFloat(sim.world.pool.posX[ids[0]!]!).toFixed(3));
+  });
+});
+
+/**
+ * A slot index is not an identity.
+ *
+ * The pool recycles slots and bumps a generation on every free so that a stale
+ * reference can be spotted. Selection tracked bare indices, so a dead unit's
+ * slot — refilled by the next unit trained — silently rejoined the selection.
+ * A control group whose members had all died came back holding three Gunships
+ * that were never put in it.
+ */
+describe('selection identity across slot reuse', () => {
+  function stage(): { sim: Simulation; sel: Selection; spot: { x: number; y: number } } {
+    const sim = new Simulation(0x51ce7a11);
+    return { sim, sel: new Selection(0 as PlayerId), spot: clearSpot(sim) };
+  }
+
+  function spawn(sim: Simulation, spot: { x: number; y: number }, type: EntityType, k: number): number {
+    return (
+      sim.world.pool.spawn(
+        type,
+        0 as PlayerId,
+        Math.round((spot.x + 0.5 + k) * FIX),
+        Math.round((spot.y + 0.5) * FIX),
+      ) & 0xffff
+    );
+  }
+
+  it('forgets a control group once every member is dead', () => {
+    const { sim, sel, spot } = stage();
+    const pool = sim.world.pool;
+    const ids = [0, 1, 2].map((k) => spawn(sim, spot, EntityType.Rifleman, k));
+    sel.set(ids, sim.world);
+    sel.assignGroup(1, sim.world);
+
+    for (const i of ids) pool.destroy(pool.idAt(i));
+    sel.clear();
+    expect(sel.recallGroup(1, sim.world)).toBe('missing');
+
+    // The slots come back as something else entirely, and the group must not.
+    const fresh = [0, 1, 2].map((k) => spawn(sim, spot, EntityType.Gunship, k + 4));
+    expect(fresh.some((i) => ids.includes(i))).toBe(true); // the reuse really happened
+    expect(sel.recallGroup(1, sim.world)).toBe('missing');
+    expect(sel.indices.size).toBe(0);
+  });
+
+  it('does not hand back strangers when the group is first recalled after a reuse', () => {
+    // The reported case, and the one the delete-on-empty above does not cover:
+    // the player never presses the key while the slots are empty. They press it
+    // once, later, by which time three new units are standing in those slots.
+    const { sim, sel, spot } = stage();
+    const pool = sim.world.pool;
+    const ids = [0, 1, 2].map((k) => spawn(sim, spot, EntityType.Rifleman, k));
+    sel.set(ids, sim.world);
+    sel.assignGroup(1, sim.world);
+    sel.clear();
+
+    for (const i of ids) pool.destroy(pool.idAt(i));
+    const fresh = [0, 1, 2].map((k) => spawn(sim, spot, EntityType.Gunship, k + 4));
+    expect(fresh.some((i) => ids.includes(i))).toBe(true);
+
+    expect(sel.recallGroup(1, sim.world)).toBe('missing');
+    expect(sel.indices.size).toBe(0);
+  });
+
+  it('keeps the survivors of a group and drops only the dead', () => {
+    const { sim, sel, spot } = stage();
+    const pool = sim.world.pool;
+    const ids = [0, 1, 2].map((k) => spawn(sim, spot, EntityType.Rifleman, k));
+    sel.set(ids, sim.world);
+    sel.assignGroup(1, sim.world);
+
+    pool.destroy(pool.idAt(ids[1]!));
+    // Something else takes the vacated slot before the group is next recalled.
+    const intruder = spawn(sim, spot, EntityType.Gunship, 5);
+    expect(intruder).toBe(ids[1]!);
+
+    sel.clear();
+    expect(sel.recallGroup(1, sim.world)).toBe('selected');
+    expect([...sel.indices].sort((a, b) => a - b)).toEqual([ids[0]!, ids[2]!].sort((a, b) => a - b));
+  });
+
+  it('drops a selected unit whose slot was reused, rather than adopting the newcomer', () => {
+    const { sim, sel, spot } = stage();
+    const pool = sim.world.pool;
+    const victim = spawn(sim, spot, EntityType.Rifleman, 0);
+    sel.set([victim], sim.world);
+
+    pool.destroy(pool.idAt(victim));
+    const replacement = spawn(sim, spot, EntityType.Gunship, 1);
+    expect(replacement).toBe(victim); // same slot, new entity
+
+    sel.prune(sim.world);
+    expect(sel.indices.size).toBe(0);
+    expect(sel.ids(sim.world)).toEqual([]);
   });
 });

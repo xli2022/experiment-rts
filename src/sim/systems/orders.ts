@@ -16,7 +16,8 @@
 import { defOf, GROUP_PATH_THRESHOLD, MAX_PRODUCTION_QUEUE } from '../../config/rules.js';
 import { CommandType, type Command } from '../commands.js';
 import { ARRIVE_BEST_NONE, idIndex } from '../entities.js';
-import { fromInt } from '../fixed.js';
+import { FIX_HALF, fromInt } from '../fixed.js';
+import { nearestWalkable } from '../pathing/astar.js';
 import { BuildState, EntityType, NO_ENTITY, Order, type EntityId, type PlayerId } from '../types.js';
 import type { World } from '../world.js';
 
@@ -31,23 +32,27 @@ export function executeCommand(world: World, cmd: Command): void {
 
   switch (cmd.type) {
     case CommandType.Move: {
+      if (!standableTarget(world, cmd.x, cmd.y, targetOut)) break;
       const grouped = cmd.units.length >= GROUP_PATH_THRESHOLD;
+      const { x: gx, y: gy } = targetOut;
       let slot = 0;
       forEachOwned(world, cmd.units, player, (i) => {
         // The slot counts units the order actually applied to, in the order
         // `forEachOwned` walks them — identical on every peer.
-        spreadDestination(world, cmd.units.length > 1 ? slot++ : 0, cmd.x, cmd.y, destOut);
-        setMoveOrder(world, i, Order.Move, destOut.x, destOut.y, grouped, cmd.x, cmd.y);
+        spreadDestination(world, cmd.units.length > 1 ? slot++ : 0, gx, gy, destOut);
+        setMoveOrder(world, i, Order.Move, destOut.x, destOut.y, grouped, gx, gy);
       });
       break;
     }
 
     case CommandType.AttackMove: {
+      if (!standableTarget(world, cmd.x, cmd.y, targetOut)) break;
       const grouped = cmd.units.length >= GROUP_PATH_THRESHOLD;
+      const { x: gx, y: gy } = targetOut;
       let slot = 0;
       forEachOwned(world, cmd.units, player, (i) => {
-        spreadDestination(world, cmd.units.length > 1 ? slot++ : 0, cmd.x, cmd.y, destOut);
-        setMoveOrder(world, i, Order.AttackMove, destOut.x, destOut.y, grouped, cmd.x, cmd.y);
+        spreadDestination(world, cmd.units.length > 1 ? slot++ : 0, gx, gy, destOut);
+        setMoveOrder(world, i, Order.AttackMove, destOut.x, destOut.y, grouped, gx, gy);
       });
       break;
     }
@@ -198,6 +203,58 @@ function spreadSlot(slot: number, out: { x: number; y: number }): void {
 
 /** Scratch for `spreadSlot`; the sim is single-threaded and allocates nothing. */
 const slotOut = { x: 0, y: 0 };
+
+/** Scratch for `standableTarget`. */
+const targetOut = { x: 0, y: 0 };
+
+/**
+ * How far to look for standable ground when the player clicks somewhere a unit
+ * cannot go. Generous enough to cover a cliff or a building, small enough that
+ * a click deep inside a mountain is refused rather than answered with a march
+ * to somewhere the player did not point at.
+ */
+const DESTINATION_SNAP_RINGS = 8;
+
+/**
+ * Resolve a commanded point to somewhere a unit can actually stand.
+ *
+ * A player can right-click a cliff, and nothing stopped the order being issued
+ * against it. The unit then had a destination it could never reach: A* aims at
+ * the nearest walkable tile and stops there, but arrival is measured against
+ * the ordered point, so the order never completed. For a group it was worse —
+ * the flow field could not route to the tile at all, so the whole formation
+ * pushed at the rock for the rest of the match, 6.2 tiles short and never
+ * settling, because the give-up rule only applies near the destination.
+ *
+ * Snapping here rather than patching the movers is what makes the rest work:
+ * every arrival rule downstream already handles a destination that exists.
+ *
+ * Returns false when there is nowhere to stand nearby, in which case the order
+ * is dropped and the units carry on with what they were doing.
+ */
+function standableTarget(
+  world: World,
+  x: number,
+  y: number,
+  out: { x: number; y: number },
+): boolean {
+  const tile = world.map.tileOfPos(x, y);
+  if (tile < 0) return false;
+
+  const tx = world.map.tileXOf(tile);
+  const ty = world.map.tileYOf(tile);
+  if (world.map.isWalkable(tx, ty)) {
+    out.x = x;
+    out.y = y;
+    return true;
+  }
+
+  const free = nearestWalkable(world.map, tx, ty, DESTINATION_SNAP_RINGS);
+  if (free < 0) return false;
+  out.x = fromInt(world.map.tileXOf(free)) + FIX_HALF;
+  out.y = fromInt(world.map.tileYOf(free)) + FIX_HALF;
+  return true;
+}
 
 /** Gap between neighbouring units in a formation. Wider than any unit's girth. */
 const SPREAD_STEP = fromInt(1);
