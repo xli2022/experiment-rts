@@ -1,6 +1,12 @@
 node_modules/
 dist/
 coverage/
+
+# Source art for `npm run textures`. Deliberately not committed: a unit's PNGs
+# are ~1.3 MB each against ~140 KB for the KTX2 the game actually loads, and
+# only the encoded file ships. Put the PNGs here to re-encode, keep them
+# wherever the originals live.
+assets/
 *.local
 .DS_Store
 .vite/

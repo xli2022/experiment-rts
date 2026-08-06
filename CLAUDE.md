@@ -175,12 +175,21 @@ The swing is timed from the shot, not from wall-clock, so the blow lands on the
 frame the damage did; and it does not loop, so a cooldown longer than the clip
 holds the follow-through instead of restarting the wind-up. `tests/pose.test.ts`.
 
-Skins are KTX2/ETC1S, encoded by `npm run textures` from `assets/textures/`
-(source art, not served). A compressed texture cannot be flipped as it uploads
-the way a PNG can, so the vertical flip these UVs need is baked in by the
-encoder. Three.js resolves its own transcoder WASM against `import.meta.url`, so
-leave `setTranscoderPath` alone — pointing it at a hand-copied `public/` folder
-ships the same 580 KB twice.
+Skins are KTX2/ETC1S, encoded by `npm run textures` from `assets/textures/`. A
+compressed texture cannot be flipped as it uploads the way a PNG can, so the
+vertical flip these UVs need is baked in by the encoder. Three.js resolves its
+own transcoder WASM against `import.meta.url`, so leave `setTranscoderPath`
+alone — pointing it at a hand-copied `public/` folder ships the same 580 KB
+twice.
+
+**Source art is not committed, only the encoded result.** `assets/` is
+git-ignored: a unit's PNGs are around 1.3 MB each against 140 KB for the KTX2
+the game loads, and the PNGs neither ship nor take part in a build. Adding a
+unit means dropping its PNGs there, running `npm run textures`, and committing
+the `.ktx2` under `public/models/`. The encoder is deterministic — re-encoding
+the original art reproduces the committed files byte for byte — so nothing is
+lost by keeping the sources outside the repository, but they are the only way
+back to an editable image, so keep them wherever the originals live.
 
 ## Verifying determinism
 

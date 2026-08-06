@@ -148,7 +148,11 @@ Buildings and workers are built from Three.js primitives at runtime. The three
 combat units are authored models: skinned rigs with run, attack and death
 clips, baked at load into a bone-matrix texture so a hundred of them mid-swing
 still cost one draw call per type. Their skins are KTX2/ETC1S — a tenth the size
-of the source PNGs, which live in `assets/textures/` and are re-encoded with:
+of the source PNGs.
+
+Only the encoded `.ktx2` files are committed, since they are the only part that
+ships. The source art is not in the repository: put the PNGs in
+`assets/textures/` (git-ignored) and re-encode with
 
 ```sh
 npm run textures

@@ -24,9 +24,24 @@ const SOURCE = new URL('../assets/textures/', import.meta.url).pathname;
 const OUT = new URL('../public/models/', import.meta.url).pathname;
 
 await mkdir(OUT, { recursive: true });
-const files = (await readdir(SOURCE)).filter((f) => f.endsWith('.png')).sort();
+
+// The source art is not in the repository — only the encoded `.ktx2` is, since
+// that is the only part that ships and the PNGs are ten times its size. So an
+// empty or absent folder is the normal state of a fresh clone, not a mistake,
+// and it is worth saying so rather than failing with ENOENT.
+let files = [];
+try {
+  files = (await readdir(SOURCE)).filter((f) => f.endsWith('.png')).sort();
+} catch (err) {
+  if (err.code !== 'ENOENT') throw err;
+}
 if (files.length === 0) {
-  console.error(`no PNGs in ${SOURCE}`);
+  console.error(
+    `No PNGs in ${SOURCE}\n\n` +
+      `Source art is deliberately not committed (see .gitignore). Drop the skin\n` +
+      `PNGs there and run this again; the encoded .ktx2 files under public/models/\n` +
+      `are what the game loads and what belongs in the repository.`,
+  );
   process.exit(1);
 }
 
