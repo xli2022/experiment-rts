@@ -87,6 +87,10 @@ export class EntityPool {
 
   // --- combat ---
   readonly attackCooldown = new Int32Array(ENTITY_CAPACITY);
+  /** Ticks remaining before the current attack reaches its impact frame. */
+  readonly attackWindup = new Int32Array(ENTITY_CAPACITY);
+  /** Generation-tagged target locked when the current wind-up began. */
+  readonly attackTarget = new Int32Array(ENTITY_CAPACITY);
   /** Entity currently being shot at, for rendering tracers and aggro stickiness. */
   readonly combatTarget = new Int32Array(ENTITY_CAPACITY);
 
@@ -218,6 +222,8 @@ export class EntityPool {
     this.orderX[index] = 0;
     this.orderY[index] = 0;
     this.attackCooldown[index] = 0;
+    this.attackWindup[index] = 0;
+    this.attackTarget[index] = NO_ENTITY;
     this.speed[index] = 0;
     this.combatTarget[index] = NO_ENTITY;
     this.buildState[index] = def.isBuilding ? BuildState.Site : BuildState.Complete;
@@ -294,6 +300,12 @@ export class EntityPool {
     this.flowGoal[index] = -1;
   }
 
+  /** Interrupt an attack before impact without refunding its weapon cooldown. */
+  cancelAttack(index: number): void {
+    this.attackWindup[index] = 0;
+    this.attackTarget[index] = NO_ENTITY;
+  }
+
   /** Read a queued production entry. */
   prodAt(index: number, slot: number): EntityType {
     return this.prodQueue[index * MAX_PRODUCTION_QUEUE + slot]! as EntityType;
@@ -345,6 +357,8 @@ export class EntityPool {
     x = checksumArray(x, this.orderX, this.count);
     x = checksumArray(x, this.orderY, this.count);
     x = checksumArray(x, this.attackCooldown, this.count);
+    x = checksumArray(x, this.attackWindup, this.count);
+    x = checksumArray(x, this.attackTarget, this.count);
     x = checksumArray(x, this.combatTarget, this.count);
     x = checksumArray(x, this.buildState, this.count);
     x = checksumArray(x, this.buildProgress, this.count);

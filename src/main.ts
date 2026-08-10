@@ -90,7 +90,6 @@ class Game {
   private dragStart: { x: number; y: number } | null = null;
   private pointerNdc = new THREE.Vector2();
   private lastFrameMs = 0;
-  private lastTick = -1;
   private finished = false;
   /** Wall-clock seconds since start, for purely cosmetic animation. */
   private elapsedS = 0;
@@ -153,6 +152,7 @@ class Game {
     );
 
     this.runner = new LockstepRunner(this.sim, transport, {
+      onStep: () => this.consumeSimulationStep(),
       onStall: (waiting) =>
         this.hud.showBanner(`Waiting for player ${waiting.join(', ')}…`, 'warn'),
       onResume: () => this.hud.hideBanner(),
@@ -185,8 +185,36 @@ class Game {
 
   private addLights(): void {
     const sun = new THREE.DirectionalLight(0xfff2e0, 2.0);
-    sun.position.set(50, 90, 30);
-    this.scene.add(sun);
+    const mapCentre = MAP_SIZE / 2;
+
+    // Keep the original daylight direction, but aim it through the middle of
+    // the battlefield. A directional light's target defaults to the origin,
+    // which leaves most of a 128x128 map outside the default shadow camera.
+    sun.position.set(mapCentre + 50, 90, mapCentre + 30);
+    sun.target.position.set(mapCentre, 0, mapCentre);
+    sun.castShadow = true;
+
+    // One stable map covers the whole battlefield. Following the RTS camera
+    // would buy a little more resolution, but it also makes shadows crawl across
+    // the tile grid while panning. The half-diagonal needs roughly 91 units in
+    // this light direction; 96 leaves room for cliffs, units, and map edges.
+    const shadowExtent = MAP_SIZE * 0.75;
+    const shadowCamera = sun.shadow.camera;
+    shadowCamera.left = -shadowExtent;
+    shadowCamera.right = shadowExtent;
+    shadowCamera.top = shadowExtent;
+    shadowCamera.bottom = -shadowExtent;
+    shadowCamera.near = 30;
+    shadowCamera.far = 200;
+    shadowCamera.updateProjectionMatrix();
+
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.bias = -0.0002;
+    sun.shadow.normalBias = 0.03;
+    sun.shadow.radius = 2;
+
+    // The target must be in the scene for three.js to update its world matrix.
+    this.scene.add(sun, sun.target);
     this.scene.add(new THREE.HemisphereLight(0x9fc4ff, 0x2a3020, 1.5));
   }
 
@@ -660,24 +688,13 @@ class Game {
   private tick(dtMs: number): void {
     this.elapsedS += dtMs / 1000;
     const alpha = this.runner.update(dtMs);
-
-    // Snapshot exactly once per simulation tick, not per frame — interpolation
-    // needs the last two *ticks*, and snapshotting per frame would collapse the
-    // interval to nothing and make movement stutter.
-    if (this.sim.world.tick !== this.lastTick) {
-      this.entities.captureSnapshot(this.sim.world);
-      // Shots and deaths are cleared at the start of the next step, so they have
-      // to be read here, on the same frame the tick landed.
-      this.projectiles.spawnFromEvents(this.sim.world);
-      this.projectiles.spawnDeaths(this.sim.world);
-      this.entities.noteDeaths(this.sim.world, this.elapsedS);
-      this.playTickSounds();
-      this.fog.update(this.sim.world, this.localPlayer);
-      this.lastTick = this.sim.world.tick;
-    }
+    // Shots are retained per simulation step, then resolved once the final
+    // interpolation alpha is known. Flush before the single buffer rebuild so
+    // effects emitted by this frame are visible immediately.
+    this.projectiles.flushPending(this.sim.world.tick, alpha, this.elapsedS, dtMs);
+    this.projectiles.update(dtMs);
 
     if (!this.gallery.isOpen) this.camera.update(dtMs / 1000);
-    this.projectiles.update(dtMs);
     this.fog.refresh();
     // Cliffs have height and so stand through the fog plane; they are shaded to
     // match it instead of being covered by it.
@@ -709,6 +726,19 @@ class Game {
     this.checkResult();
     if (this.gallery.isOpen) this.gallery.render(this.elapsedS);
     else this.renderer.render(this.scene, this.camera.camera);
+  }
+
+  /**
+   * Drain one tick's transient presentation events before another tick can
+   * clear them. Lockstep may execute several ticks during one render frame.
+   */
+  private consumeSimulationStep(): void {
+    this.entities.captureSnapshot(this.sim.world);
+    this.projectiles.captureFromEvents(this.sim.world, this.entities);
+    this.projectiles.spawnDeaths(this.sim.world);
+    this.entities.noteEvents(this.sim.world, this.elapsedS);
+    this.playTickSounds();
+    this.fog.update(this.sim.world, this.localPlayer);
   }
 
   /**
@@ -952,6 +982,8 @@ async function boot(): Promise<void> {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setClearColor(0x0b0e14);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
   const gallery = new UnitGallery(uiRoot, renderer);
 
   const params = new URLSearchParams(location.search);

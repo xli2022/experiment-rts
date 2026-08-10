@@ -13,10 +13,11 @@
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const SIM_ROOT = new URL('../src/sim', import.meta.url).pathname;
-const CONFIG_ROOT = new URL('../src/config', import.meta.url).pathname;
+const SIM_ROOT = fileURLToPath(new URL('../src/sim', import.meta.url));
+const CONFIG_ROOT = fileURLToPath(new URL('../src/config', import.meta.url));
 
 /**
  * Constructs that make a simulation non-reproducible.

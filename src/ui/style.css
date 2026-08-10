@@ -521,6 +521,42 @@ body {
   border-radius: 11px;
   background: transparent;
   box-shadow: 0 2px 8px rgba(33, 46, 61, 0.09);
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.unit-gallery-card.loaded:hover,
+.unit-gallery-card.loaded:focus-within {
+  border-color: var(--gallery-accent);
+  box-shadow: 0 3px 12px rgba(33, 46, 61, 0.2);
+}
+
+.unit-gallery-card-button {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+}
+
+.unit-gallery-card-button:disabled {
+  opacity: 1;
+}
+
+.unit-gallery-card.loaded .unit-gallery-card-button {
+  cursor: pointer;
+}
+
+.unit-gallery-card-button:focus-visible {
+  outline: 2px solid rgba(84, 179, 255, 0.5);
+  outline-offset: -3px;
 }
 
 .unit-gallery-preview {

@@ -79,13 +79,16 @@ const SKIN_HEADER = /* glsl */ `
  * because three.js computes normals earlier in the shader than positions and
  * both need the same matrix.
  */
-const SKIN_NORMAL = /* glsl */ `
+const SKIN_MATRIX = /* glsl */ `
   mat4 bakedSkinMatrix =
       skinWeight.x * readBoneBlended( skinIndex.x )
     + skinWeight.y * readBoneBlended( skinIndex.y )
     + skinWeight.z * readBoneBlended( skinIndex.z )
     + skinWeight.w * readBoneBlended( skinIndex.w );
   bakedSkinMatrix = bindMatrixInverse * bakedSkinMatrix * bindMatrix;
+`;
+
+const SKIN_NORMAL = /* glsl */ `
   objectNormal = mat3( bakedSkinMatrix ) * objectNormal;
 `;
 
@@ -146,6 +149,8 @@ export class AnimatedUnitPool {
     geometry.setAttribute("aBlend", this.blends);
 
     patchMaterial(material, model);
+    const depthMaterial = new THREE.MeshDepthMaterial();
+    patchDepthMaterial(depthMaterial, model);
 
     this.mesh = new THREE.InstancedMesh(geometry, material, capacity);
     this.mesh.count = 0;
@@ -153,7 +158,11 @@ export class AnimatedUnitPool {
     // in this renderer is unculled anyway.
     this.mesh.frustumCulled = false;
     this.mesh.castShadow = true;
-    this.disposables.push(geometry, material);
+    this.mesh.receiveShadow = true;
+    // Three's shadow pass substitutes a depth material. Give it the same baked
+    // skinning transform or an animated unit casts its undeformed bind pose.
+    this.mesh.customDepthMaterial = depthMaterial;
+    this.disposables.push(geometry, material, depthMaterial);
   }
 
   /** Start a frame. Instances are re-emitted from scratch every time. */
@@ -261,7 +270,7 @@ function patchMaterial(
       .replace("#include <common>", `#include <common>\n${SKIN_HEADER}`)
       .replace(
         "#include <beginnormal_vertex>",
-        `#include <beginnormal_vertex>\n${SKIN_NORMAL}`,
+        `#include <beginnormal_vertex>\n${SKIN_MATRIX}\n${SKIN_NORMAL}`,
       )
       .replace(
         "#include <begin_vertex>",
@@ -270,4 +279,26 @@ function patchMaterial(
   };
   // Distinguishes this program from an unpatched Lambert in three's cache.
   material.customProgramCacheKey = () => "baked-skin";
+}
+
+/** Apply baked skinning to the directional-light depth pass as well. */
+function patchDepthMaterial(
+  material: THREE.MeshDepthMaterial,
+  model: AnimatedModel,
+): void {
+  const size = new THREE.Vector2(model.boneCount * 4, model.totalFrames);
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.boneTexture = { value: model.boneTexture };
+    shader.uniforms.boneTextureSize = { value: size };
+    shader.uniforms.bindMatrix = { value: model.bindMatrix };
+    shader.uniforms.bindMatrixInverse = { value: model.bindMatrixInverse };
+
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", `#include <common>\n${SKIN_HEADER}`)
+      .replace(
+        "#include <begin_vertex>",
+        `#include <begin_vertex>\n${SKIN_MATRIX}\n${SKIN_POSITION}`,
+      );
+  };
+  material.customProgramCacheKey = () => "baked-skin-depth";
 }

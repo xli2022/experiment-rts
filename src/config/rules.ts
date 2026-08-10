@@ -69,6 +69,15 @@ export interface EntityDef {
    */
   readonly canHitAir: boolean;
   readonly damage: number;
+  /**
+   * Whole ticks from attack start to impact.
+   *
+   * Must be zero when cooldown is zero; otherwise it is non-negative and
+   * strictly shorter than cooldown. Equality would make the impact branch
+   * consume the zero-cooldown tick, stretching repeat cadence by one tick.
+   */
+  readonly attackForeswing: number;
+  /** Whole ticks between consecutive attack starts and impacts. */
   readonly attackCooldown: number;
   readonly mineralCost: number;
   readonly buildTicks: number;
@@ -101,6 +110,7 @@ export const DEFS: readonly EntityDef[] = [
     attackRange: fromFloat(0.6),
     canHitAir: false,
     damage: 5,
+    attackForeswing: 0,
     attackCooldown: seconds(1.0),
     mineralCost: 50,
     buildTicks: seconds(12),
@@ -124,6 +134,7 @@ export const DEFS: readonly EntityDef[] = [
     attackRange: fromFloat(5),
     canHitAir: true,
     damage: 6,
+    attackForeswing: 0,
     attackCooldown: seconds(0.8),
     mineralCost: 50,
     buildTicks: seconds(17),
@@ -147,6 +158,9 @@ export const DEFS: readonly EntityDef[] = [
     attackRange: fromFloat(0.9),
     canHitAir: false,
     damage: 13,
+    // The authored sword clip spends its opening beats drawing the blade back.
+    // Start that motion before the authoritative hit instead of after it.
+    attackForeswing: seconds(0.45),
     attackCooldown: seconds(1.2),
     mineralCost: 75,
     buildTicks: seconds(20),
@@ -170,6 +184,7 @@ export const DEFS: readonly EntityDef[] = [
     attackRange: 0,
     canHitAir: true,
     damage: 0,
+    attackForeswing: 0,
     attackCooldown: 0,
     mineralCost: 400,
     buildTicks: seconds(55),
@@ -193,6 +208,7 @@ export const DEFS: readonly EntityDef[] = [
     attackRange: 0,
     canHitAir: true,
     damage: 0,
+    attackForeswing: 0,
     attackCooldown: 0,
     mineralCost: 100,
     buildTicks: seconds(25),
@@ -219,6 +235,7 @@ export const DEFS: readonly EntityDef[] = [
     attackRange: 0,
     canHitAir: true,
     damage: 0,
+    attackForeswing: 0,
     attackCooldown: 0,
     mineralCost: 150,
     buildTicks: seconds(45),
@@ -242,6 +259,7 @@ export const DEFS: readonly EntityDef[] = [
     attackRange: fromFloat(6.5),
     canHitAir: true,
     damage: 11,
+    attackForeswing: 0,
     attackCooldown: seconds(0.8),
     mineralCost: 100,
     buildTicks: seconds(28),
@@ -269,6 +287,7 @@ export const DEFS: readonly EntityDef[] = [
     attackRange: 0,
     canHitAir: true,
     damage: 0,
+    attackForeswing: 0,
     attackCooldown: 0,
     mineralCost: 0,
     buildTicks: 0,
@@ -293,6 +312,7 @@ export const DEFS: readonly EntityDef[] = [
     attackRange: fromFloat(3.5),
     canHitAir: true,
     damage: 10,
+    attackForeswing: 0,
     attackCooldown: seconds(1.0),
     mineralCost: 100,
     buildTicks: seconds(24),
@@ -301,6 +321,24 @@ export const DEFS: readonly EntityDef[] = [
     produces: NONE,
   },
 ];
+
+/** The timing relation required by combat's wind-up-first tick ordering. */
+export function isValidAttackTiming(foreswing: number, cooldown: number): boolean {
+  if (!Number.isInteger(foreswing) || !Number.isInteger(cooldown)) return false;
+  if (cooldown === 0) return foreswing === 0;
+  return cooldown > 0 && foreswing >= 0 && foreswing < cooldown;
+}
+
+// Fail at module load rather than letting an invalid balance row subtly change
+// cadence in a match. The definitions are literals, so every peer agrees.
+for (let i = 0; i < DEFS.length; i++) {
+  const def = DEFS[i]!;
+  if (!isValidAttackTiming(def.attackForeswing, def.attackCooldown)) {
+    throw new Error(
+      `${def.name}: foreswing ${def.attackForeswing} must be shorter than cooldown ${def.attackCooldown}`,
+    );
+  }
+}
 
 export function defOf(type: EntityType): EntityDef {
   return DEFS[type]!;

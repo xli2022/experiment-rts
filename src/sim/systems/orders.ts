@@ -71,6 +71,10 @@ export function executeCommand(world: World, cmd: Command): void {
         // selection still sends its Burstbots while the Slicebots stay put
         // instead of jogging after something they cannot reach.
         if (targetFlies && !attacker.canHitAir) return;
+        // Reissuing the same target must not stutter-cancel a swing, but a real
+        // retarget interrupts the locked wind-up without refunding cooldown.
+        const windingAt = world.pool.attackTarget[i]!;
+        if (windingAt !== NO_ENTITY && windingAt !== target) world.pool.cancelAttack(i);
         world.pool.order[i] = Order.Attack;
         world.pool.orderTarget[i] = target;
         world.pool.clearPath(i);
@@ -85,6 +89,7 @@ export function executeCommand(world: World, cmd: Command): void {
       if (world.pool.type[ti] !== EntityType.MineralPatch) break;
       forEachOwned(world, cmd.units, player, (i) => {
         if (world.pool.type[i] !== EntityType.Worker) return;
+        world.pool.cancelAttack(i);
         world.pool.order[i] = Order.Harvest;
         world.pool.orderTarget[i] = target;
         world.pool.harvestPatch[i] = target;
@@ -100,6 +105,7 @@ export function executeCommand(world: World, cmd: Command): void {
 
     case CommandType.Stop:
       forEachOwned(world, cmd.units, player, (i) => {
+        world.pool.cancelAttack(i);
         world.pool.order[i] = Order.None;
         world.pool.orderTarget[i] = NO_ENTITY;
         world.pool.combatTarget[i] = NO_ENTITY;
@@ -109,6 +115,7 @@ export function executeCommand(world: World, cmd: Command): void {
 
     case CommandType.Hold:
       forEachOwned(world, cmd.units, player, (i) => {
+        world.pool.cancelAttack(i);
         world.pool.order[i] = Order.Hold;
         world.pool.orderTarget[i] = NO_ENTITY;
         world.pool.clearPath(i);
@@ -321,6 +328,7 @@ function setMoveOrder(
   pool.orderY[index] = y;
   pool.orderTarget[index] = NO_ENTITY;
   pool.combatTarget[index] = NO_ENTITY;
+  pool.cancelAttack(index);
   pool.clearPath(index);
   pool.navGoal[index] = -1;
   pool.pursuing[index] = 0;
@@ -403,6 +411,7 @@ function executeBuild(
 function assignBuilder(world: World, workerIndex: number, siteId: EntityId): void {
   const pool = world.pool;
   const si = idIndex(siteId);
+  pool.cancelAttack(workerIndex);
   pool.order[workerIndex] = Order.Build;
   pool.orderTarget[workerIndex] = siteId;
   pool.orderX[workerIndex] = pool.posX[si]!;

@@ -107,8 +107,10 @@ function unorderedPeerConnection(): typeof RTCPeerConnection | undefined {
  * 2: packets carry `peerHeadroom`, the feedback that lets each peer size its own
  *    input delay. An older peer never sends it, so a newer one would sit at the
  *    starting delay forever while the older one adapted against silence.
+ * 3: attack wind-up is checksummed simulation state. A v2 peer would still
+ *    apply Slicebot damage immediately and diverge on the first melee attack.
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export interface HostConfig {
   roomCode: string;

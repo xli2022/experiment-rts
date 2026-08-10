@@ -28,6 +28,19 @@ export function combatSystem(world: World): void {
     // Unfinished buildings cannot shoot.
     if (def.isBuilding && pool.buildState[i] !== BuildState.Complete) continue;
 
+    // A started attack owns this unit until its authored impact tick. Locking a
+    // generation-tagged target makes the result independent of later target
+    // acquisition and prevents a recycled slot from receiving the blow.
+    if (pool.attackWindup[i]! > 0) {
+      pool.attackWindup[i]! -= 1;
+      if (pool.attackWindup[i] === 0) {
+        const target = pool.attackTarget[i]!;
+        pool.attackTarget[i] = NO_ENTITY;
+        resolveAttackImpact(world, i, target);
+      }
+      continue;
+    }
+
     const order = pool.order[i]!;
 
     // An explicit attack order pins the target; anything else acquires freely.
@@ -85,12 +98,56 @@ export function combatSystem(world: World): void {
 
     if (pool.attackCooldown[i]! > 0) continue;
 
+    // Cooldown begins with the wind-up rather than with impact. That preserves
+    // the listed time between consecutive hits: foreswing delays the first hit,
+    // but does not silently lower sustained damage by adding to every cycle.
     pool.attackCooldown[i] = def.attackCooldown;
-    // One number, whatever it is shooting. The HUD shows `def.damage` on the
-    // info panel, and a per-matchup multiplier would have made that a lie.
-    applyDamage(world, targetIndex, def.damage);
-    world.events.shots.push(i, targetIndex);
+    world.events.attackStarts.push(i, targetIndex);
+    if (def.attackForeswing > 0) {
+      pool.attackWindup[i] = def.attackForeswing;
+      pool.attackTarget[i] = pool.idAt(targetIndex);
+      continue;
+    }
+
+    resolveAttackImpact(world, i, pool.idAt(targetIndex));
   }
+}
+
+/**
+ * Resolve the target locked at attack start on the exact impact tick.
+ *
+ * A target can die, be recycled, take off, or leave reach during foreswing. A
+ * stale or now-impossible blow whiffs but still spends its cooldown, matching
+ * the animation the renderer already began without granting damage at range.
+ */
+function resolveAttackImpact(world: World, attackerIndex: number, target: number): void {
+  const pool = world.pool;
+  // Presentation needs to distinguish a completed swing from an interruption.
+  // Emit this before validation so a legitimate whiff still plays follow-through.
+  world.events.attackImpacts.push(attackerIndex);
+  if (!pool.isAlive(target)) {
+    pool.combatTarget[attackerIndex] = NO_ENTITY;
+    return;
+  }
+
+  const targetIndex = idIndex(target);
+  const def = defOf(pool.type[attackerIndex]! as EntityType);
+  const targetDef = defOf(pool.type[targetIndex]! as EntityType);
+  if (!pool.isHostile(targetIndex, pool.owner[attackerIndex]!)) return;
+  if (targetDef.flying && !def.canHitAir) return;
+
+  const dx = pool.posX[targetIndex]! - pool.posX[attackerIndex]!;
+  const dy = pool.posY[targetIndex]! - pool.posY[attackerIndex]!;
+  if (vecLenSqRaw(dx, dy) > sqRange(def.attackRange + targetDef.radius)) return;
+
+  const dir = vecNormalize(dx, dy);
+  pool.faceX[attackerIndex] = dir.x;
+  pool.faceY[attackerIndex] = dir.y;
+
+  // One number, whatever it is shooting. The HUD shows `def.damage` on the
+  // info panel, and a per-matchup multiplier would have made that a lie.
+  applyDamage(world, targetIndex, def.damage);
+  world.events.shots.push(attackerIndex, targetIndex);
 }
 
 /**
@@ -188,6 +245,8 @@ export function reapDead(world: World): void {
     }
     const c = pool.combatTarget[i]!;
     if (c !== NO_ENTITY && !pool.isAlive(c)) pool.combatTarget[i] = NO_ENTITY;
+    const a = pool.attackTarget[i]!;
+    if (a !== NO_ENTITY && !pool.isAlive(a)) pool.cancelAttack(i);
     const hp = pool.harvestPatch[i]!;
     if (hp !== NO_ENTITY && !pool.isAlive(hp)) pool.harvestPatch[i] = NO_ENTITY;
   }

@@ -23,7 +23,7 @@ import * as THREE from 'three';
 import { defOf } from '../config/rules.js';
 import { ENTITY_CAPACITY } from '../sim/entities.js';
 import { toFloat } from '../sim/fixed.js';
-import { BuildState, EntityType, NEUTRAL } from '../sim/types.js';
+import { BuildState, EntityType, NEUTRAL, TICKS_PER_SECOND } from '../sim/types.js';
 import type { World } from '../sim/world.js';
 import { colourFor, PLAYER_COLOURS } from './models/procedural.js';
 import type { ModelProvider } from './models/provider.js';
@@ -40,6 +40,23 @@ interface Pool {
   count: number;
 }
 
+/**
+ * Immutable copy of the two transforms surrounding one rendered simulation
+ * interval. Effects retain this rather than a slot index, since that slot may
+ * be recycled by a later catch-up tick before the frame is drawn.
+ */
+export interface EntityTransformSnapshot {
+  slot: number;
+  prevX: number;
+  prevZ: number;
+  prevFaceX: number;
+  prevFaceZ: number;
+  currX: number;
+  currZ: number;
+  currFaceX: number;
+  currFaceZ: number;
+}
+
 export class EntityRenderer {
   readonly group = new THREE.Group();
 
@@ -54,16 +71,19 @@ export class EntityRenderer {
   private readonly currFz = new Float32Array(ENTITY_CAPACITY);
   private readonly wasAlive = new Uint8Array(ENTITY_CAPACITY);
   /**
-   * When each unit last actually attacked, in elapsed seconds.
+   * Simulation tick after each unit's authoritative attack wind-up began.
    *
-   * The simulation reports every shot it fires, so the swing is driven by the
+   * The simulation reports every attack start, so the swing is driven by the
    * thing that really happened rather than inferred from the unit's order. That
    * distinction is the whole bug this replaced: a unit defending itself has no
    * attack *order* at all — it is idle and simply fighting what walked up to it
    * — so an order-based guess never played the animation for the most common
-   * fight in the game.
+   * fight in the game. That start precedes `events.shots` by the configured
+   * foreswing, putting the authored impact pose on the damage/projectile tick.
    */
-  private readonly attackedAt = new Float32Array(ENTITY_CAPACITY).fill(-1e9);
+  private readonly attackStartedTick = new Int32Array(ENTITY_CAPACITY).fill(NEVER_ATTACKED_TICK);
+  /** Whether the latest started swing reached its authoritative resolve tick. */
+  private readonly attackImpacted = new Uint8Array(ENTITY_CAPACITY);
 
   /**
    * The clip each unit was last drawn on, and when it changed.
@@ -75,8 +95,8 @@ export class EntityRenderer {
    */
   private readonly poseClip = new Uint8Array(ENTITY_CAPACITY);
   private readonly poseFrom = new Uint8Array(ENTITY_CAPACITY);
-  /** When the current transition started, in elapsed seconds. */
-  private readonly poseChangedAt = new Float32Array(ENTITY_CAPACITY).fill(-1e9);
+  /** Simulation-timeline seconds when the current transition started. */
+  private readonly poseChangedAt = new Float64Array(ENTITY_CAPACITY).fill(-1e9);
   /** Where the outgoing clip had got to when it was left behind. */
   private readonly poseFromTime = new Float32Array(ENTITY_CAPACITY);
 
@@ -121,8 +141,6 @@ export class EntityRenderer {
   private readonly scale = new THREE.Vector3(1, 1, 1);
   private readonly position = new THREE.Vector3();
   private readonly colour = new THREE.Color();
-  /** Drives the hover bob for air units. Cosmetic, so wall-clock is fine. */
-  private bobPhase = 0;
 
   constructor(
     private readonly provider: ModelProvider,
@@ -251,17 +269,44 @@ export class EntityRenderer {
   }
 
   /**
-   * Record this tick's deaths so their death animation can play out.
+   * Record this tick's attack lifecycle and deaths for presentation.
    *
    * Call once per simulation tick, from the same place the other per-tick
    * effects are read — `world.events` is cleared at the start of the next step.
    */
-  noteDeaths(world: World, elapsedS: number): void {
+  noteEvents(world: World, elapsedS: number): void {
     const pool = world.pool;
-    // Shots come in (attacker, target) pairs.
-    const shots = world.events.shots;
-    for (let k = 0; k < shots.length; k += 2) {
-      this.attackedAt[shots[k]!] = elapsedS;
+    // Starts come in (attacker, target) pairs. Projectiles still consume
+    // `shots`, which arrives only when this animation reaches its impact tick.
+    const starts = world.events.attackStarts;
+    for (let k = 0; k < starts.length; k += 2) {
+      const attacker = starts[k]!;
+      this.attackStartedTick[attacker] = world.tick;
+      this.attackImpacted[attacker] = 0;
+    }
+
+    // Unlike `shots`, impacts include authoritative whiffs. An impact means the
+    // clip may play its follow-through; wind-up reaching zero without one means
+    // a command, death, or stale target interrupted the swing.
+    for (const attacker of world.events.attackImpacts) {
+      this.attackImpacted[attacker] = 1;
+    }
+
+    // This runs once for every simulation step, including catch-up bursts, so a
+    // one-tick impact cannot be skipped between rendered frames.
+    for (let i = 0; i < pool.count; i++) {
+      if (
+        shouldKeepAttackVisual(
+          this.attackStartedTick[i] !== NEVER_ATTACKED_TICK,
+          this.attackImpacted[i] === 1,
+          pool.attackWindup[i]!,
+          pool.alive[i] === 1,
+        )
+      ) {
+        continue;
+      }
+      this.attackStartedTick[i] = NEVER_ATTACKED_TICK;
+      this.attackImpacted[i] = 0;
     }
 
     for (const i of world.events.deaths) {
@@ -347,6 +392,7 @@ export class EntityRenderer {
           const mesh = new THREE.InstancedMesh(part.geometry, material, POOL_CAPACITY);
           mesh.frustumCulled = false;
           mesh.castShadow = true;
+          mesh.receiveShadow = true;
           mesh.count = 0;
           this.group.add(mesh);
           this.pools.set(poolKey(type, p, owner), { mesh, count: 0 });
@@ -381,7 +427,8 @@ export class EntityRenderer {
         // Nor any swing to finish. Slots are recycled within seconds, so a
         // brand-new unit would otherwise inherit the last occupant's attack and
         // walk out of the barracks mid-swing.
-        this.attackedAt[i] = -1e9;
+        this.attackStartedTick[i] = NEVER_ATTACKED_TICK;
+        this.attackImpacted[i] = 0;
       } else {
         this.prevX[i] = this.currX[i]!;
         this.prevZ[i] = this.currZ[i]!;
@@ -395,6 +442,21 @@ export class EntityRenderer {
       this.currFz[i] = fz;
       this.wasAlive[i] = alive ? 1 : 0;
     }
+  }
+
+  /** Copy the exact transform interval this entity will be drawn from. */
+  transformSnapshot(index: number): EntityTransformSnapshot {
+    return {
+      slot: index,
+      prevX: this.prevX[index]!,
+      prevZ: this.prevZ[index]!,
+      prevFaceX: this.prevFx[index]!,
+      prevFaceZ: this.prevFz[index]!,
+      currX: this.currX[index]!,
+      currZ: this.currZ[index]!,
+      currFaceX: this.currFx[index]!,
+      currFaceZ: this.currFz[index]!,
+    };
   }
 
   /**
@@ -412,7 +474,6 @@ export class EntityRenderer {
     fog?: FogRenderer,
     localPlayer = 0,
   ): void {
-    this.bobPhase = elapsedS * 2.2;
     for (const pool of this.pools.values()) pool.count = 0;
     for (const anim of this.animatedPools.values()) anim.begin();
     let ringCount = 0;
@@ -421,6 +482,10 @@ export class EntityRenderer {
 
     const pool = world.pool;
     const a = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
+    // Pose playback lives on the interpolated simulation clock. It remains
+    // smooth between fixed ticks, but a lockstep stall clamps this clock rather
+    // than letting wall time carry attacks through their impact frame.
+    const poseClockS = secondsSinceSimulationTick(0, world.tick, a);
 
     // Health bars are measured in screen space; these are what convert. The
     // camera's basis is constant across the frame, so it is resolved once.
@@ -442,9 +507,7 @@ export class EntityRenderer {
       // Air units are drawn well above the ground, with a slow bob. Altitude is
       // purely visual — the simulation is 2D and treats them like anything else
       // — but without it a Beamdrone parked over infantry is unreadable.
-      const altitude = def.flying
-        ? FLIGHT_ALTITUDE + Math.sin(this.bobPhase + i * 0.7) * FLYER_BOB
-        : 0;
+      const altitude = def.flying ? flyerAltitudeAt(elapsedS, i) : 0;
 
       const x = this.prevX[i]! + (this.currX[i]! - this.prevX[i]!) * a;
       const z = this.prevZ[i]! + (this.currZ[i]! - this.prevZ[i]!) * a;
@@ -471,12 +534,12 @@ export class EntityRenderer {
         if (anim) {
           const swing = animated.model.clips.get('attack');
           const pose = poseFor(
-            elapsedS - this.attackedAt[i]!,
+            secondsSinceSimulationTick(this.attackStartedTick[i]!, world.tick, a),
             swing ? swing.duration : 0,
             Math.hypot(this.currX[i]! - this.prevX[i]!, this.currZ[i]! - this.prevZ[i]!),
             // Offset each unit's stride by its slot so an army does not march in
             // perfect lockstep, which reads as one object rather than many.
-            elapsedS + i * 0.37,
+            poseClockS + i * 0.37,
           );
 
           const target = framesForPose(animated.model, pose);
@@ -490,11 +553,11 @@ export class EntityRenderer {
           if (this.poseClip[i] !== id) {
             this.poseFrom[i] = this.poseClip[i]!;
             this.poseFromTime[i] = pose.time;
-            this.poseChangedAt[i] = elapsedS;
+            this.poseChangedAt[i] = poseClockS;
             this.poseClip[i] = id;
           }
 
-          const fading = elapsedS - this.poseChangedAt[i]!;
+          const fading = poseClockS - this.poseChangedAt[i]!;
           if (fading >= 0 && fading < CROSSFADE_S) {
             // Ease out of the old clip and into the new one. The outgoing pose
             // is frozen where it was left: continuing to advance it would need a
@@ -689,6 +752,11 @@ const FLIGHT_CLEARANCE = 0.35;
  */
 export const FLIGHT_ALTITUDE =
   MAX_CLIFF_HEIGHT + FLYER_UNDERHANG + FLYER_BOB + FLIGHT_CLEARANCE;
+
+/** The exact visual altitude used by both aircraft and their weapon effects. */
+export function flyerAltitudeAt(elapsedS: number, slotIndex: number): number {
+  return FLIGHT_ALTITUDE + Math.sin(elapsedS * 2.2 + slotIndex * 0.7) * FLYER_BOB;
+}
 /**
  * Selection rings are neutral grey rather than a team colour.
  *
@@ -723,6 +791,43 @@ const PRODUCTION_PULSE_RATE = 5.4;
 
 /** How far a unit must move between ticks to count as running. */
 const MOVING_EPSILON = 0.004;
+
+/** Sentinel older than any practical match, used for slots that never attacked. */
+const NEVER_ATTACKED_TICK = -0x40000000;
+
+/**
+ * Whether the renderer should retain the latest attack-start timestamp.
+ *
+ * At wind-up zero, `reachedImpact` is the decisive bit: true preserves the
+ * follow-through for both hits and whiffs, while false cancels even on the
+ * nominal impact tick. Per-step event consumption makes that distinction safe
+ * across multi-tick catch-up.
+ */
+export function shouldKeepAttackVisual(
+  hasStarted: boolean,
+  reachedImpact: boolean,
+  windupTicks: number,
+  alive: boolean,
+): boolean {
+  return hasStarted && alive && (reachedImpact || windupTicks > 0);
+}
+
+/**
+ * Seconds elapsed on the interpolated fixed-tick timeline.
+ *
+ * `startTick` is the post-step `world.tick` on which an event was observed.
+ * Alpha zero on that tick is time zero; tick `startTick + foreswing` at alpha
+ * zero is therefore the exact impact time. Since both tick and clamped alpha
+ * stop advancing during lockstep stalls, animation playback stops with them.
+ */
+export function secondsSinceSimulationTick(
+  startTick: number,
+  currentTick: number,
+  alpha: number,
+): number {
+  const a = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
+  return (currentTick - startTick + a) / TICKS_PER_SECOND;
+}
 
 /** Which clip a unit is posed on this frame, and where in it. */
 export interface Pose {
@@ -759,25 +864,27 @@ const CLIP_IDS: Record<string, number> = { run: 0, attack: 1, die: 2 };
  *   held an attack *order*, which is only correlated with fighting: a unit
  *   defending itself has no order at all — it is idle, hitting whatever walked
  *   into range — so the most common fight in the game never animated. The
- *   simulation already publishes each shot in `world.events.shots`; `sinceAttack`
- *   is that, and it is the only honest signal.
+ *   simulation publishes each authoritative wind-up in
+ *   `world.events.attackStarts`; `sinceAttackStart` is that, and it is the only
+ *   honest signal.
  * - **The swing outranks the stride.** Units in contact are shoved around by
  *   separation every tick, so a Slicebot mid-melee is never quite stationary and
  *   a movement-first rule keeps it running on the spot. Order matters here, not
  *   just the conditions.
  *
- * The swing is timed from the shot rather than from wall-clock, so the blow
- * lands on the frame the damage did. It does not loop: a cooldown longer than
- * the clip should hold the follow-through, not restart the wind-up.
+ * The swing is timed from attack start rather than from wall-clock. The sim
+ * emits the shot and applies damage after the configured foreswing, so impact
+ * lands on the matching authored frame. It does not loop: a cooldown longer
+ * than the clip should hold the follow-through, not restart the wind-up.
  */
 export function poseFor(
-  sinceAttack: number,
+  sinceAttackStart: number,
   swingDuration: number,
   movedPerTick: number,
   phase: number,
 ): Pose {
-  if (swingDuration > 0 && sinceAttack >= 0 && sinceAttack < swingDuration) {
-    return { clip: 'attack', time: sinceAttack, loop: false };
+  if (swingDuration > 0 && sinceAttackStart >= 0 && sinceAttackStart < swingDuration) {
+    return { clip: 'attack', time: sinceAttackStart, loop: false };
   }
   if (movedPerTick > MOVING_EPSILON) return { clip: 'run', time: phase, loop: true };
   // No authored idle clip; a frozen stride reads better than a T-pose.

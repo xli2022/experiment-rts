@@ -66,6 +66,8 @@ export class Simulation {
   step(commands: Command[]): void {
     const world = this.world;
 
+    world.events.attackStarts.length = 0;
+    world.events.attackImpacts.length = 0;
     world.events.shots.length = 0;
     world.events.deaths.length = 0;
     world.events.completed.length = 0;

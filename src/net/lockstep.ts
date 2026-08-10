@@ -109,6 +109,8 @@ export const STALL_REPORT_DELAY_MS = 250;
 export type LockstepState = 'running' | 'stalled' | 'desynced' | 'ended';
 
 export interface LockstepEvents {
+  /** Called after every completed simulation tick, including catch-up ticks. */
+  onStep?: (tick: number) => void;
   onStall?: (waitingFor: PlayerId[]) => void;
   onResume?: () => void;
   onDesync?: (tick: number, local: number, remote: number, player: PlayerId) => void;
@@ -279,6 +281,11 @@ export class LockstepRunner {
       this.checksums.set(this.tick, this.simulation.checksum());
       this.pruneChecksums();
     }
+
+    // Transient simulation events are cleared by the next step. Notify the
+    // presentation layer here rather than after update() so a frame that catches
+    // up several ticks cannot silently discard every event except the last one.
+    this.events.onStep?.(this.tick);
 
     return true;
   }

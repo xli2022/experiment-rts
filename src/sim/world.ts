@@ -51,6 +51,10 @@ export interface PlayerState {
  * so a peer that ignores them behaves identically to one that draws them.
  */
 export interface SimEvents {
+  /** (attacker, target) pairs whose authoritative attack wind-up began. */
+  attackStarts: number[];
+  /** Attackers whose wind-up reached its resolve tick, whether it hit or whiffed. */
+  attackImpacts: number[];
   /** (attacker, target) pairs that fired this tick, for tracers. */
   shots: number[];
   /** Entity slot indices that died this tick. */
@@ -92,7 +96,13 @@ export class World {
    */
   readonly pathQueue: number[] = [];
 
-  readonly events: SimEvents = { shots: [], deaths: [], completed: [] };
+  readonly events: SimEvents = {
+    attackStarts: [],
+    attackImpacts: [],
+    shots: [],
+    deaths: [],
+    completed: [],
+  };
 
   constructor(seed: number, mapSize = MAP_SIZE) {
     this.map = generateMap(seed, mapSize);

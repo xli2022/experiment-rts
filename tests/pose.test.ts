@@ -15,13 +15,18 @@
  * - Units in contact are shoved apart by separation every tick, so a Slicebot
  *   in melee is never quite stationary and the `if` won anyway.
  *
- * The fix is to stop inferring: the simulation already publishes every shot it
- * fires, so the swing is driven by the shot. These tests pin the rule, and pin
- * the fact that the sim really does report the shot in the case that broke.
+ * The fix is to stop inferring: the simulation publishes every authoritative
+ * attack start, so the swing is driven by the wind-up. These tests pin the rule,
+ * and pin the fact that the sim reports the start in the case that broke.
  */
 
 import { describe, expect, it } from 'vitest';
-import { framesForPose, poseFor } from '../src/render/entities.js';
+import {
+  framesForPose,
+  poseFor,
+  secondsSinceSimulationTick,
+  shouldKeepAttackVisual,
+} from '../src/render/entities.js';
 import { defOf } from '../src/config/rules.js';
 import { Simulation } from '../src/sim/tick.js';
 import { EntityType, Order } from '../src/sim/types.js';
@@ -34,6 +39,49 @@ const RUNNING = 0.05;
 /** The jitter separation imparts to units standing in a scrum. */
 const JOSTLE = 0.01;
 
+describe('simulation-tick animation time', () => {
+  it('puts alpha zero on the attack-start tick at clip time zero', () => {
+    expect(secondsSinceSimulationTick(100, 100, 0)).toBe(0);
+    expect(secondsSinceSimulationTick(100, 100, 0.5)).toBe(0.025);
+  });
+
+  it('is continuous across an interpolated tick boundary', () => {
+    expect(secondsSinceSimulationTick(100, 104, 1)).toBe(secondsSinceSimulationTick(100, 105, 0));
+  });
+
+  it('freezes once lockstep interpolation clamps during a stall', () => {
+    const atStall = secondsSinceSimulationTick(100, 104, 1);
+    // The runner can accumulate arbitrarily more wall time, but keeps reporting
+    // the same simulation tick and an alpha clamped to one.
+    expect(secondsSinceSimulationTick(100, 104, 20)).toBe(atStall);
+  });
+
+  it('reaches Slicebot impact time on the authoritative impact tick', () => {
+    const foreswing = defOf(EntityType.Slicebot).attackForeswing;
+    const impactTime = secondsSinceSimulationTick(200, 200 + foreswing, 0);
+    expect(impactTime).toBe(0.45);
+    expect(poseFor(impactTime, SWING, 0, 0).time).toBe(impactTime);
+  });
+});
+
+describe('attack presentation cancellation', () => {
+  it('keeps an active wind-up before its impact tick', () => {
+    expect(shouldKeepAttackVisual(true, false, 1, true)).toBe(true);
+  });
+
+  it('keeps follow-through at wind-up zero after an authoritative hit or whiff', () => {
+    expect(shouldKeepAttackVisual(true, true, 0, true)).toBe(true);
+  });
+
+  it('cancels at the nominal impact boundary when no impact event arrived', () => {
+    expect(shouldKeepAttackVisual(true, false, 0, true)).toBe(false);
+  });
+
+  it('drops playback when the attacker slot is dead or recycled', () => {
+    expect(shouldKeepAttackVisual(true, true, 0, false)).toBe(false);
+  });
+});
+
 describe('choosing a clip', () => {
   it('swings while a shot is still playing out, even while being jostled', () => {
     // This is the regression. The old rule saw movement and ran.
@@ -45,7 +93,7 @@ describe('choosing a clip', () => {
     expect(poseFor(0.2, SWING, RUNNING, 99).clip).toBe('attack');
   });
 
-  it('times the swing from the shot, so the blow lands with the damage', () => {
+  it('times the swing from attack start, so foreswing reaches the impact pose', () => {
     // Not from wall-clock: an animation free-running against the cooldown would
     // land its hit at whatever point in the cycle it happened to be at.
     for (const t of [0, 0.3, 1.4]) {
@@ -117,28 +165,30 @@ function stageDuel(): { sim: Simulation; slicebot: number; enemy: number } {
 }
 
 describe('the signal behind it', () => {
-  it('reports a shot for an idle Slicebot defending itself', () => {
+  it('reports an attack start for an idle Slicebot defending itself', () => {
     // The exact case the old order-based rule could not see: no order at all.
     const { sim, slicebot, enemy } = stageDuel();
     const pool = sim.world.pool;
     const hp0 = pool.hp[enemy]!;
 
-    let swung = false;
-    for (let t = 0; t < 60 && !swung; t++) {
+    let started = false;
+    for (let t = 0; t < 60 && !started; t++) {
       pool.hp[enemy] = hp0;
       pool.order[enemy] = Order.Hold;
       pool.order[slicebot] = Order.None;
       sim.step([]);
-      const shots = sim.world.events.shots;
-      for (let k = 0; k < shots.length; k += 2) if (shots[k] === slicebot) swung = true;
+      const starts = sim.world.events.attackStarts;
+      for (let k = 0; k < starts.length; k += 2) {
+        if (starts[k] === slicebot) started = true;
+      }
     }
-    expect(`idle ${defOf(EntityType.Slicebot).name} reported a shot: ${swung}`).toBe(
-      `idle ${defOf(EntityType.Slicebot).name} reported a shot: true`,
+    expect(`idle ${defOf(EntityType.Slicebot).name} reported a start: ${started}`).toBe(
+      `idle ${defOf(EntityType.Slicebot).name} reported a start: true`,
     );
   });
 
-  it('reports shots as (attacker, target) pairs', () => {
-    // The renderer indexes shots[k] as the attacker; a flipped pair would
+  it('reports attack starts as (attacker, target) pairs', () => {
+    // The renderer indexes starts[k] as the attacker; a flipped pair would
     // animate the victim instead, which looks like nothing happening at all.
     const { sim, enemy } = stageDuel();
     const pool = sim.world.pool;
@@ -148,10 +198,10 @@ describe('the signal behind it', () => {
     for (let t = 0; t < 60; t++) {
       pool.hp[enemy] = hp0;
       sim.step([]);
-      const shots = sim.world.events.shots;
-      for (let k = 0; k + 1 < shots.length; k += 2) {
-        const attacker = shots[k]!;
-        const target = shots[k + 1]!;
+      const starts = sim.world.events.attackStarts;
+      for (let k = 0; k + 1 < starts.length; k += 2) {
+        const attacker = starts[k]!;
+        const target = starts[k + 1]!;
         expect(defOf(pool.type[attacker]! as EntityType).attackRange).toBeGreaterThan(0);
         expect(pool.owner[attacker]).not.toBe(pool.owner[target]);
         seen++;

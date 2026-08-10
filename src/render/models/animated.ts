@@ -60,15 +60,16 @@ export interface AnimatedModel {
    * Bounding box containing every sampled frame of the clips baked into this
    * model, after applying the asset's node transform.
    *
-   * A caller that requests one clip gets that clip's envelope. This lets a
-   * model gallery fit a looping run without letting an unrelated attack or
-   * death pose determine its scale and ground position.
+   * A caller that requests one clip gets that clip's envelope; an options load
+   * can also name one baked clip as the framing envelope. This lets a model
+   * gallery fit a looping run without letting an attack pose determine its
+   * scale and ground position.
    */
   animatedBounds: THREE.Box3;
-  /** Exact bounds of the first sampled frame of the first baked clip. */
+  /** Exact first frame of the framing clip, or the first baked clip by default. */
   firstFrameBounds: THREE.Box3;
   /**
-   * Lowest point the model reaches across every baked frame, in world units.
+   * Lowest point in the sampled framing envelope, in world units.
    *
    * Measured rather than guessed, because a run cycle crouches well below the
    * bind pose: offsetting by the bind pose alone leaves the unit's feet buried
@@ -87,8 +88,16 @@ export interface AnimatedModel {
   bindSize: THREE.Vector3;
 }
 
+export interface AnimatedModelLoadOptions {
+  /** Animation clips to bake. Omit to bake every clip in the asset. */
+  clips?: readonly string[];
+  /** Clip whose sampled envelope supplies gallery-style framing bounds. */
+  boundsClip?: string;
+}
+
 /**
- * Load a GLB and bake its animation clips, or only one requested clip.
+ * Load a GLB and bake all animations, one named clip, or an options-selected
+ * set of clips with an independent framing clip.
  *
  * The GLB is an ordinary asset — it opens in Blender, and nothing here is a
  * bespoke format. All the specialisation happens at load, so replacing the model
@@ -96,15 +105,30 @@ export interface AnimatedModel {
  */
 export async function loadAnimatedModel(
   url: string,
-  requestedClip?: string,
+  request?: string | AnimatedModelLoadOptions,
 ): Promise<AnimatedModel> {
   const gltf = await new GLTFLoader().loadAsync(url);
-  const animations =
-    requestedClip === undefined
-      ? gltf.animations
-      : gltf.animations.filter((clip) => clip.name === requestedClip);
-  if (requestedClip !== undefined && animations.length === 0) {
-    throw new Error(`${url} contains no ${requestedClip} animation`);
+  const requestedClips =
+    typeof request === "string" ? [request] : request?.clips;
+  if (requestedClips?.length === 0) {
+    throw new Error(`${url} requested no animations`);
+  }
+  if (requestedClips) {
+    const available = new Set(gltf.animations.map((clip) => clip.name));
+    const missing = requestedClips.find((clip) => !available.has(clip));
+    if (missing) throw new Error(`${url} contains no ${missing} animation`);
+  }
+  const requestedSet = requestedClips ? new Set(requestedClips) : null;
+  const animations = requestedSet
+    ? gltf.animations.filter((clip) => requestedSet.has(clip.name))
+    : gltf.animations;
+  const boundsClip =
+    typeof request === "string" ? undefined : request?.boundsClip;
+  if (
+    boundsClip !== undefined &&
+    !animations.some((clip) => clip.name === boundsClip)
+  ) {
+    throw new Error(`${url} bounds clip ${boundsClip} was not baked`);
   }
 
   let skinned: THREE.SkinnedMesh | null = null;
@@ -227,11 +251,20 @@ export async function loadAnimatedModel(
   );
   const bounds = vertexBounds(position, boundsVertexCount);
 
+  const boundsBaked =
+    boundsClip === undefined ? undefined : clips.get(boundsClip);
+  const floatsPerFrame = boneCount * 16;
+  const boundsData = boundsBaked
+    ? data.subarray(
+        boundsBaked.startFrame * floatsPerFrame,
+        (boundsBaked.startFrame + boundsBaked.frameCount) * floatsPerFrame,
+      )
+    : data;
   const extent = animatedExtent(
     geometry,
-    data,
+    boundsData,
     boneCount,
-    totalFrames,
+    boundsBaked?.frameCount ?? totalFrames,
     bindMatrix,
     bindMatrixInverse,
     nodeMatrix,

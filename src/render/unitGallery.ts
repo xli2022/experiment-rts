@@ -40,9 +40,17 @@ interface GalleryPreview {
   camera: THREE.OrthographicCamera;
   pool: AnimatedUnitPool;
   model: AnimatedModel;
+  attackStartedAt: number | null;
   texture: THREE.Texture | null;
   guide: THREE.GridHelper;
   matrix: THREE.Matrix4;
+}
+
+export interface GalleryAnimation {
+  clip: "run" | "attack";
+  time: number;
+  loop: boolean;
+  finished: boolean;
 }
 
 interface LoadSession {
@@ -70,6 +78,7 @@ export class UnitGallery {
   private session: LoadSession | null = null;
 
   private readonly cards: HTMLElement[] = [];
+  private readonly buttons: HTMLButtonElement[] = [];
   private readonly slots: HTMLElement[] = [];
   private readonly visible = new Set<number>();
   private readonly previews = new Map<number, GalleryPreview>();
@@ -77,6 +86,7 @@ export class UnitGallery {
   private readonly priorClear = new THREE.Color();
   private readonly priorViewport = new THREE.Vector4();
   private readonly priorScissor = new THREE.Vector4();
+  private elapsedSeconds = 0;
 
   constructor(
     private readonly root: HTMLElement,
@@ -106,7 +116,7 @@ export class UnitGallery {
         <header class="unit-gallery-header">
           <div>
             <h1 id="unit-gallery-title">All units</h1>
-            <p id="unit-gallery-description">Every authored model at a shared scale, grouped by faction and looping its run animation.</p>
+            <p id="unit-gallery-description">Every authored model at a shared scale, grouped by faction. Click a unit to play its attack animation.</p>
             <p class="unit-gallery-status" role="status" aria-live="polite">Loading unit list…</p>
           </div>
           <button class="unit-gallery-close" type="button" aria-label="Close all units">Close</button>
@@ -153,6 +163,7 @@ export class UnitGallery {
    * render while `isOpen`; simulation can continue independently.
    */
   render(elapsedSeconds: number): void {
+    this.elapsedSeconds = elapsedSeconds;
     if (!this.overlay || !this.scroll) return;
 
     const renderer = this.renderer;
@@ -219,12 +230,19 @@ export class UnitGallery {
         preview.camera.bottom = -halfHeight;
         preview.camera.updateProjectionMatrix();
 
+        const animation = galleryAnimationAt(
+          preview.model.clips.get("attack")?.duration,
+          preview.attackStartedAt,
+          elapsedSeconds,
+        );
+        if (animation.finished) preview.attackStartedAt = null;
         const frame = AnimatedUnitPool.framePairFor(
           preview.model,
-          "run",
-          elapsedSeconds,
-          true,
+          animation.clip,
+          animation.time,
+          animation.loop,
         );
+
         preview.pool.begin();
         preview.pool.add(preview.matrix, frame.from, frame.to, frame.blend);
         preview.pool.commit();
@@ -257,6 +275,7 @@ export class UnitGallery {
     this.previews.clear();
     this.visible.clear();
     this.cards.length = 0;
+    this.buttons.length = 0;
     this.slots.length = 0;
 
     this.overlay.removeEventListener("keydown", this.handleModalKey);
@@ -286,10 +305,24 @@ export class UnitGallery {
       return;
     }
     if (event.key === "Tab" && this.closeButton) {
-      // Close is deliberately the only control, so keeping focus on it is the
-      // complete focus trap rather than a special case.
-      event.preventDefault();
-      this.closeButton.focus();
+      const controls = [
+        this.closeButton,
+        ...this.buttons.filter((button) => !button.disabled),
+      ];
+      const current = controls.indexOf(
+        document.activeElement as HTMLButtonElement,
+      );
+      const last = controls.length - 1;
+      if (current < 0) {
+        event.preventDefault();
+        controls[event.shiftKey ? last : 0]!.focus();
+      } else if (event.shiftKey && current === 0) {
+        event.preventDefault();
+        controls[last]!.focus();
+      } else if (!event.shiftKey && current === last) {
+        event.preventDefault();
+        controls[0]!.focus();
+      }
     }
   };
 
@@ -398,10 +431,15 @@ export class UnitGallery {
       const card = document.createElement("article");
       card.className = "unit-gallery-card";
       card.setAttribute("role", "listitem");
-      card.setAttribute(
+      const button = document.createElement("button");
+      button.className = "unit-gallery-card-button";
+      button.type = "button";
+      button.disabled = true;
+      button.setAttribute(
         "aria-label",
-        `${entry.unit}, ${entry.faction} faction model preview`,
+        `${entry.unit}, ${entry.faction} faction model preview. Play attack animation`,
       );
+      button.addEventListener("click", () => this.playAttack(index));
 
       const slot = document.createElement("div");
       slot.className = "unit-gallery-preview";
@@ -416,9 +454,11 @@ export class UnitGallery {
       const label = document.createElement("div");
       label.className = "unit-gallery-label";
       label.textContent = entry.unit;
-      card.append(slot, label);
+      button.append(slot, label);
+      card.append(button);
       factionGrids.get(entry.faction)!.append(card);
       this.cards.push(card);
+      this.buttons.push(button);
       this.slots.push(slot);
       this.observer?.observe(slot);
     });
@@ -434,7 +474,10 @@ export class UnitGallery {
     let model: AnimatedModel | null = null;
     let texture: THREE.Texture | null = null;
     try {
-      model = await loadAnimatedModel(modelAssetUrl(entry.file), "run");
+      model = await loadAnimatedModel(modelAssetUrl(entry.file), {
+        clips: ["run", "attack"],
+        boundsClip: "run",
+      });
       if (session.cancelled) return;
 
       try {
@@ -456,7 +499,10 @@ export class UnitGallery {
       this.previews.set(index, preview);
       model = null;
       texture = null;
-      this.cards[index]?.classList.add("loaded");
+      const card = this.cards[index];
+      const button = this.buttons[index];
+      card?.classList.add("loaded");
+      if (button) button.disabled = false;
     } catch (error) {
       session.failed++;
       if (!session.cancelled) {
@@ -493,6 +539,14 @@ export class UnitGallery {
     if (session.untextured > 0)
       notes.push(`${session.untextured} without team skin`);
     this.status.textContent = notes.join(" · ");
+  }
+
+  private playAttack(index: number): void {
+    const preview = this.previews.get(index);
+    if (!preview?.model.clips.has("attack")) return;
+    // Assigning on every click intentionally restarts the clip from frame zero,
+    // including when the previous one-shot is still in progress.
+    preview.attackStartedAt = this.elapsedSeconds;
   }
 }
 
@@ -561,7 +615,47 @@ function createPreview(
   camera.position.set(2.8, runCenterY + 1.3, 3.6);
   camera.lookAt(0, runCenterY, 0);
 
-  return { scene, camera, pool, model, texture, guide, matrix };
+  return {
+    scene,
+    camera,
+    pool,
+    model,
+    attackStartedAt: null,
+    texture,
+    guide,
+    matrix,
+  };
+}
+
+/** Choose the gallery clip without allowing an attack to loop. */
+export function galleryAnimationAt(
+  attackDuration: number | undefined,
+  attackStartedAt: number | null,
+  elapsedSeconds: number,
+): GalleryAnimation {
+  if (attackDuration !== undefined && attackStartedAt !== null) {
+    const attackTime = Math.max(0, elapsedSeconds - attackStartedAt);
+    if (attackTime < attackDuration - Number.EPSILON * 16) {
+      return {
+        clip: "attack",
+        time: attackTime,
+        loop: false,
+        finished: false,
+      };
+    }
+    return {
+      clip: "run",
+      time: elapsedSeconds,
+      loop: true,
+      finished: true,
+    };
+  }
+  return {
+    clip: "run",
+    time: elapsedSeconds,
+    loop: true,
+    finished: false,
+  };
 }
 
 /** Convert one model's source units without erasing its authored relative size. */

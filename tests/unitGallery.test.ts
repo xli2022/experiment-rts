@@ -9,6 +9,7 @@ import {
   type AnimatedModel,
 } from "../src/render/models/animated.js";
 import {
+  galleryAnimationAt,
   previewGroundOffset,
   proportionalPreviewScale,
 } from "../src/render/unitGallery.js";
@@ -153,6 +154,45 @@ describe("unit gallery proportional scale", () => {
         model.boneTexture.dispose();
       }
     }
+  });
+});
+
+describe("unit gallery attack playback", () => {
+  it("plays an attack once from frame zero before returning to the run loop", () => {
+    expect(galleryAnimationAt(1.2, 10, 10)).toEqual({
+      clip: "attack",
+      time: 0,
+      loop: false,
+      finished: false,
+    });
+    expect(galleryAnimationAt(1.2, 10, 10.75)).toMatchObject({
+      clip: "attack",
+      time: 0.75,
+      loop: false,
+    });
+    expect(galleryAnimationAt(1.2, 10, 11.2)).toMatchObject({
+      clip: "run",
+      loop: true,
+      finished: true,
+    });
+  });
+
+  it("restarts an in-progress attack on every click timestamp", () => {
+    expect(galleryAnimationAt(1.2, 4, 4.5).time).toBeCloseTo(0.5);
+    expect(galleryAnimationAt(1.2, 4.5, 4.5)).toMatchObject({
+      clip: "attack",
+      time: 0,
+      loop: false,
+    });
+  });
+
+  it("gracefully keeps running when a model has no attack clip", () => {
+    expect(galleryAnimationAt(undefined, 2, 3)).toEqual({
+      clip: "run",
+      time: 3,
+      loop: true,
+      finished: false,
+    });
   });
 });
 

@@ -76,6 +76,28 @@ function run(net: LocalNetwork, peers: Peer[], frames: number): void {
 }
 
 describe('lockstep scheduler', () => {
+  it('exposes every transient event during multi-tick catch-up', () => {
+    class EventSimulation extends Simulation {
+      override step(commands: Command[]): void {
+        super.step(commands);
+        // Model a one-tick event that the following step will clear.
+        this.world.events.attackStarts.push(this.world.tick, this.world.tick);
+      }
+    }
+
+    const net = new LocalNetwork(1);
+    const sim = new EventSimulation(SEED);
+    const seenStarts: number[] = [];
+    const runner = new LockstepRunner(sim, net.createTransport(0), {
+      onStep: () => seenStarts.push(sim.world.events.attackStarts[0]!),
+    });
+
+    runner.update(MS_PER_TICK * 3);
+
+    expect(runner.currentTick).toBe(3);
+    expect(seenStarts).toEqual([1, 2, 3]);
+  });
+
   it('keeps two peers on identical state over a clean network', () => {
     const net = new LocalNetwork(2);
     const peers = makeMatch(net);
@@ -238,8 +260,7 @@ describe('lockstep scheduler', () => {
 
     const detected = peers[0]!.desyncs > 0 || peers[1]!.desyncs > 0;
     expect(detected).toBe(true);
-    const halted =
-      peers[0]!.runner.state === 'desynced' || peers[1]!.runner.state === 'desynced';
+    const halted = peers[0]!.runner.state === 'desynced' || peers[1]!.runner.state === 'desynced';
     expect(halted).toBe(true);
   });
 

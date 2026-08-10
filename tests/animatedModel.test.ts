@@ -49,15 +49,20 @@ const STATIC_MESH_PATH = fileURLToPath(
 let assetUrl: string;
 let allClips: AnimatedModel;
 let runOnly: AnimatedModel;
+let runAndAttack: AnimatedModel;
 let fireDragonAll: AnimatedModel;
 let fireDragonRun: AnimatedModel;
 
 beforeAll(async () => {
   const glb = await readFile(MODEL_PATH);
   assetUrl = `data:model/gltf-binary;base64,${glb.toString("base64")}`;
-  [allClips, runOnly] = await Promise.all([
+  [allClips, runOnly, runAndAttack] = await Promise.all([
     loadAnimatedModel(assetUrl),
     loadAnimatedModel(assetUrl, "run"),
+    loadAnimatedModel(assetUrl, {
+      clips: ["run", "attack"],
+      boundsClip: "run",
+    }),
   ]);
   const fireDragon = await readFile(FIRE_DRAGON_PATH);
   const fireDragonUrl = `data:model/gltf-binary;base64,${fireDragon.toString("base64")}`;
@@ -70,6 +75,8 @@ beforeAll(async () => {
 afterAll(() => {
   allClips?.boneTexture.dispose();
   runOnly?.boneTexture.dispose();
+  runAndAttack?.geometry.dispose();
+  runAndAttack?.boneTexture.dispose();
   fireDragonAll?.geometry.dispose();
   fireDragonAll?.boneTexture.dispose();
   fireDragonRun?.geometry.dispose();
@@ -82,6 +89,34 @@ describe("animated model clip filtering and bounds", () => {
     expect(runOnly.totalFrames).toBe(runOnly.clips.get("run")?.frameCount);
     expect(runOnly.totalFrames).toBeLessThan(allClips.totalFrames);
     expect([...allClips.clips.keys()].sort()).toEqual(["attack", "die", "run"]);
+  });
+
+  it("bakes selected clips while retaining bounds from one framing clip", () => {
+    expect([...runAndAttack.clips.keys()].sort()).toEqual(["attack", "run"]);
+    expect(runAndAttack.totalFrames).toBe(
+      runAndAttack.clips.get("run")!.frameCount +
+        runAndAttack.clips.get("attack")!.frameCount,
+    );
+    expect(runAndAttack.totalFrames).toBeLessThan(allClips.totalFrames);
+
+    for (const axis of ["x", "y", "z"] as const) {
+      expect(runAndAttack.animatedBounds.min[axis]).toBeCloseTo(
+        runOnly.animatedBounds.min[axis],
+        9,
+      );
+      expect(runAndAttack.animatedBounds.max[axis]).toBeCloseTo(
+        runOnly.animatedBounds.max[axis],
+        9,
+      );
+      expect(runAndAttack.firstFrameBounds.min[axis]).toBeCloseTo(
+        runOnly.firstFrameBounds.min[axis],
+        9,
+      );
+      expect(runAndAttack.firstFrameBounds.max[axis]).toBeCloseTo(
+        runOnly.firstFrameBounds.max[axis],
+        9,
+      );
+    }
   });
 
   it("exposes the requested clip envelope with the node transform applied", () => {
@@ -125,6 +160,12 @@ describe("animated model clip filtering and bounds", () => {
     await expect(loadAnimatedModel(assetUrl, "idle")).rejects.toThrow(
       "contains no idle animation",
     );
+    await expect(
+      loadAnimatedModel(assetUrl, {
+        clips: ["run", "idle"],
+        boundsClip: "run",
+      }),
+    ).rejects.toThrow("contains no idle animation");
   });
 });
 
@@ -223,7 +264,7 @@ describe("animated bounds sampling order", () => {
 });
 
 describe("instanced animation shader", () => {
-  it("splices baked skinning into both normal and position phases", () => {
+  it("splices baked skinning into the visible and shadow passes", () => {
     const material = new THREE.MeshLambertMaterial();
     const pool = new AnimatedUnitPool(runOnly, material, 1);
     try {
@@ -251,6 +292,34 @@ describe("instanced animation shader", () => {
       expect(skinNormal).toBeGreaterThan(normalStart);
       expect(positionStart).toBeGreaterThan(skinNormal);
       expect(skinPosition).toBeGreaterThan(positionStart);
+
+      expect(pool.mesh.castShadow).toBe(true);
+      expect(pool.mesh.receiveShadow).toBe(true);
+      const depthMaterial = pool.mesh.customDepthMaterial;
+      expect(depthMaterial).toBeInstanceOf(THREE.MeshDepthMaterial);
+      if (!depthMaterial)
+        throw new Error("animated pool is missing its shadow material");
+
+      const depthShader = {
+        uniforms: {},
+        vertexShader: ["#include <common>", "#include <begin_vertex>"].join(
+          "\n",
+        ),
+      };
+      depthMaterial.onBeforeCompile(depthShader as never, {} as never);
+      const depthStart = depthShader.vertexShader.indexOf(
+        "#include <begin_vertex>",
+      );
+      const depthMatrix = depthShader.vertexShader.indexOf(
+        "mat4 bakedSkinMatrix",
+      );
+      const depthPosition = depthShader.vertexShader.indexOf(
+        "transformed = ( bakedSkinMatrix",
+      );
+      expect(depthStart).toBeGreaterThanOrEqual(0);
+      expect(depthMatrix).toBeGreaterThan(depthStart);
+      expect(depthPosition).toBeGreaterThan(depthMatrix);
+      expect(depthShader.uniforms).toHaveProperty("boneTexture");
     } finally {
       pool.dispose();
     }
