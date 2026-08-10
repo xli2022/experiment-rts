@@ -1,7 +1,7 @@
 /**
  * On-demand viewer for every authored unit model.
  *
- * The cards are DOM, but their previews are all drawn through the game's one
+ * The cards are DOM, but their previews are all drawn through the app's one
  * WebGL renderer. Scissoring the existing canvas avoids both a WebGL context per
  * card and a second full-size canvas while still allowing an ordinary scrolling,
  * accessible grid.

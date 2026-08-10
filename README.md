@@ -33,7 +33,7 @@ suite — see [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml).
 | Repair           | right-click your own damaged or half-built structure with a worker |
 | Fullscreen       | `F`, or the button top-right                                       |
 | Mute             | `M`                                                                |
-| Model gallery    | `Units` button top-right                                           |
+| Model gallery    | `All units` button on the home screen                              |
 | Cancel           | `Esc`                                                              |
 
 Workers gather minerals, construct buildings, and repair them. The Command Post

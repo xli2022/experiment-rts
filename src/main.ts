@@ -98,23 +98,23 @@ class Game {
   constructor(
     canvas: HTMLCanvasElement,
     uiRoot: HTMLElement,
+    renderer: THREE.WebGLRenderer,
+    gallery: UnitGallery,
     seed: number,
     transport: Transport,
     botPlayers: PlayerId[],
   ) {
     this.localPlayer = transport.localPlayer;
     this.sim = new Simulation(seed);
+    this.renderer = renderer;
+    this.gallery = gallery;
 
     // Slots played by the AI. Because the bot is deterministic it runs inside
     // the simulation on every peer, so every peer must agree on this set — it
     // comes from the lobby, which both sides agreed on before starting.
     for (const p of botPlayers) this.sim.botPlayers.add(p);
 
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.setClearColor(0x0b0e14);
     this.scene.fog = new THREE.Fog(0x0b0e14, 90, 190);
-    this.gallery = new UnitGallery(uiRoot, this.renderer);
 
     this.camera = new RtsCamera(canvas, MAP_SIZE);
     this.terrain = new TerrainRenderer(this.sim.world.map);
@@ -149,10 +149,6 @@ class Game {
       (x, z, secondary) => {
         if (secondary) this.issueGroundOrder(x, z, false);
         else this.camera.lookAt(x, z);
-      },
-      () => {
-        this.cancelModes();
-        this.gallery.open();
       },
     );
 
@@ -904,10 +900,59 @@ class Game {
 // Bootstrap
 // ---------------------------------------------------------------------------
 
+/**
+ * Keep the shared renderer alive while the pre-match home screen owns it.
+ * The match takes over the same renderer and gallery after a mode is chosen,
+ * avoiding a second WebGL context or a second asset-loading path.
+ */
+async function showHome(
+  root: HTMLElement,
+  renderer: THREE.WebGLRenderer,
+  gallery: UnitGallery,
+): Promise<MatchSetup> {
+  let frameId = 0;
+  let galleryWasOpen = false;
+  const resize = (): void => {
+    renderer.setSize(window.innerWidth, window.innerHeight, false);
+  };
+  const frame = (nowMs: number): void => {
+    if (gallery.isOpen) {
+      gallery.render(nowMs / 1000);
+      galleryWasOpen = true;
+    } else if (galleryWasOpen) {
+      // The home page has no scene of its own to repaint the gallery's last
+      // frame, so clear it once when the modal closes.
+      renderer.clear(true, true, true);
+      galleryWasOpen = false;
+    }
+    frameId = requestAnimationFrame(frame);
+  };
+
+  resize();
+  renderer.clear(true, true, true);
+  window.addEventListener('resize', resize);
+  frameId = requestAnimationFrame(frame);
+
+  try {
+    return await showLobby(root, () => gallery.open());
+  } finally {
+    cancelAnimationFrame(frameId);
+    window.removeEventListener('resize', resize);
+    gallery.close();
+    renderer.clear(true, true, true);
+  }
+}
+
 async function boot(): Promise<void> {
   const canvas = document.getElementById('viewport') as HTMLCanvasElement | null;
   const uiRoot = document.getElementById('ui-root');
   if (!canvas || !uiRoot) throw new Error('missing #viewport or #ui-root');
+
+  // The home gallery and the match deliberately share one WebGL context.
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setClearColor(0x0b0e14);
+  const gallery = new UnitGallery(uiRoot, renderer);
 
   const params = new URLSearchParams(location.search);
 
@@ -916,6 +961,7 @@ async function boot(): Promise<void> {
   // reproducible, which is how a desync report becomes debuggable.
   let setup: MatchSetup;
   if (params.get('skip') === 'ai') {
+    renderer.setSize(window.innerWidth, window.innerHeight, false);
     setup = {
       transport: new SoloTransport(),
       seed: Number(params.get('seed') ?? 0) || 0x51ce7a11,
@@ -923,12 +969,20 @@ async function boot(): Promise<void> {
       botPlayers: [1],
     };
   } else {
-    setup = await showLobby(uiRoot);
+    setup = await showHome(uiRoot, renderer, gallery);
     const override = Number(params.get('seed') ?? 0);
     if (override) setup.seed = override;
   }
 
-  const game = new Game(canvas, uiRoot, setup.seed, setup.transport, setup.botPlayers);
+  const game = new Game(
+    canvas,
+    uiRoot,
+    renderer,
+    gallery,
+    setup.seed,
+    setup.transport,
+    setup.botPlayers,
+  );
   game.start();
 
   // Exposed for the end-to-end tests and for debugging a live match.

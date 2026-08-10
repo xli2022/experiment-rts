@@ -26,7 +26,7 @@ export interface MatchSetup {
   botPlayers: PlayerId[];
 }
 
-export function showLobby(root: HTMLElement): Promise<MatchSetup> {
+export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promise<MatchSetup> {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
     overlay.id = 'overlay';
@@ -58,6 +58,8 @@ export function showLobby(root: HTMLElement): Promise<MatchSetup> {
         <button class="primary" data-act="ai">Skirmish vs AI</button>
         <button data-act="online">Play online</button>
         <button data-act="local">Two tabs on this computer</button>
+        <button data-act="units" aria-haspopup="dialog"
+                aria-controls="unit-gallery-dialog">All units</button>
       `);
 
       dialog.querySelector('[data-act="ai"]')!.addEventListener('click', () => {
@@ -72,6 +74,7 @@ export function showLobby(root: HTMLElement): Promise<MatchSetup> {
 
       dialog.querySelector('[data-act="online"]')!.addEventListener('click', online);
       dialog.querySelector('[data-act="local"]')!.addEventListener('click', local);
+      dialog.querySelector('[data-act="units"]')!.addEventListener('click', onShowAllUnits);
     };
 
     const online = (): void => {
