@@ -8,7 +8,7 @@
  * ## A trap in measuring this
  *
  * Every scenario keeps the unit under test at full health. Staging two evenly
- * matched riflemen instead means both die, and a corpse keeps its last `order`
+ * matched Burstbots instead means both die, and a corpse keeps its last `order`
  * value forever — so the dead unit reads as "still attack-moving, never
  * resumed". That produced a confident and completely wrong diagnosis once
  * already. Where survival matters, these assert on it explicitly.
@@ -32,7 +32,7 @@ interface Field {
   dest: { x: number; y: number };
 }
 
-/** A clear corridor well away from either base, and `n` riflemen at one end. */
+/** A clear corridor well away from either base, and `n` Burstbots at one end. */
 function field(n = 1): Field {
   const sim = new Simulation(0x51ce7a11);
   const { pool, map } = sim.world;
@@ -54,7 +54,7 @@ function field(n = 1): Field {
   for (let k = 0; k < n; k++) {
     ids.push(
       pool.spawn(
-        EntityType.Rifleman,
+        EntityType.Burstbot,
         0 as PlayerId,
         Math.round((c.x + 0.5) * FIX),
         Math.round((c.y + 0.5 + k * 0.6) * FIX),
@@ -76,7 +76,7 @@ function command(f: Field, type: CommandType.Move | CommandType.AttackMove): Com
 
 /** Step the sim, holding our own units at full health throughout. */
 function play(f: Field, ticks: number): void {
-  const maxHp = defOf(EntityType.Rifleman).maxHp;
+  const maxHp = defOf(EntityType.Burstbot).maxHp;
   for (let t = 0; t < ticks; t++) {
     for (const id of f.ids) f.sim.world.pool.hp[id & 0xffff] = maxHp;
     f.sim.step([]);
@@ -125,7 +125,7 @@ describe('attack-move', () => {
 
     let fought = false;
     for (let t = 0; t < 700; t++) {
-      f.sim.world.pool.hp[f.unit] = defOf(EntityType.Rifleman).maxHp;
+      f.sim.world.pool.hp[f.unit] = defOf(EntityType.Burstbot).maxHp;
       f.sim.step([]);
       if (firedThisTick(f)) fought = true;
     }
@@ -162,13 +162,13 @@ describe('attack-move', () => {
     // Acquisition without approach means a unit strolls past something it has
     // already picked a fight with.
     const f = field();
-    const reach = toFloat(defOf(EntityType.Rifleman).attackRange);
+    const reach = toFloat(defOf(EntityType.Burstbot).attackRange);
     enemyAt(f, 10, reach + 1.5);
     f.sim.step([command(f, CommandType.AttackMove)]);
 
     let fought = false;
     for (let t = 0; t < 500; t++) {
-      f.sim.world.pool.hp[f.unit] = defOf(EntityType.Rifleman).maxHp;
+      f.sim.world.pool.hp[f.unit] = defOf(EntityType.Burstbot).maxHp;
       f.sim.step([]);
       if (firedThisTick(f)) fought = true;
     }
@@ -185,7 +185,7 @@ describe('attack-move', () => {
     f.sim.step([command(f, CommandType.AttackMove)]);
 
     for (let t = 0; t < 500; t++) {
-      pool.hp[f.unit] = defOf(EntityType.Rifleman).maxHp;
+      pool.hp[f.unit] = defOf(EntityType.Burstbot).maxHp;
       pool.posY[foe] = Math.round((f.origin.y + 0.5 - t * 0.05) * FIX);
       pool.hp[foe] = defOf(EntityType.Worker).maxHp;
       f.sim.step([]);
@@ -234,7 +234,7 @@ describe('a plain move is not an attack-move', () => {
       // combat runs after it, so the arrival tick is legitimately idle by the
       // time anything shoots.
       const before = f.sim.world.pool.order[f.unit] === Order.Move;
-      f.sim.world.pool.hp[f.unit] = defOf(EntityType.Rifleman).maxHp;
+      f.sim.world.pool.hp[f.unit] = defOf(EntityType.Burstbot).maxHp;
       f.sim.step([]);
       const onOrder = before && f.sim.world.pool.order[f.unit] === Order.Move;
       if (onOrder) {

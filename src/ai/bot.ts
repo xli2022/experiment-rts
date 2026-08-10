@@ -146,9 +146,9 @@ function survey(world: World, player: PlayerId): Survey {
     if (owner !== player) {
       // Prefer structures as attack targets; killing buildings is what wins.
       if (defOf(type).isBuilding) s.enemyTargets.push(i);
-      else if (type === EntityType.Rifleman) s.enemyRanged++;
-      else if (type === EntityType.Brawler) s.enemyMelee++;
-      else if (type === EntityType.Gunship) s.enemyAir++;
+      else if (type === EntityType.Burstbot) s.enemyRanged++;
+      else if (type === EntityType.Slicebot) s.enemyMelee++;
+      else if (type === EntityType.Beamdrone) s.enemyAir++;
       continue;
     }
 
@@ -158,9 +158,9 @@ function survey(world: World, player: PlayerId): Survey {
         s.workers.push(i);
         if (pool.order[i] === Order.None) s.idleWorkers.push(i);
         break;
-      case EntityType.Rifleman:
-      case EntityType.Brawler:
-      case EntityType.Gunship:
+      case EntityType.Burstbot:
+      case EntityType.Slicebot:
+      case EntityType.Beamdrone:
         s.army.push(i);
         break;
       case EntityType.CommandPost:
@@ -258,9 +258,9 @@ function manageProduction(
  * There used to be a damage triangle to play against, and this read the enemy
  * composition to counter it. With damage now a single number per unit, that
  * reasoning would be picking units against a mechanic that no longer exists —
- * and would get it backwards, since it answered massed Riflemen with Brawlers.
+ * and would get it backwards, since it answered massed Burstbots with Slicebots.
  *
- * What survives is structural rather than numeric: a Brawler cannot reach a
+ * What survives is structural rather than numeric: a Slicebot cannot reach a
  * flyer at all. So a scouted air force forces something that can shoot back,
  * and otherwise the bot keeps a mix, which is what stops one lucky read
  * deciding a match.
@@ -270,12 +270,12 @@ function pickUnitToTrain(world: World, s: Survey, building: number): EntityType 
 
   // Enough air out there to matter: only build what can answer it.
   if (s.enemyAir >= 2 && s.enemyAir * 2 >= s.enemyRanged + s.enemyMelee) {
-    return phase === 1 ? EntityType.Gunship : EntityType.Rifleman;
+    return phase === 1 ? EntityType.Beamdrone : EntityType.Burstbot;
   }
 
-  if (phase === 0) return EntityType.Brawler;
-  if (phase === 1) return EntityType.Gunship;
-  return EntityType.Rifleman;
+  if (phase === 0) return EntityType.Slicebot;
+  if (phase === 1) return EntityType.Beamdrone;
+  return EntityType.Burstbot;
 }
 
 /**
@@ -630,7 +630,7 @@ function manageArmy(world: World, player: PlayerId, s: Survey, cmds: Command[]):
   // position into a permanent draw — observed with a crippled opponent still
   // standing because the winner was one unit short of attacking. With no way to
   // reinforce, whatever is left goes in.
-  const cheapest = defOf(EntityType.Rifleman).mineralCost;
+  const cheapest = defOf(EntityType.Burstbot).mineralCost;
   const canReinforce = s.patches.length > 0 || s.minerals >= cheapest;
   const required = canReinforce ? ATTACK_ARMY_SIZE : 1;
 

@@ -1,8 +1,8 @@
 /**
  * What can shoot at what, and what that means for chasing.
  *
- * Reported as melee units trailing after gunships. There were two halves to it:
- * nothing in combat distinguished air from ground at all, so a brawler could
+ * Reported as melee units trailing after Beamdrones. There were two halves to it:
+ * nothing in combat distinguished air from ground at all, so a Slicebot could
  * swing a sword at something twenty feet up — and because acquisition is what
  * `engageNearby` walks toward, acquiring an aircraft was also an instruction to
  * follow it around.
@@ -82,22 +82,22 @@ function duel(
 }
 
 describe('melee cannot touch air', () => {
-  it('does not chase a gunship it could never hit', () => {
+  it('does not chase a Beamdrone it could never hit', () => {
     // The report. Acquisition drives `engageNearby`, so refusing the target is
     // what stops the chase — the two are the same fix.
-    const r = duel(EntityType.Brawler, EntityType.Gunship, 3);
+    const r = duel(EntityType.Slicebot, EntityType.Beamdrone, 3);
     expect(`hit ${r.hit}, walked ${r.walked.toFixed(2)}`).toBe('hit false, walked 0.00');
   });
 
   it('applies to workers too, whose reach is shorter still', () => {
-    const r = duel(EntityType.Worker, EntityType.Gunship, 2);
+    const r = duel(EntityType.Worker, EntityType.Beamdrone, 2);
     expect(`hit ${r.hit}, walked ${r.walked.toFixed(2)}`).toBe('hit false, walked 0.00');
   });
 
   it('still fights ground units exactly as before', () => {
     // Non-vacuity: the same staging with a ground target must still engage, or
     // this suite would pass with combat switched off entirely.
-    const r = duel(EntityType.Brawler, EntityType.Rifleman, 3);
+    const r = duel(EntityType.Slicebot, EntityType.Burstbot, 3);
     expect(r.hit).toBe(true);
     expect(r.walked).toBeGreaterThan(0.5);
   });
@@ -108,38 +108,38 @@ describe('melee cannot touch air', () => {
     const start = map.starts[0]!;
     const x = Math.round((start.tileX + 0.5) * FIX);
     const y = Math.round((start.tileY + 8.5) * FIX);
-    const brawler = pool.spawn(EntityType.Brawler, 0 as PlayerId, x, y) & 0xffff;
-    const rifle = pool.spawn(EntityType.Rifleman, 0 as PlayerId, x, y) & 0xffff;
-    const gunship = pool.spawn(EntityType.Gunship, 1 as PlayerId, x + 4 * FIX, y) & 0xffff;
+    const slicebot = pool.spawn(EntityType.Slicebot, 0 as PlayerId, x, y) & 0xffff;
+    const burstbot = pool.spawn(EntityType.Burstbot, 0 as PlayerId, x, y) & 0xffff;
+    const beamdrone = pool.spawn(EntityType.Beamdrone, 1 as PlayerId, x + 4 * FIX, y) & 0xffff;
 
     sim.step([
       {
         type: CommandType.Attack,
         player: 0,
-        units: [pool.idAt(brawler), pool.idAt(rifle)],
-        target: pool.idAt(gunship),
+        units: [pool.idAt(slicebot), pool.idAt(burstbot)],
+        target: pool.idAt(beamdrone),
       },
     ]);
 
-    // Dropped per unit, not for the whole order: the rifleman still goes.
-    expect(`brawler order ${pool.order[brawler]}, rifleman order ${pool.order[rifle]}`).toBe(
-      `brawler order ${Order.None}, rifleman order ${Order.Attack}`,
+    // Dropped per unit, not for the whole order: the Burstbot still goes.
+    expect(`slicebot order ${pool.order[slicebot]}, burstbot order ${pool.order[burstbot]}`).toBe(
+      `slicebot order ${Order.None}, burstbot order ${Order.Attack}`,
     );
-    expect(pool.orderTarget[brawler]).toBe(NO_ENTITY);
+    expect(pool.orderTarget[slicebot]).toBe(NO_ENTITY);
   });
 });
 
 describe('everything else still covers both layers', () => {
   it('lets ranged units and turrets shoot air', () => {
-    for (const type of [EntityType.Rifleman, EntityType.Gunship, EntityType.Turret]) {
+    for (const type of [EntityType.Burstbot, EntityType.Beamdrone, EntityType.Turret]) {
       expect(`${defOf(type).name} hits air: ${defOf(type).canHitAir}`).toBe(
         `${defOf(type).name} hits air: true`,
       );
     }
-    expect(duel(EntityType.Rifleman, EntityType.Gunship, 3).hit).toBe(true);
+    expect(duel(EntityType.Burstbot, EntityType.Beamdrone, 3).hit).toBe(true);
   });
 
   it('lets air shoot ground', () => {
-    expect(duel(EntityType.Gunship, EntityType.Brawler, 3).hit).toBe(true);
+    expect(duel(EntityType.Beamdrone, EntityType.Slicebot, 3).hit).toBe(true);
   });
 });

@@ -49,7 +49,7 @@ function clearSpot(sim: Simulation): { x: number; y: number } {
 
 describe('clicking a unit', () => {
   it('hits inside the ring and misses outside it', () => {
-    for (const type of [EntityType.Rifleman, EntityType.Brawler, EntityType.Gunship]) {
+    for (const type of [EntityType.Burstbot, EntityType.Slicebot, EntityType.Beamdrone]) {
       const sim = new Simulation(0x51ce7a11);
       const spot = clearSpot(sim);
       const x = spot.x + 0.5;
@@ -79,7 +79,7 @@ describe('clicking a unit', () => {
     const spot = clearSpot(sim);
     const x = spot.x + 0.5;
     const z = spot.y + 0.5;
-    const type = EntityType.Brawler;
+    const type = EntityType.Slicebot;
     const idx =
       sim.world.pool.spawn(type, 0 as PlayerId, Math.round(x * FIX), Math.round(z * FIX)) & 0xffff;
     const ring = toFloat(defOf(type).radius) * RING_OVERSIZE;
@@ -154,7 +154,7 @@ describe('control groups', () => {
     const ids = [0, 1].map(
       (k) =>
         pool.spawn(
-          EntityType.Rifleman,
+          EntityType.Burstbot,
           0 as PlayerId,
           Math.round((spot.x + 0.5 + k * 2) * FIX),
           Math.round((spot.y + 0.5) * FIX),
@@ -230,7 +230,7 @@ describe('control groups', () => {
  * The pool recycles slots and bumps a generation on every free so that a stale
  * reference can be spotted. Selection tracked bare indices, so a dead unit's
  * slot — refilled by the next unit trained — silently rejoined the selection.
- * A control group whose members had all died came back holding three Gunships
+ * A control group whose members had all died came back holding three Beamdrones
  * that were never put in it.
  */
 describe('selection identity across slot reuse', () => {
@@ -253,7 +253,7 @@ describe('selection identity across slot reuse', () => {
   it('forgets a control group once every member is dead', () => {
     const { sim, sel, spot } = stage();
     const pool = sim.world.pool;
-    const ids = [0, 1, 2].map((k) => spawn(sim, spot, EntityType.Rifleman, k));
+    const ids = [0, 1, 2].map((k) => spawn(sim, spot, EntityType.Burstbot, k));
     sel.set(ids, sim.world);
     sel.assignGroup(1, sim.world);
 
@@ -262,7 +262,7 @@ describe('selection identity across slot reuse', () => {
     expect(sel.recallGroup(1, sim.world)).toBe('missing');
 
     // The slots come back as something else entirely, and the group must not.
-    const fresh = [0, 1, 2].map((k) => spawn(sim, spot, EntityType.Gunship, k + 4));
+    const fresh = [0, 1, 2].map((k) => spawn(sim, spot, EntityType.Beamdrone, k + 4));
     expect(fresh.some((i) => ids.includes(i))).toBe(true); // the reuse really happened
     expect(sel.recallGroup(1, sim.world)).toBe('missing');
     expect(sel.indices.size).toBe(0);
@@ -274,13 +274,13 @@ describe('selection identity across slot reuse', () => {
     // once, later, by which time three new units are standing in those slots.
     const { sim, sel, spot } = stage();
     const pool = sim.world.pool;
-    const ids = [0, 1, 2].map((k) => spawn(sim, spot, EntityType.Rifleman, k));
+    const ids = [0, 1, 2].map((k) => spawn(sim, spot, EntityType.Burstbot, k));
     sel.set(ids, sim.world);
     sel.assignGroup(1, sim.world);
     sel.clear();
 
     for (const i of ids) pool.destroy(pool.idAt(i));
-    const fresh = [0, 1, 2].map((k) => spawn(sim, spot, EntityType.Gunship, k + 4));
+    const fresh = [0, 1, 2].map((k) => spawn(sim, spot, EntityType.Beamdrone, k + 4));
     expect(fresh.some((i) => ids.includes(i))).toBe(true);
 
     expect(sel.recallGroup(1, sim.world)).toBe('missing');
@@ -290,13 +290,13 @@ describe('selection identity across slot reuse', () => {
   it('keeps the survivors of a group and drops only the dead', () => {
     const { sim, sel, spot } = stage();
     const pool = sim.world.pool;
-    const ids = [0, 1, 2].map((k) => spawn(sim, spot, EntityType.Rifleman, k));
+    const ids = [0, 1, 2].map((k) => spawn(sim, spot, EntityType.Burstbot, k));
     sel.set(ids, sim.world);
     sel.assignGroup(1, sim.world);
 
     pool.destroy(pool.idAt(ids[1]!));
     // Something else takes the vacated slot before the group is next recalled.
-    const intruder = spawn(sim, spot, EntityType.Gunship, 5);
+    const intruder = spawn(sim, spot, EntityType.Beamdrone, 5);
     expect(intruder).toBe(ids[1]!);
 
     sel.clear();
@@ -307,11 +307,11 @@ describe('selection identity across slot reuse', () => {
   it('drops a selected unit whose slot was reused, rather than adopting the newcomer', () => {
     const { sim, sel, spot } = stage();
     const pool = sim.world.pool;
-    const victim = spawn(sim, spot, EntityType.Rifleman, 0);
+    const victim = spawn(sim, spot, EntityType.Burstbot, 0);
     sel.set([victim], sim.world);
 
     pool.destroy(pool.idAt(victim));
-    const replacement = spawn(sim, spot, EntityType.Gunship, 1);
+    const replacement = spawn(sim, spot, EntityType.Beamdrone, 1);
     expect(replacement).toBe(victim); // same slot, new entity
 
     sel.prune(sim.world);

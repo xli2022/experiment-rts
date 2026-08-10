@@ -158,7 +158,7 @@ export class EntityPool {
    * The leash has to be measured from here rather than from the unit's current
    * position. Recomputed each tick against where it now stands, the window
    * slides along with a retreating enemy and pursuit ratchets — measured, a
-   * unit dragged sideways followed a fleeing rifleman 14.6 tiles off its route.
+   * unit dragged sideways followed a fleeing Burstbot 14.6 tiles off its route.
    */
   readonly pursueX = new Int32Array(ENTITY_CAPACITY);
   readonly pursueY = new Int32Array(ENTITY_CAPACITY);

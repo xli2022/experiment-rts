@@ -65,7 +65,7 @@ export interface EntityDef {
    * False makes air a hard counter rather than a soft one, which is what the
    * genre does with melee: a unit that swings a sword at something twenty feet
    * up is not missing by a little. It also stops melee units trailing after
-   * gunships they could never hit.
+   * beamdrones they could never hit.
    */
   readonly canHitAir: boolean;
   readonly damage: number;
@@ -109,8 +109,8 @@ export const DEFS: readonly EntityDef[] = [
     produces: NONE,
   },
   {
-    type: EntityType.Rifleman,
-    name: 'Rifleman',
+    type: EntityType.Burstbot,
+    name: 'Burstbot',
     isBuilding: false,
     collides: true,
     flying: false,
@@ -132,8 +132,8 @@ export const DEFS: readonly EntityDef[] = [
     produces: NONE,
   },
   {
-    type: EntityType.Brawler,
-    name: 'Brawler',
+    type: EntityType.Slicebot,
+    name: 'Slicebot',
     isBuilding: false,
     collides: true,
     flying: false,
@@ -224,7 +224,7 @@ export const DEFS: readonly EntityDef[] = [
     buildTicks: seconds(45),
     supplyCost: 0,
     supplyProvided: 0,
-    produces: [EntityType.Rifleman, EntityType.Brawler, EntityType.Gunship],
+    produces: [EntityType.Burstbot, EntityType.Slicebot, EntityType.Beamdrone],
   },
   {
     type: EntityType.Turret,
@@ -277,8 +277,8 @@ export const DEFS: readonly EntityDef[] = [
     produces: NONE,
   },
   {
-    type: EntityType.Gunship,
-    name: 'Gunship',
+    type: EntityType.Beamdrone,
+    name: 'Beamdrone',
     isBuilding: false,
     // Flies over everything, including its own army.
     collides: false,

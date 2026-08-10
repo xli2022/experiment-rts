@@ -39,7 +39,7 @@ function army(n: number): { sim: Simulation; ids: number[] } {
         if (!map.isWalkable(x, y)) continue;
         ids.push(
           pool.spawn(
-            EntityType.Rifleman,
+            EntityType.Burstbot,
             0 as PlayerId,
             Math.round((x + 0.5) * FIX),
             Math.round((y + 0.5) * FIX),

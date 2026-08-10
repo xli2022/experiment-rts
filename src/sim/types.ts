@@ -34,8 +34,8 @@ export const MAX_PLAYERS = 2;
 export enum EntityType {
   // Units
   Worker = 0,
-  Rifleman = 1,
-  Brawler = 2,
+  Burstbot = 1,
+  Slicebot = 2,
   // Buildings
   CommandPost = 3,
   Depot = 4,
@@ -45,7 +45,7 @@ export enum EntityType {
   MineralPatch = 7,
   // Appended rather than slotted in with the other units, so existing numeric
   // ids stay put — the defs table is indexed by this enum.
-  Gunship = 8,
+  Beamdrone = 8,
 }
 
 export const ENTITY_TYPE_COUNT = 9;

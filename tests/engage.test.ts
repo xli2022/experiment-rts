@@ -4,8 +4,8 @@
  * Combat acquires a target within sight and then only fires if it is already
  * within weapon range. Nothing ever closed the gap, so a unit whose weapon is
  * shorter than its eyes would stand still while an enemy it had already picked
- * out shot at it. For a rifleman that is nearly invisible — its range covers
- * most of what it can see — but a brawler reaches 1.3 tiles and sees 7, so it
+ * out shot at it. For a Burstbot that is nearly invisible — its range covers
+ * most of what it can see — but a Slicebot reaches 1.3 tiles and sees 7, so it
  * only ever fought things already touching it. It was reported as melee units
  * simply not attacking.
  *
@@ -21,7 +21,7 @@ import { Simulation } from '../src/sim/tick.js';
 import { EntityType, Order } from '../src/sim/types.js';
 
 const FIX = 65536;
-const COMBAT_TYPES = [EntityType.Rifleman, EntityType.Brawler, EntityType.Gunship];
+const COMBAT_TYPES = [EntityType.Burstbot, EntityType.Slicebot, EntityType.Beamdrone];
 
 /**
  * Open ground near the base, wide enough to place both units and walk between.
@@ -72,7 +72,7 @@ function fight(
 
   const a = pool.spawn(attacker, 0, Math.round(ax * FIX), Math.round(ay * FIX)) & 0xffff;
   const b =
-    pool.spawn(EntityType.Rifleman, 1, Math.round((ax + dist) * FIX), Math.round(ay * FIX)) &
+    pool.spawn(EntityType.Burstbot, 1, Math.round((ax + dist) * FIX), Math.round(ay * FIX)) &
     0xffff;
   const hp0 = pool.hp[b]!;
   const x0 = pool.posX[a]!;
@@ -114,23 +114,23 @@ describe('engaging on sight', () => {
   it('does not chase past its leash', () => {
     // Beyond the leash the unit holds its ground, so an idle line does not
     // unravel one straggler at a time.
-    const result = fight(EntityType.Brawler, 9);
+    const result = fight(EntityType.Slicebot, 9);
     expect(result.hit).toBe(false);
     expect(Math.abs(result.walked)).toBeLessThan(0.4);
   });
 
   it('still ignores enemies while on a plain move order', () => {
     // That distinction is the whole reason attack-move exists.
-    const result = fight(EntityType.Brawler, 3, Order.Move);
+    const result = fight(EntityType.Slicebot, 3, Order.Move);
     expect(result.hit).toBe(false);
   });
 
   it('holds position on Hold, but still shoots what comes to it', () => {
-    const away = fight(EntityType.Brawler, 3, Order.Hold);
+    const away = fight(EntityType.Slicebot, 3, Order.Hold);
     expect(away.hit).toBe(false);
     expect(Math.abs(away.walked)).toBeLessThan(0.4);
 
-    const adjacent = fight(EntityType.Brawler, 1, Order.Hold);
+    const adjacent = fight(EntityType.Slicebot, 1, Order.Hold);
     expect(adjacent.hit).toBe(true);
   });
 });
@@ -151,11 +151,11 @@ describe('weapon reach', () => {
     expect(post).toBeGreaterThanOrEqual(0);
 
     const hqDef = defOf(EntityType.CommandPost);
-    const brawler = defOf(EntityType.Brawler);
-    const reach = toFloat(brawler.attackRange) + toFloat(hqDef.radius);
-    // Closest a brawler can physically stand to the centre: outside the
+    const slicebot = defOf(EntityType.Slicebot);
+    const reach = toFloat(slicebot.attackRange) + toFloat(hqDef.radius);
+    // Closest a Slicebot can physically stand to the centre: outside the
     // footprint, by its own radius.
-    const closest = hqDef.footprint / 2 + toFloat(brawler.radius);
+    const closest = hqDef.footprint / 2 + toFloat(slicebot.radius);
     expect(reach).toBeGreaterThan(closest);
   });
 
@@ -169,15 +169,15 @@ describe('weapon reach', () => {
       }
     }
     const spawnX = pool.posX[post]! + Math.round(3.2 * FIX);
-    const brawler =
-      pool.spawn(EntityType.Brawler, 0, spawnX, pool.posY[post]!) & 0xffff;
+    const slicebot =
+      pool.spawn(EntityType.Slicebot, 0, spawnX, pool.posY[post]!) & 0xffff;
     const hp0 = pool.hp[post]!;
 
     sim.step([
       {
         type: CommandType.Attack,
         player: 0,
-        units: [pool.idAt(brawler)],
+        units: [pool.idAt(slicebot)],
         target: pool.idAt(post),
       },
     ]);

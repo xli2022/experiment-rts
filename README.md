@@ -19,21 +19,22 @@ suite — see [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml).
 
 ## Playing
 
-| | |
-|---|---|
-| Pan | Arrow keys, screen edges, middle-drag, or the minimap |
-| Zoom | mouse wheel |
-| Select | click, or drag a box |
-| Add to selection | `Shift` + click |
-| Order | right-click — attack an enemy, mine a patch, or move |
-| Attack-move | `A` then click |
-| Stop / Hold | `S` / `H` |
-| Control groups | `Ctrl`+`1`–`9` to assign, `1`–`9` to recall |
-| Build / train | the letter shown on each command-card button |
-| Repair | right-click your own damaged or half-built structure with a worker |
-| Fullscreen | `F`, or the button top-right |
-| Mute | `M` |
-| Cancel | `Esc` |
+|                  |                                                                    |
+| ---------------- | ------------------------------------------------------------------ |
+| Pan              | Arrow keys, screen edges, middle-drag, or the minimap              |
+| Zoom             | mouse wheel                                                        |
+| Select           | click, or drag a box                                               |
+| Add to selection | `Shift` + click                                                    |
+| Order            | right-click — attack an enemy, mine a patch, or move               |
+| Attack-move      | `A` then click                                                     |
+| Stop / Hold      | `S` / `H`                                                          |
+| Control groups   | `Ctrl`+`1`–`9` to assign, `1`–`9` to recall                        |
+| Build / train    | the letter shown on each command-card button                       |
+| Repair           | right-click your own damaged or half-built structure with a worker |
+| Fullscreen       | `F`, or the button top-right                                       |
+| Mute             | `M`                                                                |
+| Model gallery    | `Units` button top-right                                           |
+| Cancel           | `Esc`                                                              |
 
 Workers gather minerals, construct buildings, and repair them. The Command Post
 trains workers, Supply Depots raise the supply cap, Barracks train the three
@@ -42,15 +43,15 @@ mine two lines at once. You lose when your last structure falls.
 
 ### The three combat units
 
-| | Damage | Range | Health | Supply | Notes |
-|---|---|---|---|---|---|
-| **Rifleman** (ranged) | 6 every 0.8s | 5.0 | 45 | 1 | Cheapest, outranges everything |
-| **Brawler** (melee) | 13 every 1.2s | 0.9 | 90 | 2 | Cannot touch air at all |
-| **Gunship** (air) | 10 every 1.0s | 3.5 | 70 | 2 | Ignores terrain entirely |
+|                       | Damage        | Range | Health | Supply | Notes                          |
+| --------------------- | ------------- | ----- | ------ | ------ | ------------------------------ |
+| **Burstbot** (ranged) | 6 every 0.8s  | 5.0   | 45     | 1      | Cheapest, outranges everything |
+| **Slicebot** (melee)  | 13 every 1.2s | 0.9   | 90     | 2      | Cannot touch air at all        |
+| **Beamdrone** (air)   | 10 every 1.0s | 3.5   | 70     | 2      | Ignores terrain entirely       |
 
 A unit deals its listed damage to everything it can shoot — there is no hidden
 per-matchup multiplier, and the figure on the info panel is the figure you get.
-What beats what is decided by the numbers above plus one hard rule: **a Brawler
+What beats what is decided by the numbers above plus one hard rule: **a Slicebot
 cannot reach a flyer**, so an army of them needs company.
 
 Fog of war hides what you are not currently watching. It is a rendering feature
@@ -68,7 +69,7 @@ outer lanes. Everything else is cliff.
 That means no single blockade closes the map, the centre is a four-way crossroads
 worth holding, and a flank costs a real commitment rather than a free rotation.
 The layout is generated, not authored: the whole map is carved with a brush that
-opens every tile *and its 180-degree opposite*, so the two halves are identical
+opens every tile _and its 180-degree opposite_, so the two halves are identical
 by construction rather than by inspection.
 
 Two **expansions** sit in pockets off the lanes, one nearer each player, with a
@@ -92,7 +93,7 @@ Three ways to play, all sharing one code path:
 
 ### How it stays in sync
 
-Peers never exchange game state. They exchange *commands* — "these units, move
+Peers never exchange game state. They exchange _commands_ — "these units, move
 here" — and each machine runs an identical simulation. A 200-unit battle costs
 the same bandwidth as a single click. This is what StarCraft does, and it is why
 peer-to-peer works at all for a genre with thousands of moving objects.
@@ -144,16 +145,52 @@ src/ui/       DOM overlay: HUD, minimap, lobby
 src/config/   all balance data, in one table
 ```
 
-Buildings and workers are built from Three.js primitives at runtime. The three
-combat units are authored models: skinned rigs with run, attack and death
-clips, baked at load into a bone-matrix texture so a hundred of them mid-swing
-still cost one draw call per type. Their skins are KTX2/ETC1S — a tenth the size
-of the source PNGs.
+Buildings and Workers use Three.js primitives at runtime. The three combat units
+are authored models: skinned rigs with run, attack and death clips, baked at load
+into a bone-matrix texture so a hundred of them mid-swing still cost one draw
+call per type. Their skins are KTX2/ETC1S — a tenth the size of the source PNGs.
 
-Only the encoded `.ktx2` files are committed, since they are the only part that
-ships. The source art is not in the repository: put the PNGs in
+Only the encoded `.ktx2` textures are committed; the source texture art is not
+in the repository. Put the PNGs in
 `assets/textures/` (git-ignored) and re-encode with
 
 ```sh
 npm run textures
 ```
+
+Complete Athena2 rigs can be imported with the same pipeline. The importer
+uses Athena2's 64-file `Assets/Art/Units/Animations` inventory as its source
+authority. A required move, attack, or death slot with only one baked frame is
+treated as missing. Skeleton remains in that source inventory but is explicitly
+excluded as redundant with ZombieSkeleton, leaving 55 public models today. For
+each published complete unit the importer combines the clips into one GLB, joins
+multipart meshes, and stages the exact prefab skins. Old FBX 6.1 rigs are
+normalized with Unity's FBX SDK;
+malformed curves and some multipart geometry use Blender 4.5. FireDragon and a
+small explicit allowlist of single-renderer rigs use direct Unity sampling after
+their complete run, attack, and death output has been checked frame-for-frame
+against Athena2's baked geometry. The importer opens isolated copies of each
+source FBX and controller in Unity 2022.3.62f3, samples the imported mesh, bind
+poses, and local transforms at every authored frame, and writes those values
+directly to a compact standard GLB. These files need no morph data, custom
+extension, decoder, or model-specific runtime path. Multipart prefabs and rigs
+whose controller output differs from the baked recorder remain on the normal FBX
+path.
+
+```sh
+npm run import:athena2 -- --meshes <Imports folder> --textures <Textures folder> --animations <Animations folder>
+npm run textures
+```
+
+The generated `public/models/all-units.json` catalogs only units with all
+three required animations that are enabled for publication. `--animations` can
+be omitted when that folder is the sibling of `Imports`; its baked frame counts
+and rates define each exported clip's exact span. Incomplete, explicitly
+excluded, and stale generated files are pruned. The normal import preserves the
+three already-shipped combat GLBs; add `--include-existing` when rebuilding all
+55 into an empty output directory.
+`--unity <editor>` and `--blender <executable>` override tool discovery.
+`assets/textures/` is only a transient encoder staging directory and can be
+removed after `npm run textures` completes.
+Importing art does not invent a new simulation unit or its balance data;
+playable types are still registered explicitly in `unitModels.ts`.

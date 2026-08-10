@@ -1,0 +1,1825 @@
+{
+  "version": 1,
+  "models": [
+    {
+      "unit": "Alligator",
+      "file": "lizard.glb",
+      "skins": [
+        "lizard-blue.ktx2",
+        "lizard-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.4,
+          "frames": 12,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1.6333333333333333,
+          "frames": 49,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 0.9,
+          "frames": 27,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        0.8956778400000001,
+        0.530011093,
+        2.3751258
+      ]
+    },
+    {
+      "unit": "Archer",
+      "file": "archer.glb",
+      "skins": [
+        "archer-blue.ktx2",
+        "archer-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.8,
+          "frames": 24,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 0.8,
+          "frames": 24,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.0724037,
+        1.1928661846,
+        1.21047127
+      ]
+    },
+    {
+      "unit": "Arclight",
+      "file": "tesla-coil.glb",
+      "skins": [
+        "tesla-coil-blue.ktx2",
+        "tesla-coil-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.5,
+          "frames": 15,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1.0333333333333334,
+          "frames": 31,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.4812528,
+        1.372542646,
+        1.07377706
+      ]
+    },
+    {
+      "unit": "Banshee",
+      "file": "banshee.glb",
+      "skins": [
+        "banshee-blue.ktx2",
+        "banshee-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.8,
+          "frames": 24,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        0.88734254,
+        1.894505106,
+        1.5069976600000001
+      ]
+    },
+    {
+      "unit": "Beamdrone",
+      "file": "beam-ship.glb",
+      "skins": [
+        "beam-ship-blue.ktx2",
+        "beam-ship-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.6666666666666666,
+          "frames": 20,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1.4,
+          "frames": 42,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        2.0727648,
+        1.3495715000000001,
+        1.37856765
+      ]
+    },
+    {
+      "unit": "Blunderbuss",
+      "file": "blunderbuss.glb",
+      "skins": [
+        "blunderbuss-blue.ktx2",
+        "blunderbuss-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.8,
+          "frames": 24,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1.5,
+          "frames": 45,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.1822252,
+        1.0942522372,
+        1.22607588
+      ]
+    },
+    {
+      "unit": "BoneArcher",
+      "file": "bone-archer.glb",
+      "skins": [
+        "bone-archer-blue.ktx2",
+        "bone-archer-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.8,
+          "frames": 24,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1.3,
+          "frames": 39,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.10000196,
+        1.0174878440000001,
+        1.41412774
+      ]
+    },
+    {
+      "unit": "Boomerang",
+      "file": "boomerang.glb",
+      "skins": [
+        "boomerang-blue.ktx2",
+        "boomerang-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.8,
+          "frames": 24,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1.5,
+          "frames": 45,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 0.8666666666666667,
+          "frames": 26,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        0.90564772,
+        1.560554955,
+        1.0091547
+      ]
+    },
+    {
+      "unit": "Boomwalker",
+      "file": "bomb.glb",
+      "skins": [
+        "bomb-blue.ktx2",
+        "bomb-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.6666666666666666,
+          "frames": 22,
+          "frameRate": 33
+        },
+        "attack": {
+          "static": false,
+          "duration": 0.5,
+          "frames": 15,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 0.6,
+          "frames": 18,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        0.48645549,
+        1.178429645,
+        0.7118397999999999
+      ]
+    },
+    {
+      "unit": "Burstbot",
+      "file": "revolver.glb",
+      "skins": [
+        "revolver-blue.ktx2",
+        "revolver-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.6,
+          "frames": 18,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1.4,
+          "frames": 42,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 0.8666666666666667,
+          "frames": 26,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        0.9390939700000001,
+        0.884158214,
+        1.1219174299999999
+      ]
+    },
+    {
+      "unit": "Cleric",
+      "file": "priest.glb",
+      "skins": [
+        "priest-blue.ktx2",
+        "priest-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.8,
+          "frames": 24,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.15931978,
+        1.275844378,
+        1.02980802
+      ]
+    },
+    {
+      "unit": "DarkGolem",
+      "file": "dark-golem.glb",
+      "skins": [
+        "dark-golem-blue.ktx2",
+        "dark-golem-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.7333333333333333,
+          "frames": 22,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1.5,
+          "frames": 45,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 0.9333333333333333,
+          "frames": 28,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        2.0613542999999996,
+        1.8439717199999999,
+        1.5546461
+      ]
+    },
+    {
+      "unit": "DarkMage",
+      "file": "dark-mage.glb",
+      "skins": [
+        "dark-mage-blue.ktx2",
+        "dark-mage-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.8,
+          "frames": 24,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 0.9666666666666667,
+          "frames": 29,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.0029605,
+        1.313607235,
+        1.3035713
+      ]
+    },
+    {
+      "unit": "DeathKnight",
+      "file": "death-knight.glb",
+      "skins": [
+        "death-knight-blue.ktx2",
+        "death-knight-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.5,
+          "frames": 15,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 2.5,
+          "frames": 75,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.4407245,
+        2.58890776,
+        2.08342015
+      ]
+    },
+    {
+      "unit": "DragonPup",
+      "file": "baby-dragon.glb",
+      "skins": [
+        "baby-dragon-blue.ktx2",
+        "baby-dragon-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.8,
+          "frames": 24,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.04441745,
+        1.2504912099999999,
+        0.85503737
+      ]
+    },
+    {
+      "unit": "FallenMage",
+      "file": "skeleton-mage.glb",
+      "skins": [
+        "skeleton-mage-blue.ktx2",
+        "skeleton-mage-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.8,
+          "frames": 24,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 0.9666666666666667,
+          "frames": 29,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.3900088,
+        1.76860876,
+        1.80655095
+      ]
+    },
+    {
+      "unit": "FireDragon",
+      "file": "fire-dragon.glb",
+      "skins": [
+        "fire-dragon-blue.ktx2",
+        "fire-dragon-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 1.3333333333333333,
+          "frames": 40,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 2,
+          "frames": 60,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 0.9666666666666667,
+          "frames": 29,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.65256215,
+        4.0628173,
+        2.5876864
+      ],
+      "runGroundY": -2.382265478
+    },
+    {
+      "unit": "FireMage",
+      "file": "fire-mage.glb",
+      "skins": [
+        "fire-mage-blue.ktx2",
+        "fire-mage-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.8,
+          "frames": 24,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 45,
+          "frameRate": 45
+        },
+        "die": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        0.77286717,
+        1.4902567744,
+        1.2178179
+      ]
+    },
+    {
+      "unit": "Firespout",
+      "file": "flamethrower.glb",
+      "skins": [
+        "flamethrower-blue.ktx2",
+        "flamethrower-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.4,
+          "frames": 12,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 0.775,
+          "frames": 31,
+          "frameRate": 40
+        },
+        "die": {
+          "static": false,
+          "duration": 0.9666666666666667,
+          "frames": 29,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        0.82278688,
+        1.3199605504,
+        1.2884174000000002
+      ]
+    },
+    {
+      "unit": "Fixomatic",
+      "file": "healing-machine.glb",
+      "skins": [
+        "healing-machine-blue.ktx2",
+        "healing-machine-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.8,
+          "frames": 24,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 0.9666666666666667,
+          "frames": 29,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 0.9,
+          "frames": 27,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        0.95425462,
+        1.35231279,
+        1.24757536
+      ]
+    },
+    {
+      "unit": "Footman",
+      "file": "kevin.glb",
+      "skins": [
+        "kevin-blue.ktx2",
+        "kevin-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.6,
+          "frames": 18,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1.2666666666666666,
+          "frames": 38,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1.1333333333333333,
+          "frames": 34,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.228605,
+        1.1647459530000002,
+        0.8977001099999999
+      ]
+    },
+    {
+      "unit": "FrostLich",
+      "file": "frost-lich.glb",
+      "skins": [
+        "frost-lich-blue.ktx2",
+        "frost-lich-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.8,
+          "frames": 24,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.4083951,
+        1.759177456,
+        1.2532781000000002
+      ]
+    },
+    {
+      "unit": "GriffinRider",
+      "file": "griffin-rider.glb",
+      "skins": [
+        "griffin-rider-blue.ktx2",
+        "griffin-rider-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 45,
+          "frameRate": 45
+        },
+        "die": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.40057713,
+        1.99596133,
+        2.3549335
+      ],
+      "runGroundY": -22.353113514
+    },
+    {
+      "unit": "IceDragon",
+      "file": "ice-dragon.glb",
+      "skins": [
+        "ice-dragon-blue.ktx2",
+        "ice-dragon-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 1.1,
+          "frames": 33,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1.1666666666666667,
+          "frames": 70,
+          "frameRate": 60
+        },
+        "die": {
+          "static": false,
+          "duration": 1.1666666666666667,
+          "frames": 35,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.07512867,
+        3.64252967,
+        2.0646645
+      ],
+      "runGroundY": -38.184078285
+    },
+    {
+      "unit": "IceGolem",
+      "file": "ice-golem.glb",
+      "skins": [
+        "ice-golem-blue.ktx2",
+        "ice-golem-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.8666666666666667,
+          "frames": 26,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1.4666666666666666,
+          "frames": 44,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 0.9333333333333333,
+          "frames": 28,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        2.5115735,
+        1.6831431499999998,
+        1.21453772
+      ]
+    },
+    {
+      "unit": "IceMage",
+      "file": "ice-mage.glb",
+      "skins": [
+        "ice-mage-blue.ktx2",
+        "ice-mage-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.8,
+          "frames": 24,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.00695697,
+        1.1720229548,
+        0.96053507
+      ]
+    },
+    {
+      "unit": "Infector",
+      "file": "infestor.glb",
+      "skins": [
+        "infestor-blue.ktx2",
+        "infestor-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.5333333333333333,
+          "frames": 16,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 0.9,
+          "frames": 27,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 0.9,
+          "frames": 27,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.255753,
+        1.2757753699999999,
+        1.9046438
+      ]
+    },
+    {
+      "unit": "Knight",
+      "file": "knight.glb",
+      "skins": [
+        "knight-blue.ktx2",
+        "knight-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.6,
+          "frames": 18,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.5094904,
+        1.736676702,
+        2.01609907
+      ]
+    },
+    {
+      "unit": "Mercenary",
+      "file": "mercenary.glb",
+      "skins": [
+        "mercenary-blue.ktx2",
+        "mercenary-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 0.7,
+          "frames": 21,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 0.6,
+          "frames": 18,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.11245322,
+        2.3351857199999997,
+        1.43093445
+      ]
+    },
+    {
+      "unit": "Mushroom",
+      "file": "mushroom.glb",
+      "skins": [
+        "mushroom-blue.ktx2",
+        "mushroom-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.7333333333333333,
+          "frames": 22,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 0.9666666666666667,
+          "frames": 29,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.69433827,
+        1.535442255,
+        1.2466530599999999
+      ]
+    },
+    {
+      "unit": "Necromancer",
+      "file": "necromancer.glb",
+      "skins": [
+        "necromancer-blue.ktx2",
+        "necromancer-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.9666666666666667,
+          "frames": 29,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 0.9666666666666667,
+          "frames": 29,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1.2,
+          "frames": 36,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.1502851,
+        1.6021938699999998,
+        1.1191867599999998
+      ]
+    },
+    {
+      "unit": "Parasite",
+      "file": "parasite.glb",
+      "skins": [
+        "parasite-blue.ktx2",
+        "parasite-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.4,
+          "frames": 12,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        0.5532742,
+        0.658684527,
+        0.74143547
+      ]
+    },
+    {
+      "unit": "FlyingParasite",
+      "file": "flying-parasite.glb",
+      "skins": [
+        "flying-parasite-blue.ktx2",
+        "flying-parasite-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.4,
+          "frames": 12,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        0.92073464,
+        0.68910733,
+        0.9110860700000001
+      ]
+    },
+    {
+      "unit": "Piercebot",
+      "file": "ballista.glb",
+      "skins": [
+        "ballista-blue.ktx2",
+        "ballista-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.4,
+          "frames": 12,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 0.8888888888888888,
+          "frames": 40,
+          "frameRate": 45
+        },
+        "die": {
+          "static": false,
+          "duration": 0.8333333333333334,
+          "frames": 25,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.00582785,
+        1.0127952932,
+        1.75138184
+      ]
+    },
+    {
+      "unit": "Plasmodrone",
+      "file": "flying-machine.glb",
+      "skins": [
+        "flying-machine-blue.ktx2",
+        "flying-machine-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.6666666666666666,
+          "frames": 20,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1.2333333333333334,
+          "frames": 37,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.85117134,
+        1.6860049,
+        1.4260812
+      ]
+    },
+    {
+      "unit": "Reaper",
+      "file": "reaper.glb",
+      "skins": [
+        "reaper-blue.ktx2",
+        "reaper-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.6666666666666666,
+          "frames": 20,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1.1333333333333333,
+          "frames": 34,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.7736151,
+        1.597424476,
+        2.0535933
+      ]
+    },
+    {
+      "unit": "Rider",
+      "file": "rider.glb",
+      "skins": [
+        "rider-blue.ktx2",
+        "rider-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.8,
+          "frames": 24,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.90963003,
+        1.14140197,
+        1.5045618
+      ]
+    },
+    {
+      "unit": "Sentry",
+      "file": "cannon.glb",
+      "skins": [
+        "cannon-blue.ktx2",
+        "cannon-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.4,
+          "frames": 12,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 0.8666666666666667,
+          "frames": 26,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.12241044,
+        1.71224741,
+        1.1866670400000001
+      ]
+    },
+    {
+      "unit": "Wolf",
+      "file": "wolf.glb",
+      "skins": [
+        "wolf-blue.ktx2",
+        "wolf-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.8,
+          "frames": 24,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 0.7666666666666667,
+          "frames": 23,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 0.9333333333333333,
+          "frames": 28,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        0.6292895000000001,
+        1.1608756900000001,
+        2.3881934
+      ]
+    },
+    {
+      "unit": "SkeletalDragon",
+      "file": "skeletal-dragon.glb",
+      "skins": [
+        "skeletal-dragon-blue.ktx2",
+        "skeletal-dragon-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.7,
+          "frames": 21,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1.3,
+          "frames": 39,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 0.9666666666666667,
+          "frames": 29,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.43813597,
+        3.1486933,
+        2.3172855
+      ]
+    },
+    {
+      "unit": "Slicebot",
+      "file": "sword-machine.glb",
+      "skins": [
+        "sword-machine-blue.ktx2",
+        "sword-machine-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.6666666666666666,
+          "frames": 20,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1.7,
+          "frames": 51,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.10326646,
+        1.3564869849999999,
+        1.7483466399999998
+      ]
+    },
+    {
+      "unit": "Slime",
+      "file": "slime.glb",
+      "skins": [
+        "slime-blue.ktx2",
+        "slime-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.5333333333333333,
+          "frames": 16,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 0.9333333333333333,
+          "frames": 28,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 0.8333333333333334,
+          "frames": 25,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        0.5547180199999999,
+        0.608893171564,
+        0.96297798
+      ]
+    },
+    {
+      "unit": "BigSlime",
+      "file": "big-slime.glb",
+      "skins": [
+        "big-slime-blue.ktx2",
+        "big-slime-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.5333333333333333,
+          "frames": 16,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 0.9333333333333333,
+          "frames": 28,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 0.9333333333333333,
+          "frames": 28,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.0371923500000002,
+        0.85361479924,
+        1.3835943
+      ]
+    },
+    {
+      "unit": "GiantSlime",
+      "file": "giant-slime.glb",
+      "skins": [
+        "giant-slime-blue.ktx2",
+        "giant-slime-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.6,
+          "frames": 18,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 0.9333333333333333,
+          "frames": 28,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 0.9333333333333333,
+          "frames": 28,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.55672094,
+        1.5857753184999999,
+        2.0711221
+      ]
+    },
+    {
+      "unit": "Sniper",
+      "file": "sniper.glb",
+      "skins": [
+        "sniper-blue.ktx2",
+        "sniper-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.8,
+          "frames": 24,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 2,
+          "frames": 60,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        0.9980170100000001,
+        1.3714634613,
+        1.069226
+      ]
+    },
+    {
+      "unit": "Soulfire",
+      "file": "inferno.glb",
+      "skins": [
+        "inferno-blue.ktx2",
+        "inferno-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.6666666666666666,
+          "frames": 20,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.6845099000000001,
+        1.6178595293,
+        1.16508946
+      ]
+    },
+    {
+      "unit": "Sphinx",
+      "file": "sphinx.glb",
+      "skins": [
+        "sphinx-blue.ktx2",
+        "sphinx-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.9666666666666667,
+          "frames": 29,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        2.1589525,
+        1.36479868,
+        1.5165145
+      ],
+      "runGroundY": -92.931323467
+    },
+    {
+      "unit": "Spider",
+      "file": "spider.glb",
+      "skins": [
+        "spider-blue.ktx2",
+        "spider-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.5333333333333333,
+          "frames": 16,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.4476567500000002,
+        1.3660742623,
+        1.5671106
+      ]
+    },
+    {
+      "unit": "Squirrel",
+      "file": "squirrel.glb",
+      "skins": [
+        "squirrel-blue.ktx2",
+        "squirrel-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.5,
+          "frames": 15,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1.0333333333333334,
+          "frames": 31,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        0.58302844,
+        0.990090813,
+        1.3651388899999999
+      ]
+    },
+    {
+      "unit": "Succubus",
+      "file": "vampire.glb",
+      "skins": [
+        "vampire-blue.ktx2",
+        "vampire-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.8,
+          "frames": 24,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1.1333333333333333,
+          "frames": 34,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.07580885,
+        1.720007308,
+        1.6039785
+      ]
+    },
+    {
+      "unit": "Toad",
+      "file": "frog.glb",
+      "skins": [
+        "frog-blue.ktx2",
+        "frog-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.5333333333333333,
+          "frames": 16,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 0.8666666666666667,
+          "frames": 26,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 0.9666666666666667,
+          "frames": 29,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.5191526400000002,
+        0.999949601,
+        1.18091846
+      ]
+    },
+    {
+      "unit": "Treant",
+      "file": "treant.glb",
+      "skins": [
+        "treant-blue.ktx2",
+        "treant-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.9666666666666667,
+          "frames": 29,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1.6666666666666667,
+          "frames": 50,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1.6333333333333333,
+          "frames": 49,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.8256672,
+        1.752953177,
+        1.85273136
+      ],
+      "runGroundY": -9.19400792
+    },
+    {
+      "unit": "Valkyrie",
+      "file": "valkyrie.glb",
+      "skins": [
+        "valkyrie-blue.ktx2",
+        "valkyrie-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.8,
+          "frames": 24,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        1.29436737,
+        1.37385629967,
+        1.40800238
+      ]
+    },
+    {
+      "unit": "Zombie",
+      "file": "zombie.glb",
+      "skins": [
+        "zombie-blue.ktx2",
+        "zombie-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 0.8,
+          "frames": 24,
+          "frameRate": 30
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1.1666666666666667,
+          "frames": 35,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        0.78095537,
+        1.31673229,
+        1.52858918
+      ]
+    },
+    {
+      "unit": "ZombieSkeleton",
+      "file": "zombie-skeleton.glb",
+      "skins": [
+        "zombie-skeleton-blue.ktx2",
+        "zombie-skeleton-red.ktx2"
+      ],
+      "clips": {
+        "run": {
+          "static": false,
+          "duration": 2.4,
+          "frames": 24,
+          "frameRate": 10
+        },
+        "attack": {
+          "static": false,
+          "duration": 1,
+          "frames": 30,
+          "frameRate": 30
+        },
+        "die": {
+          "static": false,
+          "duration": 1.1666666666666667,
+          "frames": 35,
+          "frameRate": 30
+        }
+      },
+      "runSize": [
+        0.7809524,
+        1.2434061399999998,
+        1.5285930799999998
+      ]
+    }
+  ]
+}

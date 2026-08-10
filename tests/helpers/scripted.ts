@@ -205,7 +205,7 @@ function generateFor(world: World, player: number, rng: Rng): Command[] {
         type: CommandType.Train,
         player,
         building: pool.idAt(b),
-        unit: rng.nextInt(2) === 0 ? EntityType.Rifleman : EntityType.Brawler,
+        unit: rng.nextInt(2) === 0 ? EntityType.Burstbot : EntityType.Slicebot,
       });
     }
   }
@@ -220,7 +220,7 @@ function generateFor(world: World, player: number, rng: Rng): Command[] {
     const army: number[] = [];
     for (const i of ownedIndices(world, player)) {
       const t = pool.type[i]! as EntityType;
-      if (t === EntityType.Rifleman || t === EntityType.Brawler) army.push(pool.idAt(i));
+      if (t === EntityType.Burstbot || t === EntityType.Slicebot) army.push(pool.idAt(i));
     }
     if (army.length > 0) {
       const enemyStart = world.map.starts[1 - player];

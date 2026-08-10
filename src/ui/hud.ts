@@ -49,6 +49,8 @@ export class Hud {
 
   private readonly fullscreenBtn: HTMLButtonElement;
   private readonly muteBtn: HTMLButtonElement;
+  private readonly allUnitsBtn: HTMLButtonElement;
+  private readonly onShowAllUnits: () => void;
 
   /** True while the pointer is over a HUD panel, to suppress world clicks. */
   pointerOverUi = false;
@@ -61,7 +63,9 @@ export class Hud {
     private readonly mapSize: number,
     private readonly localPlayer: PlayerId,
     private readonly onMinimapClick: (x: number, z: number, secondary: boolean) => void,
+    onShowAllUnits: () => void = () => {},
   ) {
+    this.onShowAllUnits = onShowAllUnits;
     root.innerHTML = `
       <div class="panel" id="resources">
         <div class="stat">
@@ -98,6 +102,11 @@ export class Hud {
               title="Mute (M)" aria-label="Toggle sound"></button>
       <button class="panel" id="fullscreen-btn" type="button"
               title="Fullscreen (F)" aria-label="Toggle fullscreen"></button>
+      <button class="panel" id="all-units-btn" type="button"
+              title="View all unit models" aria-label="View all unit models"
+              aria-haspopup="dialog" aria-controls="unit-gallery-dialog">
+        Units
+      </button>
 
       <div class="panel" id="banner"></div>
       <div id="marquee"></div>
@@ -142,10 +151,19 @@ export class Hud {
       this.fullscreenBtn.style.display = 'none';
     }
 
+    this.allUnitsBtn = must(root, '#all-units-btn') as HTMLButtonElement;
+    this.allUnitsBtn.addEventListener('click', () => {
+      // The button is hidden with the rest of the HUD as the gallery opens, so
+      // it cannot emit the pointerleave that would normally clear this flag.
+      this.pointerOverUi = false;
+      this.onShowAllUnits();
+    });
+
     // Panels swallow pointer events so a click on the command card never also
     // issues a world order behind it.
     for (const sel of [
       '#resources', '#minimap-panel', '#command-panel', '#fullscreen-btn', '#mute-btn',
+      '#all-units-btn',
     ]) {
       const panel = must(root, sel);
       panel.classList.add('interactive');
@@ -296,8 +314,8 @@ export class Hud {
     // saying so the panel just sits at 100% forever, which reads as the game
     // being broken — and it is easy to hit without the supply counter looking
     // full, because what matters is whether *this* unit fits, not whether
-    // there is any headroom at all. One free supply trains a rifleman and
-    // stalls a gunship.
+    // there is any headroom at all. One free supply trains a Burstbot and
+    // stalls a Beamdrone.
     const blocked = supplyBlocked(world, single);
     this.production.classList.toggle('blocked', blocked);
     if (blocked) {

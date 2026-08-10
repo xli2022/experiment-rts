@@ -4,7 +4,7 @@
  * One `InstancedMesh` carries every unit of a type for one player, and each
  * instance holds a single extra number: the row of the baked bone texture it is
  * currently posed on. The vertex shader reads that row's bone matrices and skins
- * the vertex, so a hundred brawlers mid-swing cost the same one draw call a
+ * the vertex, so a hundred Slicebots mid-swing cost the same one draw call a
  * hundred static boxes would.
  *
  * The shader is the stock Lambert vertex shader with skinning spliced in.
@@ -13,8 +13,8 @@
  * whole thing on the instanced path.
  */
 
-import * as THREE from 'three';
-import type { AnimatedModel } from './models/animated.js';
+import * as THREE from "three";
+import type { AnimatedModel } from "./models/animated.js";
 
 /**
  * Injected declarations: the bone texture and how to read a matrix out of it.
@@ -113,22 +113,37 @@ export class AnimatedUnitPool {
     // Share the heavy attributes with every other pool of this model; only the
     // per-instance frame is private.
     const geometry = new THREE.BufferGeometry();
-    for (const name of ['position', 'normal', 'uv', 'skinIndex', 'skinWeight']) {
+    for (const name of [
+      "position",
+      "normal",
+      "uv",
+      "skinIndex",
+      "skinWeight",
+    ]) {
       const attr = model.geometry.getAttribute(name);
       if (attr) geometry.setAttribute(name, attr);
     }
     const index = model.geometry.getIndex();
     if (index) geometry.setIndex(index);
 
-    this.frames = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
+    this.frames = new THREE.InstancedBufferAttribute(
+      new Float32Array(capacity),
+      1,
+    );
     this.frames.setUsage(THREE.DynamicDrawUsage);
-    geometry.setAttribute('aFrame', this.frames);
-    this.framesTo = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
+    geometry.setAttribute("aFrame", this.frames);
+    this.framesTo = new THREE.InstancedBufferAttribute(
+      new Float32Array(capacity),
+      1,
+    );
     this.framesTo.setUsage(THREE.DynamicDrawUsage);
-    geometry.setAttribute('aFrameTo', this.framesTo);
-    this.blends = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
+    geometry.setAttribute("aFrameTo", this.framesTo);
+    this.blends = new THREE.InstancedBufferAttribute(
+      new Float32Array(capacity),
+      1,
+    );
     this.blends.setUsage(THREE.DynamicDrawUsage);
-    geometry.setAttribute('aBlend', this.blends);
+    geometry.setAttribute("aBlend", this.blends);
 
     patchMaterial(material, model);
 
@@ -172,11 +187,17 @@ export class AnimatedUnitPool {
   }
 
   dispose(): void {
+    this.mesh.dispose();
     for (const d of this.disposables) d.dispose();
   }
 
   /** Row of the bone texture for a clip at `t` seconds, looping or held. */
-  static frameFor(model: AnimatedModel, clip: string, t: number, loop: boolean): number {
+  static frameFor(
+    model: AnimatedModel,
+    clip: string,
+    t: number,
+    loop: boolean,
+  ): number {
     const baked = model.clips.get(clip);
     if (!baked) return 0;
     const raw = Math.floor(t * (baked.frameCount / baked.duration));
@@ -205,11 +226,17 @@ export class AnimatedUnitPool {
     const exact = t * (baked.frameCount / baked.duration);
     const whole = Math.floor(exact);
     const frac = exact - whole;
-    const wrap = (n: number): number => ((n % baked.frameCount) + baked.frameCount) % baked.frameCount;
-    const clamp = (n: number): number => (n < 0 ? 0 : n > baked.frameCount - 1 ? baked.frameCount - 1 : n);
+    const wrap = (n: number): number =>
+      ((n % baked.frameCount) + baked.frameCount) % baked.frameCount;
+    const clamp = (n: number): number =>
+      n < 0 ? 0 : n > baked.frameCount - 1 ? baked.frameCount - 1 : n;
     const a = loop ? wrap(whole) : clamp(whole);
     const b = loop ? wrap(whole + 1) : clamp(whole + 1);
-    return { from: baked.startFrame + a, to: baked.startFrame + b, blend: frac };
+    return {
+      from: baked.startFrame + a,
+      to: baked.startFrame + b,
+      blend: frac,
+    };
   }
 }
 
@@ -219,7 +246,10 @@ export class AnimatedUnitPool {
  * `onBeforeCompile` runs once per program, so the uniforms are wired here and
  * the shader source is rewritten around three.js's own include points.
  */
-function patchMaterial(material: THREE.MeshLambertMaterial, model: AnimatedModel): void {
+function patchMaterial(
+  material: THREE.MeshLambertMaterial,
+  model: AnimatedModel,
+): void {
   const size = new THREE.Vector2(model.boneCount * 4, model.totalFrames);
   material.onBeforeCompile = (shader) => {
     shader.uniforms.boneTexture = { value: model.boneTexture };
@@ -228,10 +258,16 @@ function patchMaterial(material: THREE.MeshLambertMaterial, model: AnimatedModel
     shader.uniforms.bindMatrixInverse = { value: model.bindMatrixInverse };
 
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', `#include <common>\n${SKIN_HEADER}`)
-      .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>\n${SKIN_NORMAL}`)
-      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${SKIN_POSITION}`);
+      .replace("#include <common>", `#include <common>\n${SKIN_HEADER}`)
+      .replace(
+        "#include <beginnormal_vertex>",
+        `#include <beginnormal_vertex>\n${SKIN_NORMAL}`,
+      )
+      .replace(
+        "#include <begin_vertex>",
+        `#include <begin_vertex>\n${SKIN_POSITION}`,
+      );
   };
   // Distinguishes this program from an unpatched Lambert in three's cache.
-  material.customProgramCacheKey = () => 'baked-skin';
+  material.customProgramCacheKey = () => "baked-skin";
 }

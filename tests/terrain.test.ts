@@ -3,7 +3,7 @@
  *
  * Cliff height and flight altitude used to be two independent numbers, and they
  * drifted the moment the map gained real elevation: ridges grew past 3 units
- * while gunships stayed at 2.4, so air units flew through rock. The altitude is
+ * while Beamdrones stayed at 2.4, so air units flew through rock. The altitude is
  * now derived from the terrain's own maximum, and this pins the relationship so
  * a future change to either one fails here instead of in a screenshot.
  */

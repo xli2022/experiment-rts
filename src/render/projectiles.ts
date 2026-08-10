@@ -177,7 +177,7 @@ export class ProjectileRenderer {
    * Throw debris where something died.
    *
    * Buildings get more, bigger, slower chunks than infantry — a Command Post
-   * falling should not look like a rifleman being shot.
+   * falling should not look like a Burstbot being shot.
    */
   spawnDeaths(world: World): void {
     const pool = world.pool;

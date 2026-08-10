@@ -134,7 +134,7 @@ describe('trained units are placed somewhere they can stand', () => {
 
     const before = new Set<number>();
     for (let i = 0; i < pool.count; i++) if (pool.alive[i] === 1) before.add(i);
-    for (let k = 0; k < 3; k++) pool.prodPush(b, EntityType.Rifleman);
+    for (let k = 0; k < 3; k++) pool.prodPush(b, EntityType.Burstbot);
 
     // Every tick, not just at the end. `clampToMap` ejects a unit standing in a
     // wall within a tick or two, so by the end of the run a badly placed unit
@@ -175,7 +175,7 @@ describe('trained units are placed somewhere they can stand', () => {
 
     const before = new Set<number>();
     for (let i = 0; i < pool.count; i++) if (pool.alive[i] === 1) before.add(i);
-    pool.prodPush(b, EntityType.Rifleman);
+    pool.prodPush(b, EntityType.Burstbot);
     for (let t = 0; t < 900; t++) sim.step([]);
 
     for (let i = 0; i < pool.count; i++) {
@@ -228,7 +228,7 @@ describe('a rally point names ground', () => {
 
     const before = new Set<number>();
     for (let i = 0; i < pool.count; i++) if (pool.alive[i] === 1) before.add(i);
-    for (let k = 0; k < 3; k++) pool.prodPush(b, EntityType.Rifleman);
+    for (let k = 0; k < 3; k++) pool.prodPush(b, EntityType.Burstbot);
 
     // Checked while they are still walking, since an order that has completed
     // no longer says anything about where it pointed.
@@ -274,7 +274,7 @@ describe('nothing is ever pushed into a wall', () => {
     for (let k = 0; k < 8; k++) {
       ids.push(
         pool.spawn(
-          EntityType.Rifleman,
+          EntityType.Burstbot,
           0 as PlayerId,
           Math.round((spot!.x + 0.5 - k * 0.15) * FIX),
           Math.round((spot!.y + 0.5) * FIX),

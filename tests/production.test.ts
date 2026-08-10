@@ -3,7 +3,7 @@
  *
  * A finished unit waits inside the building until there is supply room for it,
  * which is what the genre does. The trap is that "room" is per unit: with
- * exactly one free supply a rifleman still pops out every time while a gunship
+ * exactly one free supply a Burstbot still pops out every time while a Beamdrone
  * never does, and the supply counter reads 19/20 the whole while. That looks
  * from the outside like one unit type being broken, and it was reported as
  * exactly that.
@@ -64,7 +64,7 @@ function runPinned(sim: Simulation, ticks: number, free: number): void {
 
 describe('training', () => {
   it('delivers every unit type when supply is plentiful', () => {
-    for (const unit of [EntityType.Rifleman, EntityType.Brawler, EntityType.Gunship]) {
+    for (const unit of [EntityType.Burstbot, EntityType.Slicebot, EntityType.Beamdrone]) {
       const { sim, barracks } = withBarracks();
       sim.world.players[0]!.supplyMax = 200;
       train(sim, barracks, unit);
@@ -79,7 +79,7 @@ describe('training', () => {
   it('holds a unit that does not fit, while a smaller one still comes out', () => {
     // One free supply. This is the state behind the bug report: the counter
     // shows headroom, so it does not look like being supply blocked at all.
-    for (const unit of [EntityType.Rifleman, EntityType.Brawler, EntityType.Gunship]) {
+    for (const unit of [EntityType.Burstbot, EntityType.Slicebot, EntityType.Beamdrone]) {
       const { sim, barracks } = withBarracks();
       train(sim, barracks, unit);
       runPinned(sim, defOf(unit).buildTicks + 200, 1);
@@ -98,40 +98,40 @@ describe('training', () => {
 
   it('releases the held unit as soon as the supply arrives', () => {
     const { sim, barracks } = withBarracks();
-    train(sim, barracks, EntityType.Gunship);
-    runPinned(sim, defOf(EntityType.Gunship).buildTicks + 100, 1);
-    expect(countOf(sim, EntityType.Gunship)).toBe(0);
+    train(sim, barracks, EntityType.Beamdrone);
+    runPinned(sim, defOf(EntityType.Beamdrone).buildTicks + 100, 1);
+    expect(countOf(sim, EntityType.Beamdrone)).toBe(0);
 
     // A depot finishes: the wait was the only thing holding it.
     sim.world.players[0]!.supplyMax = sim.world.players[0]!.supplyUsed + 10;
     sim.step([]);
-    expect(countOf(sim, EntityType.Gunship)).toBe(1);
+    expect(countOf(sim, EntityType.Beamdrone)).toBe(1);
   });
 
   it('does not let a held unit block the ones behind it forever', () => {
     // The head of the queue is what stalls; the rest must still be there, and
     // must start moving again the moment it clears.
     const { sim, barracks } = withBarracks();
-    train(sim, barracks, EntityType.Gunship);
-    train(sim, barracks, EntityType.Rifleman);
-    runPinned(sim, defOf(EntityType.Gunship).buildTicks + 100, 1);
+    train(sim, barracks, EntityType.Beamdrone);
+    train(sim, barracks, EntityType.Burstbot);
+    runPinned(sim, defOf(EntityType.Beamdrone).buildTicks + 100, 1);
     expect(sim.world.pool.prodCount[barracks]).toBe(2);
 
     sim.world.players[0]!.supplyMax = sim.world.players[0]!.supplyUsed + 10;
-    for (let t = 0; t < defOf(EntityType.Rifleman).buildTicks + 40; t++) sim.step([]);
-    expect(countOf(sim, EntityType.Gunship)).toBe(1);
-    expect(countOf(sim, EntityType.Rifleman)).toBe(1);
+    for (let t = 0; t < defOf(EntityType.Burstbot).buildTicks + 40; t++) sim.step([]);
+    expect(countOf(sim, EntityType.Beamdrone)).toBe(1);
+    expect(countOf(sim, EntityType.Burstbot)).toBe(1);
   });
 
   it('refunds a cancelled unit in full, even one already finished', () => {
     const { sim, barracks } = withBarracks();
-    const cost = defOf(EntityType.Gunship).mineralCost;
+    const cost = defOf(EntityType.Beamdrone).mineralCost;
     const before = sim.world.players[0]!.minerals;
 
-    train(sim, barracks, EntityType.Gunship);
+    train(sim, barracks, EntityType.Beamdrone);
     expect(sim.world.players[0]!.minerals).toBe(before - cost);
 
-    runPinned(sim, defOf(EntityType.Gunship).buildTicks + 60, 1);
+    runPinned(sim, defOf(EntityType.Beamdrone).buildTicks + 60, 1);
     expect(sim.world.pool.prodCount[barracks]).toBe(1);
 
     sim.step([
@@ -148,7 +148,7 @@ describe('training', () => {
 
   it('will not queue past the limit, or another player’s building', () => {
     const { sim, barracks } = withBarracks();
-    for (let k = 0; k < MAX_PRODUCTION_QUEUE + 3; k++) train(sim, barracks, EntityType.Rifleman);
+    for (let k = 0; k < MAX_PRODUCTION_QUEUE + 3; k++) train(sim, barracks, EntityType.Burstbot);
     expect(sim.world.pool.prodCount[barracks]).toBe(MAX_PRODUCTION_QUEUE);
 
     const spent = sim.world.players[1]!.minerals;
@@ -157,7 +157,7 @@ describe('training', () => {
         type: CommandType.Train,
         player: 1,
         building: sim.world.pool.idAt(barracks),
-        unit: EntityType.Rifleman,
+        unit: EntityType.Burstbot,
       },
     ]);
     expect(sim.world.players[1]!.minerals).toBe(spent);

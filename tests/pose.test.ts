@@ -12,7 +12,7 @@
  * - A unit defending itself carries no attack order. It is idle, hitting
  *   whatever walked into range — the most common fight in the game — so the
  *   `else if` never fired.
- * - Units in contact are shoved apart by separation every tick, so a brawler
+ * - Units in contact are shoved apart by separation every tick, so a Slicebot
  *   in melee is never quite stationary and the `if` won anyway.
  *
  * The fix is to stop inferring: the simulation already publishes every shot it
@@ -84,12 +84,12 @@ describe('choosing a clip', () => {
 });
 
 /**
- * An idle brawler with an enemy standing next to it, on open ground.
+ * An idle Slicebot with an enemy standing next to it, on open ground.
  *
  * The spot is searched for rather than hard-coded: the map is more than half
  * cliff, and a unit standing in rock is ejected by `clampToMap` every tick.
  */
-function stageDuel(): { sim: Simulation; brawler: number; enemy: number } {
+function stageDuel(): { sim: Simulation; slicebot: number; enemy: number } {
   const sim = new Simulation(0x51ce7a11);
   const pool = sim.world.pool;
   const map = sim.world.map;
@@ -109,17 +109,17 @@ function stageDuel(): { sim: Simulation; brawler: number; enemy: number } {
 
   const ax = spot.x + 0.5;
   const ay = spot.y + 0.5;
-  const brawler =
-    pool.spawn(EntityType.Brawler, 0, Math.round(ax * FIX), Math.round(ay * FIX)) & 0xffff;
+  const slicebot =
+    pool.spawn(EntityType.Slicebot, 0, Math.round(ax * FIX), Math.round(ay * FIX)) & 0xffff;
   const enemy =
-    pool.spawn(EntityType.Rifleman, 1, Math.round((ax + 1) * FIX), Math.round(ay * FIX)) & 0xffff;
-  return { sim, brawler, enemy };
+    pool.spawn(EntityType.Burstbot, 1, Math.round((ax + 1) * FIX), Math.round(ay * FIX)) & 0xffff;
+  return { sim, slicebot, enemy };
 }
 
 describe('the signal behind it', () => {
-  it('reports a shot for an idle brawler defending itself', () => {
+  it('reports a shot for an idle Slicebot defending itself', () => {
     // The exact case the old order-based rule could not see: no order at all.
-    const { sim, brawler, enemy } = stageDuel();
+    const { sim, slicebot, enemy } = stageDuel();
     const pool = sim.world.pool;
     const hp0 = pool.hp[enemy]!;
 
@@ -127,13 +127,13 @@ describe('the signal behind it', () => {
     for (let t = 0; t < 60 && !swung; t++) {
       pool.hp[enemy] = hp0;
       pool.order[enemy] = Order.Hold;
-      pool.order[brawler] = Order.None;
+      pool.order[slicebot] = Order.None;
       sim.step([]);
       const shots = sim.world.events.shots;
-      for (let k = 0; k < shots.length; k += 2) if (shots[k] === brawler) swung = true;
+      for (let k = 0; k < shots.length; k += 2) if (shots[k] === slicebot) swung = true;
     }
-    expect(`idle ${defOf(EntityType.Brawler).name} reported a shot: ${swung}`).toBe(
-      `idle ${defOf(EntityType.Brawler).name} reported a shot: true`,
+    expect(`idle ${defOf(EntityType.Slicebot).name} reported a shot: ${swung}`).toBe(
+      `idle ${defOf(EntityType.Slicebot).name} reported a shot: true`,
     );
   });
 

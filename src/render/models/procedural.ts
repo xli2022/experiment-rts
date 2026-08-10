@@ -6,7 +6,7 @@
  * clearly at RTS camera distance, where detailed models turn to mush anyway.
  *
  * Silhouettes are kept deliberately distinct — the worker is squat and round,
- * the rifleman is upright and narrow, the brawler is wide and heavy — because in
+ * the Burstbot is upright and narrow, the Slicebot is wide and heavy — because in
  * a real fight players identify units by outline and colour long before they
  * make out any detail.
  */
@@ -54,7 +54,7 @@ export class ProceduralModelProvider implements ModelProvider {
           ],
         };
 
-      case EntityType.Rifleman:
+      case EntityType.Burstbot:
         return {
           radius,
           height: 1.15,
@@ -66,7 +66,7 @@ export class ProceduralModelProvider implements ModelProvider {
           ],
         };
 
-      case EntityType.Brawler:
+      case EntityType.Slicebot:
         return {
           radius,
           height: 1.3,
@@ -80,7 +80,7 @@ export class ProceduralModelProvider implements ModelProvider {
           ],
         };
 
-      case EntityType.Gunship:
+      case EntityType.Beamdrone:
         return {
           radius,
           height: 1.0,

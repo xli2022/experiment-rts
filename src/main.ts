@@ -24,6 +24,7 @@ import { TerrainRenderer } from './render/terrain.js';
 import { ProceduralModelProvider } from './render/models/procedural.js';
 import { ProjectileRenderer } from './render/projectiles.js';
 import { FogRenderer } from './render/fog.js';
+import { UnitGallery } from './render/unitGallery.js';
 import { audio } from './audio/audio.js';
 import { groundPointAt, pickAt, pickInBox, Selection } from './input/selection.js';
 import { Hud, type CommandButton } from './ui/hud.js';
@@ -41,6 +42,20 @@ const BUILD_MENU: { type: EntityType; key: string }[] = [
   { type: EntityType.CommandPost, key: 'C' },
 ];
 
+/** Explicit production bindings; authored names do not necessarily have unique initials. */
+const TRAIN_HOTKEYS: Readonly<Partial<Record<EntityType, string>>> = {
+  [EntityType.Worker]: 'W',
+  [EntityType.Burstbot]: 'B',
+  [EntityType.Slicebot]: 'S',
+  [EntityType.Beamdrone]: 'D',
+};
+
+function trainHotkey(type: EntityType): string {
+  const key = TRAIN_HOTKEYS[type];
+  if (key !== undefined) return key;
+  throw new Error(`No production hotkey for entity type ${type}`);
+}
+
 class Game {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
@@ -52,6 +67,7 @@ class Game {
   private readonly fog: FogRenderer;
   private readonly selection: Selection;
   private readonly hud: Hud;
+  private readonly gallery: UnitGallery;
   private readonly runner: LockstepRunner;
   private readonly sim: Simulation;
   private readonly localPlayer: PlayerId;
@@ -98,6 +114,7 @@ class Game {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setClearColor(0x0b0e14);
     this.scene.fog = new THREE.Fog(0x0b0e14, 90, 190);
+    this.gallery = new UnitGallery(uiRoot, this.renderer);
 
     this.camera = new RtsCamera(canvas, MAP_SIZE);
     this.terrain = new TerrainRenderer(this.sim.world.map);
@@ -125,22 +142,33 @@ class Game {
     });
 
     this.selection = new Selection(this.localPlayer);
-    this.hud = new Hud(uiRoot, MAP_SIZE, this.localPlayer, (x, z, secondary) => {
-      if (secondary) this.issueGroundOrder(x, z, false);
-      else this.camera.lookAt(x, z);
-    });
+    this.hud = new Hud(
+      uiRoot,
+      MAP_SIZE,
+      this.localPlayer,
+      (x, z, secondary) => {
+        if (secondary) this.issueGroundOrder(x, z, false);
+        else this.camera.lookAt(x, z);
+      },
+      () => {
+        this.cancelModes();
+        this.gallery.open();
+      },
+    );
 
     this.runner = new LockstepRunner(this.sim, transport, {
       onStall: (waiting) =>
         this.hud.showBanner(`Waiting for player ${waiting.join(', ')}…`, 'warn'),
       onResume: () => this.hud.hideBanner(),
-      onDesync: (tick) =>
+      onDesync: (tick) => {
+        this.gallery.close();
         this.hud.showDialog(
           'Desynchronised',
           `The two games diverged at tick ${tick}. In peer-to-peer play there is no ` +
             `authority to correct this, so the match cannot continue.`,
           [{ label: 'Reload', primary: true, onClick: () => location.reload() }],
-        ),
+        );
+      },
     });
 
     // Open on the player's own base, which is where they will look first.
@@ -231,6 +259,7 @@ class Game {
 
   private handleKey(e: KeyboardEvent): void {
     if (e.target instanceof HTMLInputElement) return;
+    if (this.gallery.isOpen) return;
 
     if (e.code === 'Escape') {
       this.cancelModes();
@@ -262,9 +291,9 @@ class Game {
       return;
     }
 
-    // Then whatever the command card currently offers. This is what makes
-    // B/D/T/R/G work: the card is contextual, so the same key means "Barracks"
-    // with a worker selected and "Brawler" with a barracks selected.
+    // Then whatever the command card currently offers. The card is contextual,
+    // so the same key can mean a building with a worker selected and a unit
+    // with a production building selected.
     if (!e.ctrlKey && !e.metaKey && !e.altKey && this.dispatchCommandKey(e.code)) {
       e.preventDefault();
       return;
@@ -651,7 +680,7 @@ class Game {
       this.lastTick = this.sim.world.tick;
     }
 
-    this.camera.update(dtMs / 1000);
+    if (!this.gallery.isOpen) this.camera.update(dtMs / 1000);
     this.projectiles.update(dtMs);
     this.fog.refresh();
     // Cliffs have height and so stand through the fog plane; they are shaded to
@@ -682,7 +711,8 @@ class Game {
     );
 
     this.checkResult();
-    this.renderer.render(this.scene, this.camera.camera);
+    if (this.gallery.isOpen) this.gallery.render(this.elapsedS);
+    else this.renderer.render(this.scene, this.camera.camera);
   }
 
   /**
@@ -752,7 +782,7 @@ class Game {
       for (const unit of def.produces) {
         const unitDef = defOf(unit);
         buttons.push({
-          key: unitDef.name[0]!,
+          key: trainHotkey(unit),
           label: unitDef.name,
           cost: unitDef.mineralCost,
           enabled: minerals >= unitDef.mineralCost,
@@ -837,6 +867,7 @@ class Game {
     if (!this.sim.world.matchOver) return;
 
     this.finished = true;
+    this.gallery.close();
     const winner = this.sim.world.winner;
     const replay = [{ label: 'Play again', primary: true, onClick: () => location.reload() }];
 

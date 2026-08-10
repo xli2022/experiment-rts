@@ -22,8 +22,8 @@ describe('entity definitions', () => {
     }
   });
 
-  it('describes the gunship as a flying, non-colliding unit', () => {
-    const g = defOf(EntityType.Gunship);
+  it('describes the Beamdrone as a flying, non-colliding unit', () => {
+    const g = defOf(EntityType.Beamdrone);
     expect(g.flying).toBe(true);
     expect(g.collides).toBe(false);
     expect(g.isBuilding).toBe(false);
@@ -31,16 +31,16 @@ describe('entity definitions', () => {
   });
 
   it('keeps every ground unit non-flying', () => {
-    for (const type of [EntityType.Worker, EntityType.Rifleman, EntityType.Brawler]) {
+    for (const type of [EntityType.Worker, EntityType.Burstbot, EntityType.Slicebot]) {
       expect(defOf(type).flying).toBe(false);
     }
   });
 
   it('lets the barracks train all three combat units', () => {
     const produces = defOf(EntityType.Barracks).produces;
-    expect(produces).toContain(EntityType.Rifleman);
-    expect(produces).toContain(EntityType.Brawler);
-    expect(produces).toContain(EntityType.Gunship);
+    expect(produces).toContain(EntityType.Burstbot);
+    expect(produces).toContain(EntityType.Slicebot);
+    expect(produces).toContain(EntityType.Beamdrone);
   });
 });
 
@@ -104,9 +104,9 @@ describe('damage is a single number', () => {
   }
 
   const ARMED = [
-    EntityType.Rifleman,
-    EntityType.Brawler,
-    EntityType.Gunship,
+    EntityType.Burstbot,
+    EntityType.Slicebot,
+    EntityType.Beamdrone,
     EntityType.Worker,
   ];
 
@@ -129,27 +129,27 @@ describe('flying units in a real match', () => {
     sim.botPlayers.add(0);
     sim.botPlayers.add(1);
 
-    let sawGunship = false;
-    let gunshipOverSolidGround = false;
+    let sawBeamdrone = false;
+    let beamdroneOverSolidGround = false;
 
-    for (let t = 0; t < 20 * 60 * 12 && !gunshipOverSolidGround; t++) {
+    for (let t = 0; t < 20 * 60 * 12 && !beamdroneOverSolidGround; t++) {
       sim.step([]);
       const pool = sim.world.pool;
       for (let i = 0; i < pool.count; i++) {
         if (pool.alive[i] !== 1) continue;
-        if (pool.type[i] !== EntityType.Gunship) continue;
-        sawGunship = true;
+        if (pool.type[i] !== EntityType.Beamdrone) continue;
+        sawBeamdrone = true;
         // A flyer standing over an unwalkable tile proves it is genuinely
         // ignoring terrain rather than just being a fast ground unit.
         const tile = sim.world.map.tileOfPos(pool.posX[i]!, pool.posY[i]!);
         if (tile < 0) continue;
         const tx = sim.world.map.tileXOf(tile);
         const ty = sim.world.map.tileYOf(tile);
-        if (!sim.world.map.isWalkable(tx, ty)) gunshipOverSolidGround = true;
+        if (!sim.world.map.isWalkable(tx, ty)) beamdroneOverSolidGround = true;
       }
     }
 
-    expect(sawGunship).toBe(true);
-    expect(gunshipOverSolidGround).toBe(true);
+    expect(sawBeamdrone).toBe(true);
+    expect(beamdroneOverSolidGround).toBe(true);
   });
 });

@@ -180,7 +180,7 @@ function resumeAdvance(world: World): void {
  * for an attack-mover, the chase has to stay near where it began. The anchor is
  * the whole point: measured from the unit's *current* position, the window
  * slides along with a retreating enemy and the chase ratchets indefinitely. A
- * unit dragged sideways followed a fleeing rifleman 14.6 tiles off its route.
+ * unit dragged sideways followed a fleeing Burstbot 14.6 tiles off its route.
  *
  * Beyond the anchor leash this returns false but keeps the anchor, so the unit
  * turns back to its objective and can pick the fight up again if it comes back
@@ -226,8 +226,8 @@ function shouldPursue(world: World, index: number, def: EntityDef): boolean {
  * Idle units step up to something they have already picked a fight with.
  *
  * Combat acquires a target within sight and then only shoots if it is already
- * in weapon range; nothing ever closed the gap. For a rifleman that is
- * invisible — its range covers everything it can see nearby — but a brawler
+ * in weapon range; nothing ever closed the gap. For a Burstbot that is
+ * invisible — its range covers everything it can see nearby — but a Slicebot
  * reaches 1.3 tiles and so stood still while an enemy two tiles away shot it,
  * which reads as melee units simply not fighting.
  *
@@ -783,7 +783,7 @@ function separate(world: World): void {
       const defJ = defOf(pool.type[j]! as EntityType);
       if (defJ.isBuilding) return;
       // Same layer or no interaction. Air and ground share the map but not the
-      // space, so a gunship never shoulders a brawler aside.
+      // space, so a Beamdrone never shoulders a Slicebot aside.
       if (defI.flying !== defJ.flying) return;
       if (!defJ.collides && !defJ.flying) return;
 

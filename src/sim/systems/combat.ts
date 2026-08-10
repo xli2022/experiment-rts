@@ -118,7 +118,7 @@ function acquireTarget(world: World, index: number, range: number): number {
     // Mineral patches are neutral, so `isHostile` already excludes them.
     // Something we cannot shoot is not a target, and must not be picked as one:
     // acquisition is what `engageNearby` walks toward, so a melee unit that
-    // acquired a gunship would trail after it without ever landing a blow.
+    // acquired a Beamdrone would trail after it without ever landing a blow.
     if (!canHitAir && defOf(pool.type[j]! as EntityType).flying) return;
 
     const dx = pool.posX[j]! - px;

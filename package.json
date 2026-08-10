@@ -15,6 +15,7 @@
     "determinism:node": "vite-node scripts/checksum-probe.ts",
     "determinism:bun": "bun run scripts/checksum-probe.ts",
     "determinism:cross": "bash scripts/cross-engine.sh",
+    "import:athena2": "node scripts/import-athena2-models.mjs",
     "textures": "node scripts/encode-textures.mjs"
   },
   "dependencies": {

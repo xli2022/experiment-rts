@@ -68,7 +68,7 @@ export function executeCommand(world: World, cmd: Command): void {
         const attacker = defOf(world.pool.type[i]! as EntityType);
         if (attacker.attackRange === 0) return;
         // Dropped per unit rather than for the whole order, so a mixed
-        // selection still sends its riflemen while the brawlers stay put
+        // selection still sends its Burstbots while the Slicebots stay put
         // instead of jogging after something they cannot reach.
         if (targetFlies && !attacker.canHitAir) return;
         world.pool.order[i] = Order.Attack;

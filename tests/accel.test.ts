@@ -84,7 +84,7 @@ function profile(type: EntityType, ticks: number): number[] {
 
 describe('units get up to speed', () => {
   it('starts below top speed and climbs to it', () => {
-    for (const type of [EntityType.Rifleman, EntityType.Brawler, EntityType.Worker]) {
+    for (const type of [EntityType.Burstbot, EntityType.Slicebot, EntityType.Worker]) {
       const def = defOf(type);
       const top = toFloat(def.speedPerTick);
       const steps = profile(type, 12);
@@ -104,7 +104,7 @@ describe('units get up to speed', () => {
   });
 
   it('never exceeds the unit’s top speed', () => {
-    for (const type of [EntityType.Rifleman, EntityType.Gunship]) {
+    for (const type of [EntityType.Burstbot, EntityType.Beamdrone]) {
       const top = toFloat(defOf(type).speedPerTick);
       for (const step of profile(type, 40)) {
         // A percent of slack: separation nudges a unit a fraction of a unit
@@ -118,8 +118,8 @@ describe('units get up to speed', () => {
   it('takes a fraction of a second, not a crawl', () => {
     // Slow enough to read as weight, fast enough that a click still feels
     // answered — at 20 ticks a second this is about a fifth of one.
-    const top = toFloat(defOf(EntityType.Rifleman).speedPerTick);
-    const steps = profile(EntityType.Rifleman, 20);
+    const top = toFloat(defOf(EntityType.Burstbot).speedPerTick);
+    const steps = profile(EntityType.Burstbot, 20);
     const reached = steps.findIndex((s) => s >= top * 0.99);
     expect(reached).toBeGreaterThan(0);
     expect(reached).toBeLessThan(8);
@@ -127,7 +127,7 @@ describe('units get up to speed', () => {
 
   it('still gets there', () => {
     // A ramp that never quite reaches the destination would strand every order.
-    const { sim, unit, id, dest } = ready(EntityType.Rifleman);
+    const { sim, unit, id, dest } = ready(EntityType.Burstbot);
     const pool = sim.world.pool;
     sim.step([
       {

@@ -65,16 +65,16 @@ describe('rally points', () => {
         type: CommandType.Train,
         player: 0,
         building: pool.idAt(barracks),
-        unit: EntityType.Rifleman,
+        unit: EntityType.Burstbot,
       },
     ]);
     expect(pool.hasRally[barracks]).toBe(1);
 
     let unit = -1;
-    for (let t = 0; t < defOf(EntityType.Rifleman).buildTicks + 30 && unit < 0; t++) {
+    for (let t = 0; t < defOf(EntityType.Burstbot).buildTicks + 30 && unit < 0; t++) {
       sim.step([]);
       for (let i = 0; i < pool.count; i++) {
-        if (pool.alive[i] === 1 && pool.owner[i] === 0 && pool.type[i] === EntityType.Rifleman) {
+        if (pool.alive[i] === 1 && pool.owner[i] === 0 && pool.type[i] === EntityType.Burstbot) {
           unit = i;
         }
       }
@@ -101,13 +101,13 @@ describe('rally points', () => {
     expect(pool.hasRally[barracks]).toBe(0);
 
     sim.step([
-      { type: CommandType.Train, player: 0, building: pool.idAt(barracks), unit: EntityType.Rifleman },
+      { type: CommandType.Train, player: 0, building: pool.idAt(barracks), unit: EntityType.Burstbot },
     ]);
     let unit = -1;
-    for (let t = 0; t < defOf(EntityType.Rifleman).buildTicks + 30 && unit < 0; t++) {
+    for (let t = 0; t < defOf(EntityType.Burstbot).buildTicks + 30 && unit < 0; t++) {
       sim.step([]);
       for (let i = 0; i < pool.count; i++) {
-        if (pool.alive[i] === 1 && pool.owner[i] === 0 && pool.type[i] === EntityType.Rifleman) {
+        if (pool.alive[i] === 1 && pool.owner[i] === 0 && pool.type[i] === EntityType.Burstbot) {
           unit = i;
         }
       }
@@ -145,15 +145,15 @@ describe('rally points', () => {
 });
 
 describe('flyers occupy the sky', () => {
-  /** Two gunships spawned on the same spot, and how far apart they end up. */
+  /** Two Beamdrones spawned on the same spot, and how far apart they end up. */
   function twoFlyers(sameOwner: boolean): number {
     const sim = new Simulation(0x51ce7a11);
     const { pool, map } = sim.world;
     const start = map.starts[0]!;
     const x = Math.round((start.tileX + 6.5) * FIX);
     const y = Math.round((start.tileY + 6.5) * FIX);
-    const a = pool.spawn(EntityType.Gunship, 0 as PlayerId, x, y) & 0xffff;
-    const b = pool.spawn(EntityType.Gunship, (sameOwner ? 0 : 1) as PlayerId, x, y) & 0xffff;
+    const a = pool.spawn(EntityType.Beamdrone, 0 as PlayerId, x, y) & 0xffff;
+    const b = pool.spawn(EntityType.Beamdrone, (sameOwner ? 0 : 1) as PlayerId, x, y) & 0xffff;
     for (let t = 0; t < 40; t++) sim.step([]);
     return Math.hypot(
       toFloat(pool.posX[a]!) - toFloat(pool.posX[b]!),
@@ -161,15 +161,15 @@ describe('flyers occupy the sky', () => {
     );
   }
 
-  it('pushes two coincident gunships apart', () => {
+  it('pushes two coincident Beamdrones apart', () => {
     const gap = twoFlyers(true);
     // They start exactly on top of each other; separation must resolve that.
     expect(`gap ${gap.toFixed(2)} > 0.3: ${gap > 0.3}`).toBe(`gap ${gap.toFixed(2)} > 0.3: true`);
   });
 
   it('never shoulders a ground unit aside', () => {
-    // Air and ground share the map but not the space. A gunship hovering over a
-    // brawler must not shove it, or flyers become a battering ram.
+    // Air and ground share the map but not the space. A Beamdrone hovering over a
+    // Slicebot must not shove it, or flyers become a battering ram.
     const sim = new Simulation(0x51ce7a11);
     const { pool, map } = sim.world;
     const start = map.starts[0]!;
@@ -183,8 +183,8 @@ describe('flyers occupy the sky', () => {
     }
     const x = Math.round((spot!.x + 0.5) * FIX);
     const y = Math.round((spot!.y + 0.5) * FIX);
-    const ground = pool.spawn(EntityType.Brawler, 0 as PlayerId, x, y) & 0xffff;
-    pool.spawn(EntityType.Gunship, 0 as PlayerId, x, y);
+    const ground = pool.spawn(EntityType.Slicebot, 0 as PlayerId, x, y) & 0xffff;
+    pool.spawn(EntityType.Beamdrone, 0 as PlayerId, x, y);
 
     const gx = pool.posX[ground]!;
     const gy = pool.posY[ground]!;

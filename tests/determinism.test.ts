@@ -104,7 +104,7 @@ describe('deterministic simulation', () => {
       const shots = sim.world.events.shots;
       for (let k = 0; k < shots.length; k += 2) {
         const type = sim.world.pool.type[shots[k]!]!;
-        if (type === EntityType.Rifleman || type === EntityType.Brawler) {
+        if (type === EntityType.Burstbot || type === EntityType.Slicebot) {
           combatShots++;
           shooters.add(sim.world.pool.owner[shots[k]!]!);
         }

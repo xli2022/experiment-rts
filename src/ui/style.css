@@ -24,7 +24,13 @@ body {
   overflow: hidden;
   background: var(--bg);
   color: var(--text);
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
 }
@@ -254,7 +260,8 @@ body {
 
 /* ---- fullscreen toggle ---- */
 #fullscreen-btn,
-#mute-btn {
+#mute-btn,
+#all-units-btn {
   top: 12px;
   right: 12px;
   width: 38px;
@@ -268,15 +275,26 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: border-color 0.12s, background 0.12s;
+  transition:
+    border-color 0.12s,
+    background 0.12s;
 }
 
 #mute-btn {
   right: 58px;
 }
 
+#all-units-btn {
+  right: 104px;
+  width: 60px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
 #fullscreen-btn:hover,
-#mute-btn:hover {
+#mute-btn:hover,
+#all-units-btn:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
@@ -372,6 +390,200 @@ body {
 
 .dialog button:hover {
   filter: brightness(1.14);
+}
+
+/* ---- all authored units ---- */
+.unit-gallery-overlay {
+  --gallery-surface: rgba(14, 22, 33, 0.98);
+  --gallery-border: rgba(151, 168, 190, 0.28);
+  --gallery-text: #f1f5f9;
+  --gallery-muted: #aeb8c6;
+  --gallery-card-muted: #5d6876;
+  --gallery-accent: #54b3ff;
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: auto;
+  background: transparent;
+  color: var(--gallery-text);
+}
+
+/* The renderer replaces the world with previews while the gallery is open, so
+   the ordinary match HUD would otherwise float incongruously over those cards. */
+#ui-root.unit-gallery-open > :not(.unit-gallery-overlay) {
+  visibility: hidden;
+}
+
+.unit-gallery-dialog {
+  position: absolute;
+  inset: clamp(10px, 3vw, 34px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--gallery-border);
+  border-radius: 16px;
+  background: transparent;
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.48);
+  outline: none;
+}
+
+.unit-gallery-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 16px 18px;
+  background: var(--gallery-surface);
+  border-bottom: 1px solid var(--gallery-border);
+}
+
+.unit-gallery-header h1 {
+  margin: 0 0 2px;
+  font-size: 23px;
+  letter-spacing: -0.015em;
+}
+
+.unit-gallery-header p {
+  margin: 0;
+  color: var(--gallery-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.unit-gallery-status {
+  margin-top: 4px !important;
+  color: var(--gallery-accent) !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.unit-gallery-close {
+  flex: 0 0 auto;
+  min-width: 76px;
+  margin: 0;
+  padding: 9px 14px;
+  border: 1px solid var(--gallery-border);
+  border-radius: 8px;
+  background: rgba(23, 34, 49, 0.96);
+  color: var(--gallery-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.unit-gallery-close:hover,
+.unit-gallery-close:focus-visible {
+  border-color: var(--gallery-accent);
+  outline: 2px solid rgba(84, 179, 255, 0.3);
+  outline-offset: 2px;
+}
+
+.unit-gallery-scroll {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 14px;
+}
+
+.unit-gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+  align-content: start;
+  min-height: 100%;
+}
+
+.unit-gallery-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--gallery-border);
+  border-radius: 11px;
+  background: transparent;
+  box-shadow: 0 2px 8px rgba(33, 46, 61, 0.09);
+}
+
+.unit-gallery-preview {
+  position: relative;
+  height: 184px;
+  overflow: hidden;
+  /* The shared WebGL canvas is behind the DOM grid and supplies this fill. */
+  background: transparent;
+}
+
+.unit-gallery-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--gallery-card-muted);
+  font-size: 11px;
+  background: rgba(237, 241, 245, 0.92);
+}
+
+.unit-gallery-card.loaded .unit-gallery-placeholder {
+  display: none;
+}
+
+.unit-gallery-card.error {
+  border-color: rgba(255, 90, 74, 0.45);
+}
+
+.unit-gallery-card.error .unit-gallery-placeholder {
+  color: var(--danger);
+}
+
+.unit-gallery-label {
+  overflow: hidden;
+  padding: 9px 10px;
+  background: var(--gallery-surface);
+  color: var(--gallery-text);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unit-gallery-catalog-error {
+  align-self: start;
+  margin: 12px;
+  padding: 16px;
+  border: 1px solid rgba(255, 90, 74, 0.45);
+  border-radius: 10px;
+  background: rgba(31, 18, 20, 0.94);
+  color: var(--danger);
+}
+
+@media (max-width: 600px) {
+  .unit-gallery-dialog {
+    inset: 7px;
+    border-radius: 12px;
+  }
+
+  .unit-gallery-header {
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .unit-gallery-header h1 {
+    font-size: 20px;
+  }
+
+  .unit-gallery-header #unit-gallery-description {
+    display: none;
+  }
+
+  .unit-gallery-scroll {
+    padding: 8px;
+  }
+
+  .unit-gallery-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 8px;
+  }
+
+  .unit-gallery-preview {
+    height: 149px;
+  }
 }
 
 .hint {

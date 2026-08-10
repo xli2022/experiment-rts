@@ -12,13 +12,13 @@ different games.
 
 Inside `src/sim/**` (and `src/config/rules.ts`), you may not use:
 
-| Banned | Use instead |
-|---|---|
-| `Math.random()` | the seeded `Rng` on `World` |
-| `Date.now()`, `performance.now()`, `new Date()` | `world.tick` |
-| `Math.sin/cos/tan/atan2/pow/exp/log/hypot` | see "no trigonometry" below |
-| `for...in`, iteration over `Map`/`Set` | index loops over the entity pool |
-| raw `float` positions | Q16.16 fixed-point (`src/sim/fixed.ts`) |
+| Banned                                                    | Use instead                                         |
+| --------------------------------------------------------- | --------------------------------------------------- |
+| `Math.random()`                                           | the seeded `Rng` on `World`                         |
+| `Date.now()`, `performance.now()`, `new Date()`           | `world.tick`                                        |
+| `Math.sin/cos/tan/atan2/pow/exp/log/hypot`                | see "no trigonometry" below                         |
+| `for...in`, iteration over `Map`/`Set`                    | index loops over the entity pool                    |
+| raw `float` positions                                     | Q16.16 fixed-point (`src/sim/fixed.ts`)             |
 | importing `three`, DOM, `src/render`, `src/ui`, `src/net` | nothing — the sim imports only itself and `config/` |
 
 `Math.sqrt` **is** allowed: IEEE-754 requires it to be correctly rounded, so it
@@ -66,7 +66,7 @@ peers rendering visibly different terrain would look exactly like a desync.
 
 ## Mirror fairness is not the same as symmetry
 
-The map is symmetric; that does not make the *match* symmetric. Anything placed
+The map is symmetric; that does not make the _match_ symmetric. Anything placed
 at setup has to be laid out as an exact 180-degree rotation of player 0's, not by
 applying the same offsets to a mirrored start. Three separate bugs came from
 getting this subtly wrong, each worth a real advantage and none visible on
@@ -74,7 +74,7 @@ screen:
 
 - A Command Post's footprint is 4, and `start - 2` cannot be symmetric about a
   tile — so player 1's whole base sat a tile nearer the middle of the map.
-- Reflecting a mineral patch's *top-left corner* about the base's centre tile
+- Reflecting a mineral patch's _top-left corner_ about the base's centre tile
   rather than its centre is half a tile out, which rounds to a whole tile of
   extra walking on every trip.
 - Units spawn facing +Y and trained units pop out on the +Y side of a building,
@@ -87,7 +87,7 @@ independent causes, measured:
 
 - **A\* breaks ties by tile index**, and row-major index is not invariant under a
   180-degree rotation. 27 of 30 mirrored start/goal pairs return a
-  *differently shaped* route — always the same length, never the same tiles.
+  _differently shaped_ route — always the same length, never the same tiles.
   Units steer between waypoints, so a different-shaped path of equal tile cost
   is a different real distance. This is the big one: with no bots and exactly
   mirrored harvest orders, one side out-mined the other by a third.
@@ -124,8 +124,9 @@ else's correctness rests on.
 ## Authored unit models
 
 The three combat units are skinned FBX rigs, converted to GLB and drawn as one
-instanced mesh per type per team: every clip is sampled into a bone-matrix
-texture at load, and each instance carries one number — the row it is posed on.
+instanced mesh per type per team; the Worker deliberately remains procedural.
+Every clip is sampled into a bone-matrix texture at load, and each instance
+carries one number — the row it is posed on.
 `src/render/models/animated.ts` bakes, `src/render/animatedUnits.ts` draws. Four
 things about this were learned the hard way:
 
@@ -161,15 +162,15 @@ zero of the run.
 
 Which clip a unit plays is decided by `poseFor` in `src/render/entities.ts`,
 driven by `world.events.shots` — the shots the simulation actually fired. It used
-to be inferred from the unit's *order* and its speed, which merely correlate with
+to be inferred from the unit's _order_ and its speed, which merely correlate with
 fighting, and both halves were wrong at once:
 
 - A unit defending itself holds **no order at all**. It is idle, hitting whatever
   walked into range — the most common fight in the game — so the attack branch
   never ran.
-- Units in contact are shoved apart by separation every tick, so a brawler in
+- Units in contact are shoved apart by separation every tick, so a Slicebot in
   melee is never quite stationary, and a movement-first rule kept it running on
-  the spot even when the order *was* set.
+  the spot even when the order _was_ set.
 
 The swing is timed from the shot, not from wall-clock, so the blow lands on the
 frame the damage did; and it does not loop, so a cooldown longer than the clip
@@ -190,6 +191,29 @@ the `.ktx2` under `public/models/`. The encoder is deterministic — re-encoding
 the original art reproduces the committed files byte for byte — so nothing is
 lost by keeping the sources outside the repository, but they are the only way
 back to an editable image, so keep them wherever the originals live.
+
+Athena2 imports are scripted by `scripts/import-athena2-models.mjs`. The 64 files
+under Athena2's `Animations` directory are the source inventory and baked timing
+authority; `scripts/athena2-models.mjs` maps those animation assets to public
+names, source rigs, clips, and skins, and rejects drift between the two sets.
+Multipart skins are joined against their common armature before export; rigid
+parts are assigned proxy joints, leaving the runtime's one-mesh contract intact.
+FBX 6.1 files are losslessly rewritten by Autodesk's FBX SDK through a temporary
+Unity project, while malformed curve tables are repaired by Blender. A small
+manifest allowlist of frame-for-frame parity-proven, single-renderer rigs uses a
+compact skeletal fallback: an isolated Unity 2022.3.62f3 project samples each
+controller-bound mesh, local transforms, and bind poses at every authored frame,
+then the importer writes those values directly to standard glTF without another
+FBX conversion. Multipart prefabs and controller outputs that differ from the
+baked recorder are not eligible. A required move, attack, or death slot with
+only one baked frame is treated as missing. Skeleton remains in the 64-source
+inventory but is explicitly unpublished because ZombieSkeleton is its retained
+public replacement. Those units, explicitly unpublished units, and stale
+generated assets are excluded, leaving 55 public models today. The importer
+stages PNGs under the ignored `assets/textures/` by default (or a disposable
+`--texture-stage` path);
+`npm run textures` remains the only KTX2 encoder, and the staging directory can
+be removed after encoding.
 
 ## Verifying determinism
 
@@ -248,7 +272,7 @@ through walls.
 
 ### Input delay is per-peer, and each peer must be told what to do with it
 
-Commands execute `delayTurns` turns after they are issued. That number is *not*
+Commands execute `delayTurns` turns after they are issued. That number is _not_
 shared: the wire carries the absolute turn each command belongs to, so a peer
 files what it receives and never infers a schedule. Two peers can hold different
 delays for the whole match without diverging by a bit.
@@ -256,16 +280,16 @@ delays for the whole match without diverging by a bit.
 Two things make it work, and both were arrived at the hard way:
 
 - **The turns a peer has scheduled must stay a contiguous prefix.** Raising the
-  delay opens a gap, and a turn nobody ever sends for blocks *everyone* forever,
+  delay opens a gap, and a turn nobody ever sends for blocks _everyone_ forever,
   so the gap is filled in the same packet. Lowering it cannot rewrite a turn
   already sent — a peer may have executed it — so the schedule simply pauses and
   lets the clock catch up.
-- **A peer cannot adapt from its own stalls.** A stall says the *other* peer is
+- **A peer cannot adapt from its own stalls.** A stall says the _other_ peer is
   late, and raising your own delay changes only your own sends. Driven that way,
   the loop settles at one peer pinned to the ceiling and stalling permanently
   while the other sits at the floor and never learns it is the problem —
   measured at 120ms: 1133 stalled frames against 19 for the old fixed delay. So
-  each packet carries `peerHeadroom`, how early the sender is receiving *your*
+  each packet carries `peerHeadroom`, how early the sender is receiving _your_
   packets, and each peer sizes its own delay from what it is told.
 
 Measured against the fixed 200ms it replaced: LAN drops to 100ms with no stalls,
@@ -282,7 +306,7 @@ the simulation decides.
 
 ### The data channel is unordered, and packets must stay under 16 KB
 
-A WebRTC data channel defaults to *ordered* delivery — head-of-line blocking,
+A WebRTC data channel defaults to _ordered_ delivery — head-of-line blocking,
 same as TCP. That is the wrong default here: each packet already repeats the
 previous two turns' commands, so the packet held up behind a lost one is usually
 the one carrying what the receiver is waiting for. Ordered delivery turns a loss
@@ -296,7 +320,7 @@ recovery onto the lockstep history resend, which is throttled to 120 ms — slow
 than SCTP retransmitting in one round trip. The bandwidth saved would be nil.
 
 **The constraint this creates:** Trystero splits payloads over ~16 KB into chunks
-and reassembles them *by arrival order*, with no sequence number — so a
+and reassembles them _by arrival order_, with no sequence number — so a
 multi-chunk message is scrambled by the very reordering we asked for. Packets
 stay far under that because `MAX_SELECTION` is 24 and bot commands never cross
 the wire, but it is an invariant now, not a coincidence. `tests/wire.test.ts`
@@ -304,7 +328,7 @@ fails loudly if a change to the selection cap or the packet shape breaks it.
 
 Reordering itself is harmless for a second, independent reason: the receive path
 is structurally order-free (turns keyed absolutely, first write wins). Measured,
-an "assume packets arrive in order" bug is *invisible* under pure reordering —
+an "assume packets arrive in order" bug is _invisible_ under pure reordering —
 the redundancy covers it — and only shows up, weakly, once 25% loss removes the
 covering copies.
 
@@ -345,7 +369,7 @@ short, order still set, looking for all the world like a pathfinding failure.
 Three pieces fix it, and each is load-bearing:
 
 - **`navGoal` holds the order's intent, not its route**, so it survives
-  `clearPath`. Resuming has to restore the *same shared flow-field goal* —
+  `clearPath`. Resuming has to restore the _same shared flow-field goal_ —
   rebuilding per unit is one Dijkstra sweep each, the collapse described under
   "Spread the arrival" above.
 - **`resumeAdvance` runs before the movers**, so a unit that resumes this tick
@@ -358,13 +382,13 @@ Three pieces fix it, and each is load-bearing:
 **The pursuit leash must be anchored where the chase began.** Measured from the
 unit's current position the window slides along with a retreating enemy and the
 chase ratchets indefinitely — a unit dragged sideways followed a fleeing
-rifleman 14.6 tiles off its route. Past the leash the anchor is *kept*, so the
+Burstbot 14.6 tiles off its route. Past the leash the anchor is _kept_, so the
 unit turns back and can pick the fight up again on its way past; it resets only
 when the target is dead or gone beyond acquisition. `tests/attackMove.test.ts`.
 
 **Do not measure unit behaviour without checking the unit is alive.** A corpse
 keeps its last `order` and its last position, so a dead unit looks exactly like
-a unit that stopped and never resumed. Staging two identical riflemen against
+a unit that stopped and never resumed. Staging two identical Burstbots against
 each other means the one under test usually dies, and the trap reports the bug
 you were looking for whether or not it exists — it cost a first attempt at this
 fix, "verified" against a body. Heal the unit under test, or give it something
@@ -372,28 +396,28 @@ weak to kill, and assert `alive` before reading anything else.
 
 ### Damage is one number, and the panel shows it
 
-There was a counter triangle — Rifleman/Gunship/Brawler, each dealing **double**
+There was a counter triangle — Burstbot/Beamdrone/Slicebot, each dealing **double**
 to one other, applied as a percentage inside `combatSystem`. It is gone. The
 multiplier appeared nowhere on screen, so no honest damage figure could be shown
 next to a unit; now `def.damage` is what a unit deals to everything it can
 shoot, and the info panel prints it.
 
 What decides matchups is what a player can read — range, speed, health — plus
-one structural rule that is not a number at all: `canHitAir`, so a Brawler
+one structural rule that is not a number at all: `canHitAir`, so a Slicebot
 cannot touch a flyer. `tests/units.test.ts` stages a real fight for every armed
 pair and asserts the blow equals the listed damage, which is the only way to
 catch a multiplier creeping back in between the def and `applyDamage`.
 
-**This makes the Rifleman the best buy at equal supply, and by a wide margin.**
+**This makes the Burstbot the best buy at equal supply, and by a wide margin.**
 Measured, 6 supply a side, both armies attack-moving into each other:
 
-| | dps/supply | hp/supply | range | result |
-|---|---|---|---|---|
-| Rifleman | 7.50 | 45 | 5.0 | beats Brawlers 5–0 and Gunships 6–0 |
-| Brawler | 5.42 | 45 | 0.9 | — |
-| Gunship | 5.00 | 35 | 3.5 | — |
+|           | dps/supply | hp/supply | range | result                                 |
+| --------- | ---------- | --------- | ----- | -------------------------------------- |
+| Burstbot  | 7.50       | 45        | 5.0   | beats Slicebots 5–0 and Beamdrones 6–0 |
+| Slicebot  | 5.42       | 45        | 0.9   | —                                      |
+| Beamdrone | 5.00       | 35        | 3.5   | —                                      |
 
-The triangle was carrying the roster. Nothing is wrong with the *code* — the
+The triangle was carrying the roster. Nothing is wrong with the _code_ — the
 numbers in `config/rules.ts` were tuned around a 2x that no longer exists, and
 retuning them is the outstanding job.
 
@@ -406,7 +430,7 @@ of firing: refusing the target and stopping the chase are the same fix.
 
 Melee is ground-only, and that includes workers — a 0.6-tile reach is a swing by
 any reading. Explicit attack orders are refused per unit rather than per order,
-so a mixed selection still sends its riflemen. `tests/air.test.ts`.
+so a mixed selection still sends its Burstbots. `tests/air.test.ts`.
 
 **Workers have a weapon.** Range 0.6, and they will shoot anything that comes
 near their base. Any combat measurement staged near a start location is
@@ -424,7 +448,7 @@ delivering where they stood, and each is worth avoiding again:
   reach of 2.67, so diagonal approaches could not deliver at all.
   `distanceSqTo` now measures to the box for anything with a footprint.
 - **Units pathed at the building's centre.** That tile is not walkable, so A*
-  substitutes the nearest walkable tile to it — the *same* tile for every unit,
+  substitutes the nearest walkable tile to it — the _same_ tile for every unit,
   whichever side it came from. `approachPoint` clamps the unit's position to the
   footprint so each one heads for its own near face.
 
@@ -470,7 +494,7 @@ at the source rather than in the backstop:
 - **Production placed trained units at a point computed purely geometrically** —
   a fixed offset from the building's centre, checked against nothing. Measured
   over a bot match, 11 of 89 trained units appeared inside a building footprint
-  and 3 on solid tiles. `spawnPointFor` now treats that point as a *preference*
+  and 3 on solid tiles. `spawnPointFor` now treats that point as a _preference_
   and falls back to the nearest standable tile; when there is no room at all it
   reports failure and production waits, exactly as it does when supply runs out.
 - **A rally point was validated for being on the map, not for being ground.** A
@@ -503,7 +527,7 @@ simulation that remembers an entity must remember the **handle**, not the index.
 
 `Selection` remembered indices. So a dead unit's slot, refilled by the next unit
 trained, quietly rejoined the selection — and a control group whose three
-members had all died came back holding three Gunships that were never put in it.
+members had all died came back holding three Beamdrones that were never put in it.
 Both the live selection and the stored groups had it, since both were index
 lists; `prune` sees `alive === 1` on a reused slot and keeps it.
 
@@ -518,7 +542,7 @@ them.
 Nothing stopped a right-click on a cliff being issued, and the resulting order
 could never complete: A\* aims at the nearest walkable tile and stops there, but
 arrival is measured against the ordered point. A lone unit stopped and kept its
-order; a *group* was worse, because a flow field cannot route to a solid tile at
+order; a _group_ was worse, because a flow field cannot route to a solid tile at
 all — twelve units pushed at the rock for the rest of the match, six tiles short,
 and `settleArrivals` never applied because it only runs near the destination.
 
@@ -542,13 +566,13 @@ Three things fix it, and each covers a case the others do not:
 - **The last stretch is steered at the unit's own formation slot**, not at the
   group's shared goal tile (`FORMATION_APPROACH`). The field aims everyone at
   one tile; near the destination that tile is full, so units funnel into a scrum
-  and are shoved out of it forever. This is the half that makes a group *look*
+  and are shoved out of it forever. This is the half that makes a group _look_
   right, and it settles a 24-unit march at tick 183 instead of 261.
 - **A unit that stops improving gives up** (`settleArrivals`). This is the
   guarantee, and it is the only thing that handles a destination with no room at
   all — ordered into a walled pocket, two units still never rested without it.
 - **Formation slots are checked for walkability.** The old check was
-  `tileOfPos(...) < 0`, which asks whether a point is *on the map*; solid rock is
+  `tileOfPos(...) < 0`, which asks whether a point is _on the map_; solid rock is
   very much on the map.
 
 The failure mode of a give-up rule is giving up too early, which reads as broken
@@ -586,4 +610,4 @@ Both fixes together took the test match from 31s to 0.9s.
 
 When touching pathfinding, size heap arrays by **pushes, not tiles**: Dijkstra
 and A\* re-insert a node on every relaxation, and writing past the end of a typed
-array fails *silently*, corrupting results rather than throwing.
+array fails _silently_, corrupting results rather than throwing.

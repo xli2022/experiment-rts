@@ -15,13 +15,23 @@
  * here instead; the loader then takes the file as-is.
  */
 
-import { readFile, writeFile, readdir, mkdir } from 'node:fs/promises';
-import { join, basename } from 'node:path';
-import sharp from 'sharp';
-import { encodeToKTX2 } from 'ktx2-encoder';
+import {
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { join, basename } from "node:path";
+import { fileURLToPath } from "node:url";
+import sharp from "sharp";
+import { encodeToKTX2 } from "ktx2-encoder";
 
-const SOURCE = new URL('../assets/textures/', import.meta.url).pathname;
-const OUT = new URL('../public/models/', import.meta.url).pathname;
+// `URL.pathname` is `/C:/...` on Windows; resolving that as a filesystem path
+// produces `C:\C:\...`. Convert file URLs with the platform-aware helper.
+const SOURCE = fileURLToPath(new URL("../assets/textures/", import.meta.url));
+const OUT = fileURLToPath(new URL("../public/models/", import.meta.url));
 
 await mkdir(OUT, { recursive: true });
 
@@ -31,9 +41,9 @@ await mkdir(OUT, { recursive: true });
 // and it is worth saying so rather than failing with ENOENT.
 let files = [];
 try {
-  files = (await readdir(SOURCE)).filter((f) => f.endsWith('.png')).sort();
+  files = (await readdir(SOURCE)).filter((f) => f.endsWith(".png")).sort();
 } catch (err) {
-  if (err.code !== 'ENOENT') throw err;
+  if (err.code !== "ENOENT") throw err;
 }
 if (files.length === 0) {
   console.error(
@@ -45,16 +55,39 @@ if (files.length === 0) {
   process.exit(1);
 }
 
+// Large imports can be split across independent processes without changing
+// output. This is intentionally optional: the ordinary `npm run textures`
+// remains a deterministic, single-process encode.
+const shardArg = process.argv.indexOf("--shard");
+if (shardArg >= 0) {
+  const value = process.argv[shardArg + 1] ?? "";
+  const match = /^(\d+)\/(\d+)$/.exec(value);
+  if (!match) throw new Error("--shard must be INDEX/COUNT, for example 0/3");
+  const index = Number(match[1]);
+  const count = Number(match[2]);
+  if (count < 1 || index < 0 || index >= count)
+    throw new Error(`Invalid shard ${value}`);
+  files = files.filter((_, fileIndex) => fileIndex % count === index);
+}
+
 let before = 0;
 let after = 0;
 for (const file of files) {
-  const png = await readFile(join(SOURCE, file));
+  const sourcePath = join(SOURCE, file);
+  const out = join(OUT, `${basename(file, ".png")}.ktx2`);
+  const png = await readFile(sourcePath);
   const ktx2 = await encodeToKTX2(new Uint8Array(png), {
     // Node has no built-in image decoding, so the encoder asks for one.
     imageDecoder: async (buffer) => {
       const image = sharp(Buffer.from(buffer)).ensureAlpha();
-      const { data, info } = await image.raw().toBuffer({ resolveWithObject: true });
-      return { width: info.width, height: info.height, data: new Uint8Array(data) };
+      const { data, info } = await image
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+      return {
+        width: info.width,
+        height: info.height,
+        data: new Uint8Array(data),
+      };
     },
     isUASTC: false,
     isKTX2File: true,
@@ -67,8 +100,15 @@ for (const file of files) {
     qualityLevel: 210,
     compressionLevel: 4,
   });
-  const out = join(OUT, `${basename(file, '.png')}.ktx2`);
-  await writeFile(out, ktx2);
+  // Write beside the destination and rename only after the complete payload is
+  // on disk. Killing an encode must not truncate a previously valid skin.
+  const temporary = `${out}.${process.pid}.tmp`;
+  try {
+    await writeFile(temporary, ktx2);
+    await rename(temporary, out);
+  } finally {
+    await rm(temporary, { force: true });
+  }
   before += png.byteLength;
   after += ktx2.byteLength;
   const pct = (100 * (1 - ktx2.byteLength / png.byteLength)).toFixed(1);
@@ -77,7 +117,9 @@ for (const file of files) {
       `${(ktx2.byteLength / 1024).toFixed(0).padStart(5)} KB  (-${pct}%)`,
   );
 }
-console.log(
-  `\ntotal ${(before / 1024 / 1024).toFixed(2)} MB -> ${(after / 1024 / 1024).toFixed(2)} MB ` +
-    `(-${(100 * (1 - after / before)).toFixed(1)}%)`,
-);
+if (before > 0) {
+  console.log(
+    `\ntotal ${(before / 1024 / 1024).toFixed(2)} MB -> ${(after / 1024 / 1024).toFixed(2)} MB ` +
+      `(-${(100 * (1 - after / before)).toFixed(1)}%)`,
+  );
+}

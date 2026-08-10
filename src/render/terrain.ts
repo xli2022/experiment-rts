@@ -54,7 +54,7 @@ export function cliffHeightFor(elevation: number): number {
  * The tallest any terrain gets.
  *
  * Exported because air units have to clear it. Left as two independent numbers
- * they drifted apart the moment the map gained elevation, and gunships flew
+ * they drifted apart the moment the map gained elevation, and Beamdrones flew
  * through ridges.
  */
 export const MAX_CLIFF_HEIGHT = cliffHeightFor(CLIFF_MAX_STEPS);

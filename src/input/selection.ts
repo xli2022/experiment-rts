@@ -45,7 +45,7 @@ export class Selection {
    * generation on every free precisely so a stale reference can be spotted —
    * `isAlive` checks it. Tracking only the index means a dead unit's slot,
    * refilled by the next unit trained, quietly rejoins the selection: a control
-   * group whose members all died came back holding three Gunships that had
+   * group whose members all died came back holding three Beamdrones that had
    * never been put in it.
    */
   private readonly handles = new Map<number, EntityId>();

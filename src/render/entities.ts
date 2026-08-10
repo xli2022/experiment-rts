@@ -3,7 +3,7 @@
  *
  * ## Instancing
  *
- * One `InstancedMesh` per (entity type, model part, owner). A hundred riflemen
+ * One `InstancedMesh` per (entity type, model part, owner). A hundred Burstbots
  * cost one draw call per part instead of a hundred, and team colour is baked
  * into the pool key so no per-instance material switching is needed.
  *
@@ -321,9 +321,9 @@ export class EntityRenderer {
   private buildPools(world: World): void {
     const types: EntityType[] = [
       EntityType.Worker,
-      EntityType.Rifleman,
-      EntityType.Brawler,
-      EntityType.Gunship,
+      EntityType.Burstbot,
+      EntityType.Slicebot,
+      EntityType.Beamdrone,
       EntityType.CommandPost,
       EntityType.Depot,
       EntityType.Barracks,
@@ -441,7 +441,7 @@ export class EntityRenderer {
 
       // Air units are drawn well above the ground, with a slow bob. Altitude is
       // purely visual — the simulation is 2D and treats them like anything else
-      // — but without it a gunship parked over infantry is unreadable.
+      // — but without it a Beamdrone parked over infantry is unreadable.
       const altitude = def.flying
         ? FLIGHT_ALTITUDE + Math.sin(this.bobPhase + i * 0.7) * FLYER_BOB
         : 0;
@@ -684,7 +684,7 @@ const FLIGHT_CLEARANCE = 0.35;
  *
  * Derived from the terrain rather than chosen, because air has to *look* like
  * air: with the two as independent numbers, cliffs grew when the map gained
- * elevation and gunships ended up flying through ridges. The margin covers the
+ * elevation and Beamdrones ended up flying through ridges. The margin covers the
  * model's underhang, the hover bob, and a visible gap on top.
  */
 export const FLIGHT_ALTITUDE =
@@ -762,7 +762,7 @@ const CLIP_IDS: Record<string, number> = { run: 0, attack: 1, die: 2 };
  *   simulation already publishes each shot in `world.events.shots`; `sinceAttack`
  *   is that, and it is the only honest signal.
  * - **The swing outranks the stride.** Units in contact are shoved around by
- *   separation every tick, so a brawler mid-melee is never quite stationary and
+ *   separation every tick, so a Slicebot mid-melee is never quite stationary and
  *   a movement-first rule keeps it running on the spot. Order matters here, not
  *   just the conditions.
  *
