@@ -206,10 +206,15 @@ controller-bound mesh, local transforms, and bind poses at every authored frame,
 then the importer writes those values directly to standard glTF without another
 FBX conversion. Multipart prefabs and controller outputs that differ from the
 baked recorder are not eligible. A required move, attack, or death slot with
-only one baked frame is treated as missing. Skeleton remains in the 64-source
-inventory but is explicitly unpublished because ZombieSkeleton is its retained
-public replacement. Those units, explicitly unpublished units, and stale
-generated assets are excluded, leaving 55 public models today. The importer
+only one baked frame is treated as missing. The original `Skeleton` source
+remains in the 64-source inventory under the unpublished `SkeletonOriginal`
+manifest identity. The physical `ZombieSkeleton` source selected by the
+`ZombieRespawned` animation asset is published under the canonical `Skeleton`
+name instead. Incomplete units, explicitly unpublished units, and stale generated
+assets are excluded; Mercenary is also explicitly unpublished, leaving 54 public
+models today. The catalog requires a
+Human, Robot, Monster, or Undead assignment for every published model and the
+gallery groups cards in that authored faction order. The importer
 stages PNGs under the ignored `assets/textures/` by default (or a disposable
 `--texture-stage` path);
 `npm run textures` remains the only KTX2 encoder, and the staging directory can

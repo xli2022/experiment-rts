@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
+import { EXPECTED_FACTIONS, type ExpectedFaction } from "./athena2Factions.js";
 
 interface Athena2ModelSpec {
   unit: string;
+  animationAsset: string;
+  source: string;
+  slug: string;
+  legacySlugs: string[];
   publish: boolean;
+  faction: ExpectedFaction | null;
   unitySampledSkeleton: { controller: string } | null;
   joinInBlender: boolean;
   geometryParts: unknown[];
@@ -19,19 +25,80 @@ interface Athena2ModelSpec {
 
 const manifest = (await import(
   new URL("../scripts/athena2-models.mjs", import.meta.url).href
-)) as { ATHENA2_MODELS: Athena2ModelSpec[] };
+)) as {
+  ATHENA2_FACTIONS: Record<ExpectedFaction, readonly string[]>;
+  ATHENA2_MODELS: Athena2ModelSpec[];
+};
 
 describe("Athena2 import orientation corrections", () => {
-  it("keeps the full source inventory while excluding redundant Skeleton", () => {
+  it("keeps the full source inventory while replacing the original Skeleton", () => {
     expect(manifest.ATHENA2_MODELS).toHaveLength(64);
     const unpublished = manifest.ATHENA2_MODELS.filter(
       (model) => !model.publish,
     );
-    expect(unpublished.map((model) => model.unit)).toEqual(["Skeleton"]);
+    expect(unpublished.map((model) => model.unit).sort()).toEqual(
+      ["Mercenary", "SkeletonOriginal"].sort(),
+    );
     expect(
-      manifest.ATHENA2_MODELS.find((model) => model.unit === "ZombieSkeleton")
-        ?.publish,
-    ).toBe(true);
+      unpublished.find((model) => model.unit === "SkeletonOriginal"),
+    ).toMatchObject({
+      animationAsset: "Skeleton",
+      source: "Skeleton",
+      slug: "skeleton-original",
+    });
+
+    const replacement = manifest.ATHENA2_MODELS.find(
+      (model) => model.unit === "Skeleton",
+    );
+    expect(replacement).toMatchObject({
+      animationAsset: "ZombieRespawned",
+      publish: true,
+      source: "ZombieSkeleton",
+      slug: "skeleton",
+      legacySlugs: ["zombie-skeleton"],
+    });
+    expect(
+      manifest.ATHENA2_MODELS.some((model) => model.unit === "ZombieSkeleton"),
+    ).toBe(false);
+  });
+
+  it("assigns exactly the supplied 54 public units to factions", () => {
+    expect(manifest.ATHENA2_FACTIONS).toEqual(EXPECTED_FACTIONS);
+    const assignedUnits = Object.values(manifest.ATHENA2_FACTIONS).flat();
+    expect(assignedUnits).toHaveLength(54);
+    expect(new Set(assignedUnits).size).toBe(54);
+
+    const assignedModels = manifest.ATHENA2_MODELS.filter(
+      (model) => model.faction !== null,
+    );
+    expect(assignedModels).toHaveLength(54);
+    expect(assignedModels.map((model) => model.unit).sort()).toEqual(
+      [...assignedUnits].sort(),
+    );
+    for (const model of assignedModels) {
+      expect(
+        manifest.ATHENA2_FACTIONS[model.faction!],
+        `${model.unit} manifest faction`,
+      ).toContain(model.unit);
+    }
+    expect(
+      manifest.ATHENA2_MODELS.filter((model) => model.faction === null)
+        .map((model) => model.unit)
+        .sort(),
+    ).toEqual(
+      [
+        "Diana",
+        "King",
+        "Mercenary",
+        "Molten",
+        "Overseer",
+        "Prince",
+        "RockBuddy",
+        "SentryFixed",
+        "SkeletonOriginal",
+        "Thorne",
+      ].sort(),
+    );
   });
 
   it("limits direct Unity skeleton sampling to the parity-proven allowlist", () => {
@@ -130,8 +197,8 @@ describe("Athena2 import orientation corrections", () => {
         "Soulfire",
         "Sphinx",
         "Succubus",
+        "Skeleton",
         "Zombie",
-        "ZombieSkeleton",
       ].sort(),
     );
     expect(rotateY.every((model) => model.rotateY === Math.PI)).toBe(true);

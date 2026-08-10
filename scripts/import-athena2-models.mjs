@@ -43,7 +43,7 @@ import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { TGALoader } from "three/examples/jsm/loaders/TGALoader.js";
-import { ATHENA2_MODELS } from "./athena2-models.mjs";
+import { ATHENA2_FACTIONS, ATHENA2_MODELS } from "./athena2-models.mjs";
 import { readFbxTakeWindows } from "./fbx-take-window.mjs";
 import { buildUnitySampledSkeletonModel } from "./unity-sampled-skeleton.mjs";
 
@@ -91,6 +91,14 @@ const incompleteModels = ATHENA2_MODELS.filter(
 );
 const excludedModels = completeModels.filter((spec) => !spec.publish);
 const publishedModels = completeModels.filter((spec) => spec.publish);
+const unfactionedModels = publishedModels.filter((spec) => !spec.faction);
+if (unfactionedModels.length > 0) {
+  throw new Error(
+    `Published units have no faction assignment: ${unfactionedModels
+      .map((model) => model.unit)
+      .join(", ")}`,
+  );
+}
 const selected = publishedModels.filter(
   (model) =>
     (!model.existing || includeExisting) && (!only || only.has(model.slug)),
@@ -100,6 +108,7 @@ await mkdir(outputRoot, { recursive: true });
 await mkdir(textureStage, { recursive: true });
 await pruneIncompleteOutputs(incompleteModels, outputRoot, textureStage);
 await pruneExcludedOutputs(excludedModels, outputRoot, textureStage);
+await pruneLegacyOutputs(ATHENA2_MODELS, outputRoot, textureStage);
 
 if (selected.length === 0) {
   const requestedExcluded = excludedModels.filter((model) =>
@@ -224,6 +233,20 @@ async function pruneExcludedOutputs(models, output, stage) {
       rm(join(stage, `${spec.slug}-blue.png`), { force: true }),
       rm(join(stage, `${spec.slug}-red.png`), { force: true }),
     ]),
+  );
+}
+
+async function pruneLegacyOutputs(models, output, stage) {
+  await Promise.all(
+    models.flatMap((spec) =>
+      spec.legacySlugs.flatMap((slug) => [
+        rm(join(output, `${slug}.glb`), { force: true }),
+        rm(join(output, `${slug}-blue.ktx2`), { force: true }),
+        rm(join(output, `${slug}-red.ktx2`), { force: true }),
+        rm(join(stage, `${slug}-blue.png`), { force: true }),
+        rm(join(stage, `${slug}-red.png`), { force: true }),
+      ]),
+    ),
   );
 }
 
@@ -1941,6 +1964,7 @@ async function writeCatalog(output, timings, runSizes, completeModels) {
       : null;
     models.push({
       unit: spec.unit,
+      faction: spec.faction,
       file: `${spec.slug}.glb`,
       skins: [`${spec.slug}-blue.ktx2`, `${spec.slug}-red.ktx2`],
       clips: timings.get(spec.animationAsset),
@@ -1948,8 +1972,16 @@ async function writeCatalog(output, timings, runSizes, completeModels) {
       ...(runGroundY === null ? {} : { runGroundY }),
     });
   }
+  const catalogOrder = new Map(
+    Object.values(ATHENA2_FACTIONS)
+      .flat()
+      .map((unit, index) => [unit, index]),
+  );
+  models.sort(
+    (left, right) => catalogOrder.get(left.unit) - catalogOrder.get(right.unit),
+  );
   const catalog = {
-    version: 1,
+    version: 2,
     models,
   };
   await writeFile(

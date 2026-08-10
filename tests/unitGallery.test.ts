@@ -35,6 +35,7 @@ const GROUNDED_UNITS = new Map<string, readonly string[]>([
   ["FireDragon", ["foot", "toe"]],
   ["GriffinRider", ["foot", "toe"]],
   ["IceDragon", ["foot", "toe"]],
+  ["SkeletalDragon", ["ankle", "toe"]],
   ["Sphinx", ["foot", "toe"]],
   ["Treant", ["ankle"]],
 ]);

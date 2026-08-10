@@ -161,8 +161,13 @@ npm run textures
 Complete Athena2 rigs can be imported with the same pipeline. The importer
 uses Athena2's 64-file `Assets/Art/Units/Animations` inventory as its source
 authority. A required move, attack, or death slot with only one baked frame is
-treated as missing. Skeleton remains in that source inventory but is explicitly
-excluded as redundant with ZombieSkeleton, leaving 55 public models today. For
+treated as missing. The original `Skeleton` source remains in that inventory but
+is explicitly excluded; the retained `ZombieRespawned` rig from the physical
+`ZombieSkeleton` folder now occupies the canonical public `Skeleton` slot. That
+replacement is retained while Mercenary is explicitly unpublished, leaving 54
+public models today. `all-units.json` assigns every published
+model to Human, Robot, Monster, or Undead, and the gallery presents those four
+factions in the authored order. For
 each published complete unit the importer combines the clips into one GLB, joins
 multipart meshes, and stages the exact prefab skins. Old FBX 6.1 rigs are
 normalized with Unity's FBX SDK;
@@ -188,7 +193,7 @@ be omitted when that folder is the sibling of `Imports`; its baked frame counts
 and rates define each exported clip's exact span. Incomplete, explicitly
 excluded, and stale generated files are pruned. The normal import preserves the
 three already-shipped combat GLBs; add `--include-existing` when rebuilding all
-55 into an empty output directory.
+54 into an empty output directory.
 `--unity <editor>` and `--blender <executable>` override tool discovery.
 `assets/textures/` is only a transient encoder staging directory and can be
 removed after `npm run textures` completes.

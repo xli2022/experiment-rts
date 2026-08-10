@@ -9,6 +9,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { EXPECTED_FACTIONS, type ExpectedFaction } from "./athena2Factions.js";
 
 const MODEL_ROOT = fileURLToPath(new URL("../public/models/", import.meta.url));
 const EXPECTED_UNITS = [
@@ -40,7 +41,6 @@ const EXPECTED_UNITS = [
   "IceMage",
   "Infector",
   "Knight",
-  "Mercenary",
   "Mushroom",
   "Necromancer",
   "Parasite",
@@ -66,7 +66,7 @@ const EXPECTED_UNITS = [
   "Treant",
   "Valkyrie",
   "Zombie",
-  "ZombieSkeleton",
+  "Skeleton",
 ];
 const REQUIRED_ATTRIBUTES = [
   "JOINTS_0",
@@ -81,6 +81,7 @@ const KTX2_IDENTIFIER = Buffer.from([
 
 interface CatalogModel {
   unit: string;
+  faction: ExpectedFaction;
   file: string;
   skins: [string, string];
   runSize: [number, number, number];
@@ -148,6 +149,7 @@ const EXPLICITLY_GROUNDED_UNITS = new Set([
   "FireDragon",
   "GriffinRider",
   "IceDragon",
+  "SkeletalDragon",
   "Sphinx",
   "Treant",
 ]);
@@ -174,7 +176,7 @@ const UNITY_SAMPLED_SIZE_LIMITS = {
 
 describe("Athena2 authored model catalog", () => {
   it("contains unique complete entries", () => {
-    expect(catalog.version).toBe(1);
+    expect(catalog.version).toBe(2);
     expect(catalog.models.map((model) => model.unit).sort()).toEqual(
       [...EXPECTED_UNITS].sort(),
     );
@@ -185,7 +187,14 @@ describe("Athena2 authored model catalog", () => {
       catalog.models.length,
     );
     for (const model of catalog.models) {
-      const expectedKeys = ["clips", "file", "runSize", "skins", "unit"];
+      const expectedKeys = [
+        "clips",
+        "faction",
+        "file",
+        "runSize",
+        "skins",
+        "unit",
+      ];
       if (EXPLICITLY_GROUNDED_UNITS.has(model.unit)) {
         expectedKeys.push("runGroundY");
         expect(Number.isFinite(model.runGroundY), model.unit).toBe(true);
@@ -222,6 +231,23 @@ describe("Athena2 authored model catalog", () => {
         expect(clip.duration).toBeCloseTo(clip.frames / clip.frameRate, 8);
       }
     }
+  });
+
+  it("contains the exact supplied faction lists with no duplicate assignment", () => {
+    const grouped = Object.fromEntries(
+      (Object.keys(EXPECTED_FACTIONS) as ExpectedFaction[]).map((faction) => [
+        faction,
+        catalog.models
+          .filter((model) => model.faction === faction)
+          .map((model) => model.unit),
+      ]),
+    );
+    expect(grouped).toEqual(EXPECTED_FACTIONS);
+
+    const assigned = Object.values(grouped).flat();
+    expect(assigned).toHaveLength(54);
+    expect(new Set(assigned).size).toBe(54);
+    expect([...assigned].sort()).toEqual([...EXPECTED_UNITS].sort());
   });
 
   it("preserves authored relative sizes for the shared-scale gallery", () => {
@@ -264,7 +290,7 @@ describe("Athena2 authored model catalog", () => {
       frameRate: 30,
     });
     expect(clip("Necromancer", "attack").duration).toBe(29 / 30);
-    expect(clip("ZombieSkeleton", "run")).toEqual({
+    expect(clip("Skeleton", "run")).toEqual({
       static: false,
       duration: 24 / 10,
       frames: 24,

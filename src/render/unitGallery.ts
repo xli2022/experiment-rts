@@ -21,9 +21,12 @@ const PREVIEW_VIEW_HEIGHT = 3.6;
 // model against a light neutral card so dark silhouettes stay legible.
 const GALLERY_CLEAR = 0x0c131d;
 const CARD_CLEAR = 0xedf1f5;
+const FACTION_ORDER = ["Human", "Robot", "Monster", "Undead"] as const;
+type UnitFaction = (typeof FACTION_ORDER)[number];
 
 interface CatalogModel {
   unit: string;
+  faction: UnitFaction;
   file: string;
   skins: [string, string];
   /** Athena2's first baked run frame, in its shared world scale. */
@@ -59,7 +62,7 @@ interface LoadSession {
 export class UnitGallery {
   private overlay: HTMLElement | null = null;
   private scroll: HTMLElement | null = null;
-  private grid: HTMLElement | null = null;
+  private groups: HTMLElement | null = null;
   private status: HTMLElement | null = null;
   private closeButton: HTMLButtonElement | null = null;
   private returnFocus: HTMLElement | null = null;
@@ -103,13 +106,13 @@ export class UnitGallery {
         <header class="unit-gallery-header">
           <div>
             <h1 id="unit-gallery-title">All units</h1>
-            <p id="unit-gallery-description">Every authored model at a shared scale, looping its run animation.</p>
+            <p id="unit-gallery-description">Every authored model at a shared scale, grouped by faction and looping its run animation.</p>
             <p class="unit-gallery-status" role="status" aria-live="polite">Loading unit list…</p>
           </div>
           <button class="unit-gallery-close" type="button" aria-label="Close all units">Close</button>
         </header>
         <div class="unit-gallery-scroll">
-          <div class="unit-gallery-grid" role="list" aria-busy="true"></div>
+          <div class="unit-gallery-groups" aria-busy="true"></div>
         </div>
       </section>
     `;
@@ -119,7 +122,7 @@ export class UnitGallery {
     this.overlay = overlay;
     required(overlay, ".unit-gallery-dialog");
     this.scroll = required(overlay, ".unit-gallery-scroll");
-    this.grid = required(overlay, ".unit-gallery-grid");
+    this.groups = required(overlay, ".unit-gallery-groups");
     this.status = required(overlay, ".unit-gallery-status");
     this.closeButton = required(
       overlay,
@@ -260,7 +263,7 @@ export class UnitGallery {
     this.overlay.remove();
     this.overlay = null;
     this.scroll = null;
-    this.grid = null;
+    this.groups = null;
     this.status = null;
     this.closeButton = null;
 
@@ -325,28 +328,28 @@ export class UnitGallery {
       );
       skinLoader.dispose();
 
-      if (!session.cancelled && this.grid) {
-        this.grid.setAttribute("aria-busy", "false");
+      if (!session.cancelled && this.groups) {
+        this.groups.setAttribute("aria-busy", "false");
         this.updateProgress(session);
       }
     } catch (error) {
       if (session.cancelled || isAbort(error)) return;
       if (this.status)
         this.status.textContent = "Unit models could not be loaded.";
-      if (this.grid) {
-        this.grid.setAttribute("aria-busy", "false");
+      if (this.groups) {
+        this.groups.setAttribute("aria-busy", "false");
         const message = document.createElement("p");
         message.className = "unit-gallery-catalog-error";
         message.textContent =
           error instanceof Error ? error.message : String(error);
-        this.grid.replaceChildren(message);
+        this.groups.replaceChildren(message);
       }
     }
   }
 
   private mountCards(entries: readonly CatalogModel[]): void {
-    if (!this.grid || !this.scroll) return;
-    this.grid.replaceChildren();
+    if (!this.groups || !this.scroll) return;
+    this.groups.replaceChildren();
 
     this.observer?.disconnect();
     this.observer =
@@ -365,11 +368,40 @@ export class UnitGallery {
             { root: this.scroll, rootMargin: "80px" },
           );
 
+    const factionGrids = new Map<UnitFaction, HTMLElement>();
+    for (const faction of FACTION_ORDER) {
+      const section = document.createElement("section");
+      section.className = "unit-gallery-faction";
+      const heading = document.createElement("h2");
+      const headingId = `unit-gallery-faction-${faction.toLowerCase()}`;
+      heading.id = headingId;
+      heading.className = "unit-gallery-faction-title";
+      heading.textContent = faction;
+
+      const count = document.createElement("span");
+      const factionCount = entries.filter(
+        (entry) => entry.faction === faction,
+      ).length;
+      count.textContent = `${factionCount} units`;
+      heading.append(count);
+
+      const grid = document.createElement("div");
+      grid.className = "unit-gallery-grid";
+      grid.setAttribute("role", "list");
+      section.setAttribute("aria-labelledby", headingId);
+      section.append(heading, grid);
+      this.groups.append(section);
+      factionGrids.set(faction, grid);
+    }
+
     entries.forEach((entry, index) => {
       const card = document.createElement("article");
       card.className = "unit-gallery-card";
       card.setAttribute("role", "listitem");
-      card.setAttribute("aria-label", `${entry.unit} model preview`);
+      card.setAttribute(
+        "aria-label",
+        `${entry.unit}, ${entry.faction} faction model preview`,
+      );
 
       const slot = document.createElement("div");
       slot.className = "unit-gallery-preview";
@@ -385,7 +417,7 @@ export class UnitGallery {
       label.className = "unit-gallery-label";
       label.textContent = entry.unit;
       card.append(slot, label);
-      this.grid!.append(card);
+      factionGrids.get(entry.faction)!.append(card);
       this.cards.push(card);
       this.slots.push(slot);
       this.observer?.observe(slot);
@@ -572,14 +604,15 @@ function modelAssetUrl(file: string): string {
 }
 
 function parseCatalog(value: unknown): CatalogModel[] {
-  if (!isRecord(value) || !Array.isArray(value.models)) {
-    throw new Error("all-units.json has no models array");
+  if (!isRecord(value) || value.version !== 2 || !Array.isArray(value.models)) {
+    throw new Error("all-units.json is not a version 2 model catalog");
   }
 
   return value.models.map((candidate, index) => {
     if (
       !isRecord(candidate) ||
       typeof candidate.unit !== "string" ||
+      !isFaction(candidate.faction) ||
       typeof candidate.file !== "string" ||
       !Array.isArray(candidate.skins) ||
       typeof candidate.skins[0] !== "string" ||
@@ -597,6 +630,7 @@ function parseCatalog(value: unknown): CatalogModel[] {
     }
     return {
       unit: candidate.unit,
+      faction: candidate.faction,
       file: candidate.file,
       skins: [candidate.skins[0], candidate.skins[1]],
       runSize: [
@@ -609,6 +643,10 @@ function parseCatalog(value: unknown): CatalogModel[] {
         : { runGroundY: candidate.runGroundY }),
     };
   });
+}
+
+function isFaction(value: unknown): value is UnitFaction {
+  return FACTION_ORDER.some((faction) => faction === value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

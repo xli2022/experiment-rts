@@ -13,6 +13,81 @@
  * gallery. Complete source rigs may still have several skinned parts or old FBXs
  * that need normalization before Three can read them.
  */
+export const ATHENA2_FACTIONS = Object.freeze({
+  Human: Object.freeze([
+    "Footman",
+    "Archer",
+    "Valkyrie",
+    "DarkMage",
+    "IceMage",
+    "Blunderbuss",
+    "Boomerang",
+    "Cleric",
+    "Knight",
+    "GriffinRider",
+    "Rider",
+    "FireMage",
+    "Sniper",
+  ]),
+  Robot: Object.freeze([
+    "Boomwalker",
+    "Burstbot",
+    "Slicebot",
+    "Firespout",
+    "Sentry",
+    "Beamdrone",
+    "Arclight",
+    "Fixomatic",
+    "Plasmodrone",
+    "Piercebot",
+    "DarkGolem",
+    "IceGolem",
+  ]),
+  Monster: Object.freeze([
+    "Alligator",
+    "Squirrel",
+    "Wolf",
+    "DragonPup",
+    "Infector",
+    "Parasite",
+    "FlyingParasite",
+    "Mushroom",
+    "Toad",
+    "Spider",
+    "GiantSlime",
+    "BigSlime",
+    "Slime",
+    "Treant",
+    "FireDragon",
+    "IceDragon",
+  ]),
+  Undead: Object.freeze([
+    "Zombie",
+    "BoneArcher",
+    "Succubus",
+    "Necromancer",
+    "Skeleton",
+    "Soulfire",
+    "Reaper",
+    "FallenMage",
+    "DeathKnight",
+    "Banshee",
+    "Sphinx",
+    "SkeletalDragon",
+    "FrostLich",
+  ]),
+});
+
+const FACTION_ASSIGNMENTS = Object.values(ATHENA2_FACTIONS).flat();
+if (new Set(FACTION_ASSIGNMENTS).size !== FACTION_ASSIGNMENTS.length) {
+  throw new Error("Athena2 faction assignments contain a duplicate unit");
+}
+const FACTION_BY_UNIT = new Map(
+  Object.entries(ATHENA2_FACTIONS).flatMap(([faction, units]) =>
+    units.map((unit) => [unit, faction]),
+  ),
+);
+
 export const ATHENA2_MODELS = [
   model(
     "Alligator",
@@ -303,7 +378,7 @@ export const ATHENA2_MODELS = [
     "dark_knight@attack.fbx",
     "dark_knight@walk.fbx",
     "dark_knight@die.fbx",
-    { normalize: "blender" },
+    { normalize: "blender", publish: false },
   ),
   model(
     "Molten",
@@ -471,16 +546,23 @@ export const ATHENA2_MODELS = [
     "SkeletonDragon@Attack.fbx",
     "SkeletonDragon@Walk.fbx",
     "SkeletonDragon@Die.fbx",
-    { joinInBlender: false },
+    {
+      joinInBlender: false,
+      runGround: { bones: ["ankle", "toe"], margin: 0.02 },
+    },
   ),
   model(
+    "SkeletonOriginal",
     "Skeleton",
-    "Skeleton",
-    "skeleton",
+    "skeleton-original",
     "Skeleton@Attack.fbx",
     "Skeleton@Walk.fbx",
     "Skeleton@Die.fbx",
-    { joinInBlender: false, publish: false },
+    {
+      animationAsset: "Skeleton",
+      joinInBlender: false,
+      publish: false,
+    },
   ),
   model(
     "Slicebot",
@@ -649,19 +731,38 @@ export const ATHENA2_MODELS = [
     { rotateY: Math.PI },
   ),
   model(
+    "Skeleton",
     "ZombieSkeleton",
-    "ZombieSkeleton",
-    "zombie-skeleton",
+    "skeleton",
     "ZombieSkeleton@attack.FBX",
     "ZombieSkeleton@run.FBX",
     "ZombieSkeleton@die.FBX",
-    { animationAsset: "ZombieRespawned", rotateY: Math.PI },
+    {
+      animationAsset: "ZombieRespawned",
+      legacySlugs: ["zombie-skeleton"],
+      rotateY: Math.PI,
+    },
   ),
 ];
 
 function model(unit, source, slug, attack, run, die, options = {}) {
   if (typeof options === "boolean") options = { existing: options };
   const animationAsset = options.animationAsset ?? unit;
+  const publish = options.publish ?? true;
+  const faction = FACTION_BY_UNIT.get(unit) ?? null;
+  const legacySlugs = options.legacySlugs ?? [];
+  if (
+    !Array.isArray(legacySlugs) ||
+    legacySlugs.some(
+      (legacySlug) =>
+        typeof legacySlug !== "string" ||
+        legacySlug.length === 0 ||
+        legacySlug === slug,
+    ) ||
+    new Set(legacySlugs).size !== legacySlugs.length
+  ) {
+    throw new Error(`${unit}: invalid legacy slug metadata`);
+  }
   const runGround = options.runGround ?? null;
   if (
     runGround !== null &&
@@ -680,6 +781,7 @@ function model(unit, source, slug, attack, run, die, options = {}) {
     animationAsset,
     source,
     slug,
+    legacySlugs: Object.freeze([...legacySlugs]),
     skins: Object.freeze(
       options.skins ?? [
         `${animationAsset}_Blue.png`,
@@ -688,7 +790,8 @@ function model(unit, source, slug, attack, run, die, options = {}) {
     ),
     files: Object.freeze({ attack, run, die }),
     existing: options.existing ?? false,
-    publish: options.publish ?? true,
+    publish,
+    faction,
     geometry: options.geometry ?? "run",
     geometryFile: options.geometryFile ?? null,
     geometryParts: Object.freeze(
