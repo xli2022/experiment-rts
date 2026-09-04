@@ -120,8 +120,8 @@ export class World {
    * more than two players, teams — comes in as a `MatchConfig`, which is the
    * thing peers actually agree on.
    */
-  constructor(config: MatchConfig | number, mapSize?: number) {
-    const cfg = typeof config === 'number' ? duelMatch(config, { mapSize }) : config;
+  constructor(config: MatchConfig | number) {
+    const cfg = typeof config === 'number' ? duelMatch(config) : config;
     this.config = cfg;
     this.map = generateMap(cfg.seed, cfg.mapSize, cfg.layout);
     this.grid = new SpatialGrid(cfg.mapSize);

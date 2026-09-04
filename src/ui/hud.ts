@@ -14,7 +14,7 @@ import { defOf } from '../config/rules.js';
 import { toFloat } from '../sim/fixed.js';
 import { BuildState, EntityType, NEUTRAL, TICKS_PER_SECOND, type PlayerId } from '../sim/types.js';
 import type { World } from '../sim/world.js';
-import { PLAYER_COLOURS, RESOURCE_COLOUR } from '../render/models/procedural.js';
+import { colourSlotFor, PLAYER_COLOURS, RESOURCE_COLOUR } from '../render/models/procedural.js';
 import { fullscreenSupported, isFullscreen, onFullscreenChange, toggleFullscreen } from './fullscreen.js';
 import { audio } from '../audio/audio.js';
 import { activityOf } from './status.js';
@@ -66,7 +66,14 @@ export class Hud {
     private readonly onMinimapClick: (x: number, z: number, secondary: boolean) => void,
     /** Slots on the local player's side other than their own, ascending. */
     allies: readonly PlayerId[] = [],
+    /**
+     * How many slots the match has. The palette is laid out by side, not by
+     * slot, so a colour cannot be looked up without it — see `colourSlotFor`.
+     */
+    private readonly playerCount: number = 2,
   ) {
+    const colour = (p: PlayerId): number =>
+      PLAYER_COLOURS[colourSlotFor(p, playerCount)] ?? 0x888888;
     root.innerHTML = `
       <div class="panel" id="resources">
         <div class="stat">
@@ -75,7 +82,7 @@ export class Hud {
           <span class="stat-label">Minerals</span>
         </div>
         <div class="stat">
-          <span class="stat-dot" style="background:${hex(PLAYER_COLOURS[localPlayer] ?? 0x888888)}"></span>
+          <span class="stat-dot" style="background:${hex(colour(localPlayer))}"></span>
           <span class="stat-value" id="supply-value">0/0</span>
           <span class="stat-label">Supply</span>
         </div>
@@ -86,7 +93,7 @@ export class Hud {
           .map(
             (p, k) => `
           <div class="ally" data-ally="${p}">
-            <span class="stat-dot" style="background:${hex(PLAYER_COLOURS[p] ?? 0x888888)}"></span>
+            <span class="stat-dot" style="background:${hex(colour(p))}"></span>
             <span class="ally-name">${allies.length > 1 ? `Ally ${k + 1}` : 'Ally'}</span>
             <span class="ally-minerals">0</span>
             <span class="ally-supply">0/0</span>
@@ -482,7 +489,9 @@ export class Hud {
       }
 
       ctx.fillStyle =
-        owner === NEUTRAL ? hex(RESOURCE_COLOUR) : hex(PLAYER_COLOURS[owner] ?? 0x999999);
+        owner === NEUTRAL
+          ? hex(RESOURCE_COLOUR)
+          : hex(PLAYER_COLOURS[colourSlotFor(owner, this.playerCount)] ?? 0x999999);
 
       const px = px0 * scale;
       const pz = pz0 * scale;

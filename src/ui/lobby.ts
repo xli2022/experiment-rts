@@ -25,14 +25,13 @@ import {
 } from '../net/trysteroTransport.js';
 import type { Transport } from '../net/transport.js';
 import { coopMatch, duelMatch } from '../sim/match.js';
-import { BotDifficulty, type MatchConfig, type PlayerId } from '../sim/types.js';
+import { BotDifficulty, type MatchConfig } from '../sim/types.js';
 import { audio } from '../audio/audio.js';
 
 export interface MatchSetup {
   transport: Transport;
   /** The whole agreed description of the match. */
   config: MatchConfig;
-  localPlayer: PlayerId;
 }
 
 /** What the player picked, before a seed is known. */
@@ -101,9 +100,12 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
       dialog.querySelector('[data-act="retry"]')!.addEventListener('click', retry);
     };
 
-    const start = (transport: Transport, mode: LobbyMode, seed: number, localPlayer: PlayerId): void => {
+    // The slot is not carried here: `Transport.localPlayer` is the same value
+    // and is what the game actually reads, so a second copy could only ever
+    // disagree with it.
+    const start = (transport: Transport, mode: LobbyMode, seed: number): void => {
       overlay.remove();
-      resolve({ transport, config: configFor(mode, seed), localPlayer });
+      resolve({ transport, config: configFor(mode, seed) });
     };
 
     const menu = (): void => {
@@ -123,7 +125,7 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
       `);
 
       dialog.querySelector('[data-act="ai"]')!.addEventListener('click', () => {
-        start(new SoloTransport(), { kind: 'skirmish', difficulty: BotDifficulty.Normal }, randomSeed(), 0);
+        start(new SoloTransport(), { kind: 'skirmish', difficulty: BotDifficulty.Normal }, randomSeed());
       });
 
       dialog.querySelector('[data-act="coop"]')!.addEventListener('click', coop);
@@ -183,7 +185,7 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
         local(modeWith(false)),
       );
       dialog.querySelector('[data-act="solo"]')!.addEventListener('click', () => {
-        start(new SoloTransport(), modeWith(true), randomSeed(), 0);
+        start(new SoloTransport(), modeWith(true), randomSeed());
       });
       dialog.querySelector('[data-act="back"]')!.addEventListener('click', menu);
     };
@@ -243,7 +245,7 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
           status.textContent = message;
         },
       })
-        .then(({ transport, seed, localPlayer }) => start(transport, mode, seed, localPlayer))
+        .then(({ transport, seed }) => start(transport, mode, seed))
         .catch((error: unknown) => {
           showError(error instanceof Error ? error.message : String(error), menu);
         });
@@ -261,7 +263,7 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
       dialog.querySelector('[data-act="cancel"]')!.addEventListener('click', menu);
 
       joinLocalRoom('lan', randomSeed(), modeId(mode))
-        .then(({ transport, seed, localPlayer }) => start(transport, mode, seed, localPlayer))
+        .then(({ transport, seed }) => start(transport, mode, seed))
         .catch((error: unknown) => {
           showError(error instanceof Error ? error.message : String(error), menu);
         });

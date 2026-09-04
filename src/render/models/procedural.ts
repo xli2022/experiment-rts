@@ -177,25 +177,44 @@ function part(
 /**
  * Player colours, plus the neutral palette used for resources and terrain.
  *
- * Two hue families, one per team: slots 0 and 1 are cool, slots 2 and 3 warm.
- * Which *player* a unit belongs to matters far less in play than which *side*
- * it is on — the question a glance at a battle has to answer is "may I shoot
- * that", and hue answers it from across the map where a shade could not.
- * Telling a partner's army from your own is what the selection ring and the
- * minimap are for.
+ * The table is **team-major**: entries 0 and 1 are one side's, 2 and 3 the
+ * other's. Two hue families, cool against warm, because which *player* a unit
+ * belongs to matters far less in play than which *side* it is on — the question
+ * a glance at a battle has to answer is "may I shoot that", and hue answers it
+ * from across the map where a shade could not. Telling a partner's army from
+ * your own is what the selection ring and the minimap are for.
+ *
+ * Index it through `colourSlotFor`, never with a raw player id. See there.
  */
 export const PLAYER_COLOURS = [0x4a9eff, 0x35d6bd, 0xff5a4a, 0xffa93d] as const;
 export const ACCENT_COLOURS = [0xa8d4ff, 0x9ff0e4, 0xffb0a4, 0xffd9a0] as const;
 export const DARK_COLOUR = 0x2a3140;
 export const RESOURCE_COLOUR = 0x54e0c8;
 
-/** Resolve a part role to a concrete colour for a given owner. */
-export function colourFor(role: ModelPart['role'], owner: number): number {
+/**
+ * Which palette entry a player's colour comes from.
+ *
+ * The table above is laid out by side, and a roster is split down the middle —
+ * the first half is one team, the second the other — so a four-player match
+ * happens to read straight off the player id and a *duel does not*. Indexing a
+ * duel by raw id paints the lone opponent in the local player's own hue family:
+ * measured, the enemy's buildings, workers, tracers and minimap dots all went
+ * teal, one shade from your own blue and a hair from the mineral colour, while
+ * their combat units still wore the red team skin. Mapping through the side is
+ * what keeps blue against red at two players and changes nothing at four.
+ */
+export function colourSlotFor(owner: number, playerCount: number): number {
+  const half = Math.max(1, playerCount >> 1);
+  return owner < half ? owner : 2 + (owner - half);
+}
+
+/** Resolve a part role to a concrete colour for a palette slot. */
+export function colourFor(role: ModelPart['role'], slot: number): number {
   switch (role) {
     case 'player':
-      return PLAYER_COLOURS[owner] ?? 0x9aa4b2;
+      return PLAYER_COLOURS[slot] ?? 0x9aa4b2;
     case 'accent':
-      return ACCENT_COLOURS[owner] ?? 0xc8d0dc;
+      return ACCENT_COLOURS[slot] ?? 0xc8d0dc;
     case 'resource':
       return RESOURCE_COLOUR;
     case 'dark':

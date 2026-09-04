@@ -127,6 +127,15 @@ body {
 
 /* The partner strip: only present in co-op, and deliberately quieter than the
    player's own resources — it is reference, not something to act on. */
+/* An author `display` beats the UA stylesheet's `[hidden] { display: none }`,
+   so a panel that is sometimes absent needs to say so itself — the same rule
+   `#production` and `#prod-queue` below carry, for the same reason. Without it
+   the strip renders as an empty box in every 1v1 and, being `interactive`,
+   swallows clicks in the corner of the screen. */
+#allies[hidden] {
+  display: none;
+}
+
 #allies {
   top: 56px;
   left: 12px;

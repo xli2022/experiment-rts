@@ -21,7 +21,7 @@
 
 import { checksumArray, checksumInit, checksumU32 } from './checksum.js';
 import { toInt, type Fix } from './fixed.js';
-import { carveLayout, layoutSize } from './mapgen.js';
+import { carveLayout } from './mapgen.js';
 import { MapLayout, Tile } from './types.js';
 
 export const MAP_SIZE = 128;
@@ -232,11 +232,6 @@ export function generateMap(
   // Terrain is final from here on; freeze its hash so per-tick checksums are cheap.
   map.sealTerrain();
   return map;
-}
-
-/** The map size a layout is designed for. */
-export function mapSizeFor(kind: MapLayout): number {
-  return layoutSize(kind);
 }
 
 /**

@@ -30,13 +30,18 @@ const TICKS = 4000; // three and a bit simulated minutes at 20Hz
 /**
  * Ticks for the four-player legs.
  *
- * Shorter than the duel's, because four players on a larger map cost roughly
- * twice as much per tick and the point of these is coverage of the co-op code
- * paths rather than a second run at the same length. Contact between the two
- * sides still happens inside it — `tests/coop.test.ts` asserts an army reaches
- * an enemy base, which is the claim this length has to keep true.
+ * The same length as the duel's, and for the same reason. It was set shorter on
+ * the theory that four players on a larger map cost roughly twice as much per
+ * tick and that these legs were about co-op code paths rather than length —
+ * with a comment asserting contact happened inside it anyway. Measured, the two
+ * sides do not meet until around tick 2800 on this map, so at 2500 every co-op
+ * leg stopped before a single shot was fired between the teams: cross-team
+ * damage, `isHostile`, and every combat path on the four-player map were
+ * checksummed exactly never. This is the blindness the file's own duel coverage
+ * test exists to prevent, in a new place. `covers combat on both maps` below
+ * asserts it rather than trusting this comment.
  */
-const COOP_TICKS = 2500;
+const COOP_TICKS = 4000;
 
 describe('deterministic simulation', () => {
   it('replays a recorded match to identical state at every tick', () => {
@@ -188,6 +193,38 @@ describe('deterministic simulation', () => {
     // would agree perfectly about nothing.
     expect(a.world.player(0).supplyMax).toBeGreaterThan(10);
     expect(a.world.player(3).supplyMax).toBeGreaterThan(10);
+  });
+
+  it('covers combat on the four-player map, not just economy', () => {
+    // The same coverage assertion as the duel's, for the same reason and after
+    // the same failure. `COOP_TICKS` was 2500 and the two sides do not meet
+    // until around 2800, so every co-op leg above agreed perfectly about a match
+    // in which nobody had yet fired at anybody — while a comment on the constant
+    // claimed contact happened inside it. Hostility on this map is a *team*
+    // question rather than an owner one, which is precisely the new arithmetic
+    // these legs exist to checksum.
+    const sim = new Simulation(coopMatch(SEED, { botPlayers: [0, 1, 2, 3] }));
+    const world = sim.world;
+
+    let crossTeamShots = 0;
+    const shooters = new Set<number>();
+    for (let t = 0; t < COOP_TICKS; t++) {
+      sim.step([]);
+      const shots = world.events.shots;
+      for (let k = 0; k + 1 < shots.length; k += 2) {
+        const attacker = world.pool.owner[shots[k]!]!;
+        const victim = world.pool.owner[shots[k + 1]!]!;
+        // Allies never shoot each other; a shot that crossed the front line is
+        // the only kind that exercises team hostility.
+        expect(world.areAllied(attacker, victim)).toBe(false);
+        crossTeamShots++;
+        shooters.add(attacker);
+      }
+    }
+
+    expect(crossTeamShots).toBeGreaterThan(20);
+    // All four slots, or half the roster's combat code never runs.
+    expect(shooters.size).toBe(4);
   });
 
   it('is unaffected by how commands are batched across ticks', () => {

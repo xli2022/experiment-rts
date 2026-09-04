@@ -68,8 +68,10 @@ corner and a team to each side of it. Allies:
 
 - never damage each other, and cannot be ordered to try;
 - **share vision** — whatever your partner scouts, you can see;
-- win and lose together, so a player whose own base is razed is still in the
-  match as long as their partner is.
+- win and lose together — a side is beaten only when every structure on it is
+  gone, so a player whose own base is razed is on the winning side if their
+  partner finishes the job. (Their surviving units fight on by themselves, but
+  stop taking orders: losing your last building still eliminates *you*.)
 
 Pick a difficulty in the lobby. It changes only what the AI *does* — how hard it
 works its economy, how soon it commits, whether it comes home when its base is

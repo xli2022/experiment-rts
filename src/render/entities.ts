@@ -25,7 +25,7 @@ import { ENTITY_CAPACITY } from '../sim/entities.js';
 import { toFloat } from '../sim/fixed.js';
 import { BuildState, EntityType, NEUTRAL, TICKS_PER_SECOND } from '../sim/types.js';
 import type { World } from '../sim/world.js';
-import { colourFor, PLAYER_COLOURS } from './models/procedural.js';
+import { colourFor, colourSlotFor, PLAYER_COLOURS } from './models/procedural.js';
 import type { ModelProvider } from './models/provider.js';
 import type { FogRenderer } from './fog.js';
 import { MAX_CLIFF_HEIGHT } from './terrain.js';
@@ -153,6 +153,8 @@ export class EntityRenderer {
   private readonly owners: number[] = [];
   /** Team of each slot, for picking which skin a unit wears. */
   private readonly teamOf: number[] = [];
+  /** Palette entry of each slot. Not the slot itself — see `colourSlotFor`. */
+  private readonly colourOf: number[] = [];
 
   constructor(
     private readonly provider: ModelProvider,
@@ -161,6 +163,7 @@ export class EntityRenderer {
     for (let p = 0; p < world.players.length; p++) {
       this.owners.push(p);
       this.teamOf.push(world.teamOf(p));
+      this.colourOf.push(colourSlotFor(p, world.players.length));
     }
     this.buildPools(world);
 
@@ -273,7 +276,7 @@ export class EntityRenderer {
         map: skin,
         // Without a texture the player colour has to carry the whole read, so
         // the model is tinted flat rather than left white.
-        color: skin ? 0xffffff : (PLAYER_COLOURS[owner] ?? 0x9aa4b2),
+        color: skin ? 0xffffff : (PLAYER_COLOURS[this.colourOf[owner] ?? owner] ?? 0x9aa4b2),
       });
       const anim = new AnimatedUnitPool(model, material, POOL_CAPACITY);
       this.animatedPools.set(animatedKey(type, owner), anim);
@@ -367,7 +370,14 @@ export class EntityRenderer {
       if (!anim) continue;
       // A corpse is not an entity any more, so it obeys fog by position: an
       // enemy dying out of sight should not announce itself.
-      if (corpse.owner !== localPlayer && fog && !fog.isVisibleAt(corpse.x, corpse.z)) continue;
+      //
+      // By side, not by owner. A unit stops lighting the ground the tick it
+      // dies, so a partner's last scout dying at the edge of team vision is
+      // already unobserved by the time its corpse is drawn — culled here, it
+      // would blink out with no death clip while your own unit dying on the
+      // same tile played one in full.
+      const friendly = this.teamOf[corpse.owner] === this.teamOf[localPlayer];
+      if (!friendly && fog && !fog.isVisibleAt(corpse.x, corpse.z)) continue;
 
       const fell = corpse.flying
         ? FLIGHT_ALTITUDE * Math.max(0, 1 - age / Math.max(0.001, clip.duration))
@@ -407,7 +417,7 @@ export class EntityRenderer {
         for (let p = 0; p < spec.parts.length; p++) {
           const part = spec.parts[p]!;
           const material = new THREE.MeshLambertMaterial({
-            color: colourFor(part.role, owner),
+            color: colourFor(part.role, this.colourOf[owner] ?? owner),
           });
           this.disposables.push(material);
           const mesh = new THREE.InstancedMesh(part.geometry, material, POOL_CAPACITY);
@@ -638,7 +648,10 @@ export class EntityRenderer {
         this.scale.set(r, 1, r);
         this.matrix.compose(this.position, IDENTITY, this.scale);
         this.productionRings.setMatrixAt(prodCount, this.matrix);
-        this.productionRings.setColorAt(prodCount, this.colour.setHex(PLAYER_COLOURS[owner] ?? 0xffffff));
+        this.productionRings.setColorAt(
+          prodCount,
+          this.colour.setHex(PLAYER_COLOURS[this.colourOf[owner] ?? owner] ?? 0xffffff),
+        );
         prodCount++;
         this.scale.set(1, 1, 1);
       }
@@ -738,11 +751,6 @@ export class EntityRenderer {
     this.healthFill.count = barCount;
     this.healthFill.instanceMatrix.needsUpdate = true;
     if (this.healthFill.instanceColor) this.healthFill.instanceColor.needsUpdate = true;
-  }
-
-  /** Team colour as a CSS string, for HUD elements. */
-  static playerColourCss(player: number): string {
-    return `#${(PLAYER_COLOURS[player] ?? 0x9aa4b2).toString(16).padStart(6, '0')}`;
   }
 
   dispose(): void {

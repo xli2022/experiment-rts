@@ -27,7 +27,7 @@ import {
   type EntityRenderer,
   type EntityTransformSnapshot,
 } from './entities.js';
-import { PLAYER_COLOURS } from './models/procedural.js';
+import { colourSlotFor, PLAYER_COLOURS } from './models/procedural.js';
 
 /** Simultaneous effects of each kind. Beyond this, new ones replace the oldest. */
 const CAPACITY = 512;
@@ -337,7 +337,7 @@ export class ProjectileRenderer {
       if (type === EntityType.MineralPatch) continue;
 
       const owner = pool.owner[i]!;
-      const colour = PLAYER_COLOURS[owner] ?? 0x9aa4b2;
+      const colour = PLAYER_COLOURS[colourSlotFor(owner, world.players.length)] ?? 0x9aa4b2;
       const x = toFloat(pool.posX[i]!);
       const z = toFloat(pool.posY[i]!);
       const big = def.isBuilding;
@@ -414,7 +414,7 @@ export class ProjectileRenderer {
         targetType: pool.type[target]! as EntityType,
         target: entities.transformSnapshot(target),
         ranged: toFloat(def.attackRange) >= MELEE_RANGE,
-        colour: PLAYER_COLOURS[owner] ?? 0xffffff,
+        colour: PLAYER_COLOURS[colourSlotFor(owner, world.players.length)] ?? 0xffffff,
       });
     }
   }

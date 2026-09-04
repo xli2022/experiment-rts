@@ -160,6 +160,7 @@ class Game {
         else this.camera.lookAt(x, z);
       },
       this.allies(),
+      this.sim.world.players.length,
     );
 
     this.runner = new LockstepRunner(this.sim, transport, {
@@ -1046,7 +1047,6 @@ async function boot(): Promise<void> {
               difficulty: BotDifficulty.Normal,
             })
           : duelMatch(seedParam, { botPlayers: [1] }),
-      localPlayer: 0,
     };
   } else {
     setup = await showHome(uiRoot, renderer, gallery);

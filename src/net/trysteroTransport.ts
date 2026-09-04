@@ -239,15 +239,23 @@ export function joinOnlineRoom(config: HostConfig, timeoutMs = 90000): Promise<J
       reject(new Error(message));
     };
 
-    // Sent once, to whichever peer we learn about first. Peer discovery is
-    // symmetric but its two halves are not ordered, so the greeting has to go
-    // out from whichever side of that race we happen to be on: if their hello
-    // reaches us before our own join callback fires, and we only ever greeted
-    // from the callback, neither peer would ever hear from the other.
-    let greeted = false;
+    // Sent once *per peer*. Peer discovery is symmetric but its two halves are
+    // not ordered, so the greeting has to go out from whichever side of that
+    // race we happen to be on: if their hello reaches us before our own join
+    // callback fires, and we only ever greeted from the callback, neither peer
+    // would ever hear from the other.
+    //
+    // Per peer, not once overall. Now that resolution waits for a handshake,
+    // a peer that never receives one waits out the whole timeout — so greeting
+    // only the first id we hear about strands the second. A room can hold more
+    // than two: a player with the page open in a spare tab, a reload whose old
+    // peer has not been reaped yet, or two pairs that landed on the same code.
+    // Greet whoever we meet; the extra message is a few dozen bytes and the
+    // first handshake back is still what settles the slot.
+    const greeted = new Set<string>();
     const greet = (id: string): void => {
-      if (greeted) return;
-      greeted = true;
+      if (greeted.has(id)) return;
+      greeted.add(id);
       const hello: Handshake = { protocol: PROTOCOL_VERSION, seed, mode };
       void handshakeAction.send(hello as unknown as DataPayload, { target: id });
     };

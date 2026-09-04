@@ -153,6 +153,16 @@ partner it can never damage, an attack order that can never resolve, fog that
 stops at your own units, a match that ends when one of two allies loses their
 last building.
 
+**Elimination stayed per player while the match became per team, and the seam
+shows.** A co-op player who loses their last building is eliminated, so
+`executeCommand` drops their orders — while their surviving army stays on the
+field fighting for itself. The side can still win, and does; but those units
+answer to nobody. Whether losing a base with an army still alive should
+eliminate a player at all is a design question rather than an oversight, and it
+wants answering before the seam is papered over: the buildings-only rule is what
+stops a 1v1 dragging on while a lone worker hides in a corner, so relaxing it
+cannot be done for co-op alone without saying what happens to the duel.
+
 **Humans must occupy a contiguous prefix of the roster.** Lockstep indexes its
 per-turn buffer by player id and only human slots ever appear on the wire, so a
 bot in slot 0 with a human in slot 2 stalls every peer forever waiting for a turn

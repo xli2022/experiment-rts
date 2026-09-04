@@ -201,8 +201,20 @@ interface Survey {
   depots: number[];
   turrets: number[];
   sites: number[];
-  /** Live patches near one of our own Command Posts. */
+  /**
+   * Patches to send an idle worker to: the ones near a base of ours, or every
+   * live patch on the map when none of ours is left.
+   */
   patches: number[];
+  /**
+   * How many of those were actually near a base of ours.
+   *
+   * Kept apart from `patches.length` because the fallback deliberately blurs the
+   * two: "somewhere to mine" and "my own line is running out" are different
+   * questions, and answering the second from the widened list reports the line
+   * as healthy at exactly the moment it has run dry.
+   */
+  homePatches: number;
   /** Any live patch anywhere, for deciding whether the map is mined out. */
   livePatches: number;
   /** Hostile structures, ascending by slot. Killing these is what wins. */
@@ -218,8 +230,8 @@ interface Survey {
    * pass, so all of them agree on how big it is and where its middle is.
    */
   teamArmy: number[];
-  /** The nearest hostile to one of our buildings, or -1. */
-  threat: number;
+  /** The building of ours a hostile is nearest to, or -1 when none is. */
+  threatened: number;
   minerals: number;
   supplyUsed: number;
   supplyMax: number;
@@ -244,13 +256,14 @@ function survey(world: World, player: PlayerId): Survey {
     turrets: [],
     sites: [],
     patches: [],
+    homePatches: 0,
     livePatches: 0,
     enemyTargets: [],
     enemyRanged: 0,
     enemyMelee: 0,
     enemyAir: 0,
     teamArmy: [],
-    threat: -1,
+    threatened: -1,
     minerals: world.player(player).minerals,
     supplyUsed: world.player(player).supplyUsed,
     supplyMax: world.player(player).supplyMax,
@@ -339,13 +352,21 @@ function survey(world: World, player: PlayerId): Survey {
   for (const p of allPatches) {
     if (nearestOf(world, p, s.commandPosts).distSq <= sq(HOME_PATCH_RANGE)) s.patches.push(p);
   }
-  // Falling back to every patch matters at exactly one moment: before the first
-  // Command Post finishes on a fresh expansion, and after the last one dies.
-  if (s.patches.length === 0 && s.commandPosts.length === 0) {
+  // Nothing near home is worth walking to, but something somewhere is: take it.
+  //
+  // The filter above is about *preference* — with four bases on the map, the
+  // nearest live patch is occasionally an ally's line or an enemy's, and a
+  // worker sent there mines into the wrong bank or dies on arrival. It is not a
+  // reason to stop mining. Restricting the fallback to a bot with no Command
+  // Post at all covered the fresh-expansion case and missed the far commoner
+  // one: a home line that has run dry while patches remain elsewhere, where
+  // every worker simply stood still for the rest of the match.
+  s.homePatches = s.patches.length;
+  if (s.patches.length === 0) {
     for (const p of allPatches) s.patches.push(p);
   }
 
-  s.threat = nearestThreat(world, hostileUnits, ownBuildings);
+  s.threatened = nearestThreat(world, hostileUnits, ownBuildings);
   return s;
 }
 
@@ -371,11 +392,24 @@ function nearestOf(
 }
 
 /**
- * The hostile unit nearest to any of our structures, if one is close enough to
+ * The structure of ours a hostile is nearest to, if one is close enough to
  * count as an attack.
  *
  * A lone scouting worker is not an attack, and pulling an army home for one is
  * how a bot gets pulled out of position on purpose. Anything armed is.
+ *
+ * The *building*, not the attacker, and for two reasons. An enemy position is
+ * a moving goal tile, and a grouped order navigates by a flow field cached per
+ * goal tile — measured over a four-bot match, aiming at the attacker made 66%
+ * of defensive orders a fresh Dijkstra sweep against 22% for the attack orders
+ * that aim at buildings, and rebuilding the cache cost about a tenth of total
+ * simulation time. It is also the only aim point that is reliably reachable: a
+ * flyer parked over a cliff mass has no walkable tile near it, so the order was
+ * refused outright by `standableTarget` and the whole army stood still for as
+ * long as one drone cared to hover there.
+ *
+ * Walking home is what defence means anyway; an attack-move picks the attacker
+ * up on arrival.
  */
 function nearestThreat(
   world: World,
@@ -393,7 +427,7 @@ function nearestThreat(
     if (distSq > sq(DEFEND_RANGE)) continue;
     if (distSq < bestDist) {
       bestDist = distSq;
-      best = h;
+      best = index;
     }
   }
   return best;
@@ -535,7 +569,7 @@ function manageConstruction(
   // A home mineral line that is nearly out is its own reason to expand, whatever
   // the bank looks like: waiting for a threshold that income can no longer reach
   // is how a bot mines itself to a standstill on a full map.
-  const patchesRunningOut = s.patches.length <= 2 && s.livePatches > s.patches.length;
+  const patchesRunningOut = s.homePatches <= 2 && s.livePatches > s.homePatches;
 
   let want: EntityType | null = null;
   if (s.supplyMax < SUPPLY_MAX && supplyFree < buffer) {
@@ -881,14 +915,14 @@ function manageArmy(
   // Reacted to more often than an attack is re-aimed: an attack that is one
   // second stale costs a little walking, a defence that is one second stale
   // costs a building.
-  if (tuning.defendsHome && s.threat >= 0 && s.army.length > 0) {
+  if (tuning.defendsHome && s.threatened >= 0 && s.army.length > 0) {
     if (beat % 2 !== 0) return;
     cmds.push({
       type: CommandType.AttackMove,
       player,
       units: s.army.map((i) => pool.idAt(i)),
-      x: pool.posX[s.threat]!,
-      y: pool.posY[s.threat]!,
+      x: pool.posX[s.threatened]!,
+      y: pool.posY[s.threatened]!,
     });
     return;
   }
@@ -916,7 +950,14 @@ function manageArmy(
   // The count that decides whether to commit is the *team's*, not ours. Two
   // bots each waiting for their own eight units attack four seconds apart and
   // are beaten one at a time; counting together, they arrive together.
-  const committed = tuning.coordinates ? s.teamArmy.length : attackers.length;
+  //
+  // Only while there is an army to count, though. `teamArmy` holds combat units
+  // and nothing else, so measuring the worker last stand against it compares a
+  // group of workers to a count that is necessarily zero — and the bot stands
+  // in its dead base forever, which is the exact draw by inaction the paragraph
+  // above exists to prevent.
+  const marching = attackers === s.army;
+  const committed = tuning.coordinates && marching ? s.teamArmy.length : attackers.length;
   if (committed < required) return;
 
   // Re-issue occasionally rather than every think tick, so units get a chance

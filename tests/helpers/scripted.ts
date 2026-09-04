@@ -277,9 +277,8 @@ function generateFor(world: World, player: number, rng: Rng): Command[] {
 export function recordMatch(
   match: MatchConfig | number,
   ticks: number,
-  mapSize?: number,
 ): { log: CommandLog; checksums: number[] } {
-  const sim = new Simulation(match, mapSize);
+  const sim = new Simulation(match);
   const seed = typeof match === 'number' ? match : match.seed;
   const rng = new Rng(seed ^ 0xa5a5a5);
   const log: CommandLog = [];
@@ -303,12 +302,8 @@ export function recordMatch(
 }
 
 /** Replay a recorded log into a fresh simulation, checksumming every tick. */
-export function replayMatch(
-  match: MatchConfig | number,
-  log: CommandLog,
-  mapSize?: number,
-): number[] {
-  const sim = new Simulation(match, mapSize);
+export function replayMatch(match: MatchConfig | number, log: CommandLog): number[] {
+  const sim = new Simulation(match);
   const checksums: number[] = [];
   for (let t = 0; t < log.length; t++) {
     // Deep-copy so the replay cannot observe mutations made by the first run,

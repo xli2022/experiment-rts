@@ -22,6 +22,7 @@ import { fromInt } from '../src/sim/fixed.js';
 import { coopMatch, duelMatch, humanCount, matchConfig, teamsFor } from '../src/sim/match.js';
 import { GameMap, generateMap } from '../src/sim/map.js';
 import { mirror } from '../src/sim/mapgen.js';
+import { colourSlotFor } from '../src/render/models/procedural.js';
 import { Simulation } from '../src/sim/tick.js';
 import {
   BotDifficulty,
@@ -413,6 +414,35 @@ describe('the four-corner map', () => {
     const b = generateMap(SEEDS[0]!);
     expect(Array.from(a.tiles)).toEqual(Array.from(b.tiles));
     expect(a.starts).toEqual(b.starts);
+  });
+});
+
+describe('player colours', () => {
+  it('keeps a duel blue against red, and gives four players two hue families', () => {
+    // The palette is laid out by side — entries 0 and 1 are one team's, 2 and 3
+    // the other's — so a roster split down the middle reads straight off the
+    // player id at four players and *not* at two. Indexed by raw id, a duel
+    // painted the lone opponent teal: one shade from the local player's blue,
+    // a hair from the mineral colour on the minimap, and contradicting the red
+    // skin their own combat units were still wearing. Nothing in the suite
+    // could see it, which is why it is a test rather than a comment.
+    expect(colourSlotFor(0, 2)).toBe(0);
+    expect(colourSlotFor(1, 2)).toBe(2);
+    for (let p = 0; p < 4; p++) expect(colourSlotFor(p, 4)).toBe(p);
+
+    // The property underneath both: partners share a hue family, opponents do
+    // not. Checked against the real team split rather than against the indices.
+    for (const config of [duelMatch(1), coopMatch(1)]) {
+      const world = new Simulation(config).world;
+      const n = world.players.length;
+      for (let a = 0; a < n; a++) {
+        for (let b = 0; b < n; b++) {
+          const sameFamily =
+            colourSlotFor(a, n) >> 1 === colourSlotFor(b, n) >> 1;
+          expect(`${a},${b}:${sameFamily}`).toBe(`${a},${b}:${world.areAllied(a, b)}`);
+        }
+      }
+    }
   });
 });
 

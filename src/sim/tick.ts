@@ -57,8 +57,8 @@ export class Simulation {
    */
   private readonly botOf: Int8Array;
 
-  constructor(config: MatchConfig | number, mapSize?: number) {
-    this.world = new World(config, mapSize);
+  constructor(config: MatchConfig | number) {
+    this.world = new World(config);
     setupMatch(this.world);
     this.astar = new AStar(this.world.map);
     this.fields = new FlowFieldCache(this.world.map.width * this.world.map.height);
