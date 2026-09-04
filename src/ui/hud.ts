@@ -84,10 +84,10 @@ export class Hud {
       <div class="panel" id="allies"${allies.length === 0 ? ' hidden' : ''}>
         ${allies
           .map(
-            (p) => `
+            (p, k) => `
           <div class="ally" data-ally="${p}">
             <span class="stat-dot" style="background:${hex(PLAYER_COLOURS[p] ?? 0x888888)}"></span>
-            <span class="ally-name">Ally ${p + 1}</span>
+            <span class="ally-name">${allies.length > 1 ? `Ally ${k + 1}` : 'Ally'}</span>
             <span class="ally-minerals">0</span>
             <span class="ally-supply">0/0</span>
           </div>`,

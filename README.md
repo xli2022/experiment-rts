@@ -7,7 +7,8 @@ and **no server to deploy**.
 
 Gather minerals, build a base, train an army, and destroy every enemy structure.
 Play against the AI, against someone in a second tab, or against a friend
-anywhere — peer-to-peer over WebRTC.
+anywhere — peer-to-peer over WebRTC. Or team up: **co-op** puts you and a
+partner on one side of a four-corner map against two AI opponents.
 
 ```sh
 npm install
@@ -39,7 +40,8 @@ suite — see [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml).
 Workers gather minerals, construct buildings, and repair them. The Command Post
 trains workers, Supply Depots raise the supply cap, Barracks train the three
 combat units, and Turrets defend. Build a second Command Post on an expansion to
-mine two lines at once. You lose when your last structure falls.
+mine two lines at once. You lose when your last structure falls — in co-op, when
+the last structure on your *side* falls.
 
 ### The three combat units
 
@@ -59,9 +61,29 @@ rather than a secret: peer-to-peer lockstep gives every client the whole game
 state by construction, exactly as the genre's originals did. What it buys is
 scouting and map control.
 
-### The map
+### Co-op
 
-Bases sit in opposite corners, joined by **three routes** — a middle lane through
+Two players share a side against two AI opponents, on a map with a base in each
+corner and a team to each side of it. Allies:
+
+- never damage each other, and cannot be ordered to try;
+- **share vision** — whatever your partner scouts, you can see;
+- win and lose together, so a player whose own base is razed is still in the
+  match as long as their partner is.
+
+Pick a difficulty in the lobby. It changes only what the AI *does* — how hard it
+works its economy, how soon it commits, whether it comes home when its base is
+attacked — never what it is given. And the two AI opponents play as one side:
+they count their armies together before committing and push the same target, so
+they arrive together rather than one at a time.
+
+There is a solo option too, which fills your partner's seat with an AI. Playing
+co-op online works exactly like a normal online match — same room code, both
+players pick the same mode.
+
+### The maps
+
+**Three Lanes** (1v1). Bases sit in opposite corners, joined by **three routes** — a middle lane through
 the centre and two outer lanes that hug the map edge — plus a corner-to-corner
 river crossing all three at the centre, and short connectors between mid and the
 outer lanes. Everything else is cliff.
@@ -77,13 +99,25 @@ mineral line already on them and room for a Command Post. Nobody owns one until
 they build there, and the patches are smaller than a main — so taking one is a
 decision about when your home line stops keeping up, not a free upgrade.
 
+**Four Quarters** (2v2, co-op). A base in each corner and a team along each
+edge, so your partner is next door and your opponents are across the map. Each
+team gets a **back lane** of its own along its edge, which is what makes helping
+a partner a short walk rather than a trip through the middle; two **flanks** run
+down the left and right edges, and two **diagonals** cross at the centre. Six
+expansions: a natural for each base, plus a contested pair halfway down each
+flank. Same generator and the same mirrored brush, so the two sides are exact
+180-degree rotations of each other.
+
 ## Multiplayer without a server
 
-Three ways to play, all sharing one code path:
+Every mode shares one code path:
 
 - **Skirmish vs AI** — the bot is a deterministic function of game state, so it
   runs inside the simulation on every machine. It costs no bandwidth and needs
   no host.
+- **Co-op vs AI** — the same thing with four slots instead of two: two humans on
+  the wire, two bots generated locally on both machines. A 2v2 therefore costs
+  exactly what a 1v1 does.
 - **Two tabs** — a second tab on the same computer, over `BroadcastChannel`. No
   network at all.
 - **Online** — share a room code. Peers find each other through the public
@@ -124,8 +158,12 @@ npm run determinism:cross   # run the same match under V8 and JavaScriptCore
 `determinism:cross` is the strongest check here and it is close to free. Node
 runs on V8 and Bun runs on JavaScriptCore — two independent JavaScript engines
 with independently implemented maths. If they agree on every checkpoint of a
-1,500-tick match, the simulation really is portable, and a Chrome player can
+full-length match, the simulation really is portable, and a Chrome player can
 face a Safari player without drifting apart.
+
+It runs three legs: a scripted 1v1, a bot-driven 1v1, and a bot-driven 2v2 on
+the four-corner map — the last because the other two never reach four players,
+the larger grid, team hostility, or the bot's team-level decisions.
 
 The test suite also plays complete AI-vs-AI matches to a victory condition
 across several seeds. That layer exists because a simulation can be perfectly

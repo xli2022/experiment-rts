@@ -10,10 +10,13 @@
 import { describe, expect, it } from 'vitest';
 import { CommandType, type Command } from '../src/sim/commands.js';
 import { fromInt } from '../src/sim/fixed.js';
+import { coopMatch } from '../src/sim/match.js';
 import { Simulation } from '../src/sim/tick.js';
 import { CHECKSUM_INTERVAL, MS_PER_TICK } from '../src/sim/types.js';
 import { LocalNetwork } from '../src/net/localTransport.js';
 import { INPUT_DELAY_TURNS, LockstepRunner, TICKS_PER_TURN } from '../src/net/lockstep.js';
+
+import type { MatchConfig } from '../src/sim/types.js';
 
 const SEED = 0xbeef01;
 
@@ -25,7 +28,7 @@ interface Peer {
 }
 
 /** Build two peers wired together through one simulated network. */
-function makeMatch(net: LocalNetwork, seed = SEED): Peer[] {
+function makeMatch(net: LocalNetwork, seed: number | MatchConfig = SEED): Peer[] {
   const peers: Peer[] = [];
   for (let p = 0; p < net.playerCount; p++) {
     const sim = new Simulation(seed);
@@ -109,6 +112,72 @@ describe('lockstep scheduler', () => {
     expect(peers[0]!.sim.checksum()).toBe(peers[1]!.sim.checksum());
     expect(peers[0]!.desyncs).toBe(0);
     expect(peers[1]!.desyncs).toBe(0);
+  });
+
+  it('runs a co-op match with the AI in the slots nobody is sitting in', () => {
+    // The whole reason co-op costs no bandwidth: the two humans are the only
+    // players on the wire, and the two bots are generated locally on both peers
+    // from state they already share. So the transport carries two slots while
+    // the simulation runs four, and the peers still have to agree exactly.
+    const config = coopMatch(SEED);
+    const net = new LocalNetwork(2, 5);
+    net.latencyMs = 60;
+    net.jitterMs = 20;
+    const peers = makeMatch(net, config);
+
+    expect(peers[0]!.sim.world.players.length).toBe(4);
+    expect(peers[0]!.sim.isBot(2)).toBe(true);
+    expect(peers[0]!.sim.isBot(0)).toBe(false);
+
+    // Watch what actually crosses the network rather than trusting the roster.
+    const onWire = new Set<number>();
+    const originalSubmit = net.submit.bind(net);
+    net.submit = (from, packet): void => {
+      for (const turn of packet.turns) {
+        for (const command of turn.commands) onWire.add(command.player);
+      }
+      originalSubmit(from, packet);
+    };
+
+    // Both humans keep clicking, so there is real traffic to inspect rather
+    // than a stream of empty heartbeats that would make the check below pass
+    // by saying nothing.
+    for (let f = 0; f < 600; f++) {
+      if (f % 40 === 0) {
+        for (const peer of peers) {
+          const player = peer.runner === peers[0]!.runner ? 0 : 1;
+          const units: number[] = [];
+          const pool = peer.sim.world.pool;
+          for (let i = 0; i < pool.count && units.length < 3; i++) {
+            if (pool.alive[i] === 1 && pool.owner[i] === player) units.push(pool.idAt(i));
+          }
+          const start = peer.sim.world.map.starts[player]!;
+          peer.runner.issue({
+            type: CommandType.Move,
+            player,
+            units,
+            x: fromInt(start.tileX + 4),
+            y: fromInt(start.tileY + 4),
+          });
+        }
+      }
+      for (const peer of peers) peer.runner.update(MS_PER_TICK);
+      net.advance(MS_PER_TICK);
+    }
+
+    expectAgreementAtCommonTick(peers);
+    expect(peers[0]!.desyncs).toBe(0);
+    expect(peers[1]!.desyncs).toBe(0);
+    expect(peers[0]!.runner.currentTick).toBeGreaterThan(300);
+
+    // Both humans, and only the humans. A bot's command appearing here would be
+    // applied twice on every peer that received it — once from the packet and
+    // once by the local bot.
+    expect([...onWire].sort()).toEqual([0, 1]);
+
+    // And the bots were actually playing, or agreement is agreement about
+    // nothing happening.
+    expect(peers[0]!.sim.world.player(2).supplyUsed).toBeGreaterThan(0);
   });
 
   it('stays in sync across realistic latency and jitter', () => {

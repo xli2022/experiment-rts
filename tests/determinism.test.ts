@@ -10,6 +10,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { checksumToHex } from '../src/sim/checksum.js';
+import { coopMatch } from '../src/sim/match.js';
 import { Simulation } from '../src/sim/tick.js';
 import { EntityType } from '../src/sim/types.js';
 import { cloneCommands, describeWorld, recordMatch, replayMatch } from './helpers/scripted.js';
@@ -25,6 +26,17 @@ const SEED = 0x1234abcd;
  * `covers combat` below asserts it rather than trusting this comment.
  */
 const TICKS = 4000; // three and a bit simulated minutes at 20Hz
+
+/**
+ * Ticks for the four-player legs.
+ *
+ * Shorter than the duel's, because four players on a larger map cost roughly
+ * twice as much per tick and the point of these is coverage of the co-op code
+ * paths rather than a second run at the same length. Contact between the two
+ * sides still happens inside it — `tests/coop.test.ts` asserts an army reaches
+ * an enemy base, which is the claim this length has to keep true.
+ */
+const COOP_TICKS = 2500;
 
 describe('deterministic simulation', () => {
   it('replays a recorded match to identical state at every tick', () => {
@@ -115,6 +127,67 @@ describe('deterministic simulation', () => {
     // Both sides, or one player is simply being farmed and the losing side's
     // combat code never runs.
     expect(shooters.size).toBe(2);
+  });
+
+  it('replays a four-player co-op match to identical state at every tick', () => {
+    // Twice the players, a different map, and — unlike the duel — two of the
+    // four command streams belong to a side rather than to an individual. All
+    // of that is new arithmetic reaching new code paths, so it gets the same
+    // per-tick treatment as the match above rather than a spot check at the end.
+    const config = coopMatch(SEED, { botPlayers: [] });
+    const { log, checksums } = recordMatch(config, COOP_TICKS);
+    const replayed = replayMatch(config, log);
+
+    expect(replayed.length).toBe(checksums.length);
+    for (let t = 0; t < checksums.length; t++) {
+      if (replayed[t] !== checksums[t]) {
+        throw new Error(
+          `desync at tick ${t}: recorded ${checksumToHex(checksums[t]!)} ` +
+            `!= replayed ${checksumToHex(replayed[t]!)}`,
+        );
+      }
+    }
+  });
+
+  it('keeps four co-op peers stepped side by side identical', () => {
+    const config = coopMatch(SEED, { botPlayers: [] });
+    const { log } = recordMatch(config, COOP_TICKS);
+
+    const a = new Simulation(config);
+    const b = new Simulation(config);
+    for (let t = 0; t < log.length; t++) {
+      a.step(cloneCommands(log[t]!));
+      b.step(cloneCommands(log[t]!));
+      const ca = a.checksum();
+      const cb = b.checksum();
+      if (ca !== cb) {
+        throw new Error(
+          `peers diverged at tick ${t}: ${checksumToHex(ca)} != ${checksumToHex(cb)}\n` +
+            `  A: ${describeWorld(a.world)}\n  B: ${describeWorld(b.world)}`,
+        );
+      }
+    }
+  });
+
+  it('reproduces a bot-driven co-op match from the config alone', () => {
+    // The bots are the whole command stream here: nothing is recorded, nothing
+    // is replayed, and two simulations built from the same agreed config have to
+    // arrive at the same state anyway. That is the property single-player and
+    // co-op both actually rely on — bot commands never cross the wire.
+    const config = coopMatch(SEED, { botPlayers: [0, 1, 2, 3] });
+    const a = new Simulation(config);
+    const b = new Simulation(config);
+    for (let t = 0; t < COOP_TICKS; t++) {
+      a.step([]);
+      b.step([]);
+      if (a.checksum() !== b.checksum()) {
+        throw new Error(`bot-driven co-op peers diverged at tick ${t}`);
+      }
+    }
+    // And the match was worth checksumming: four bots that never built anything
+    // would agree perfectly about nothing.
+    expect(a.world.player(0).supplyMax).toBeGreaterThan(10);
+    expect(a.world.player(3).supplyMax).toBeGreaterThan(10);
   });
 
   it('is unaffected by how commands are batched across ticks', () => {

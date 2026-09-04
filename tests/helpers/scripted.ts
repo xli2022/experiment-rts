@@ -15,7 +15,13 @@ import { defOf } from '../../src/config/rules.js';
 import { idIndex } from '../../src/sim/entities.js';
 import { fromInt } from '../../src/sim/fixed.js';
 import { Rng } from '../../src/sim/rng.js';
-import { BuildState, EntityType, NO_ENTITY, Order } from '../../src/sim/types.js';
+import {
+  BuildState,
+  EntityType,
+  NO_ENTITY,
+  Order,
+  type MatchConfig,
+} from '../../src/sim/types.js';
 import { Simulation } from '../../src/sim/tick.js';
 import type { World } from '../../src/sim/world.js';
 
@@ -223,7 +229,12 @@ function generateFor(world: World, player: number, rng: Rng): Command[] {
       if (t === EntityType.Burstbot || t === EntityType.Slicebot) army.push(pool.idAt(i));
     }
     if (army.length > 0) {
-      const enemyStart = world.map.starts[1 - player];
+      // The player directly opposite. Starts are stored in mirrored halves, so
+      // `p + n/2` is always the slot whose opening is this one's 180-degree
+      // rotation — which on a four-start map is the opponent across the
+      // diagonal rather than the ally next door.
+      const starts = world.map.starts.length;
+      const enemyStart = world.map.starts[(player + (starts >> 1)) % starts];
       const wander = rng.nextInt(4) === 0 || enemyStart === undefined;
       const tx = wander ? fromInt(rng.nextInt(world.map.width)) : fromInt(enemyStart.tileX);
       const ty = wander ? fromInt(rng.nextInt(world.map.height)) : fromInt(enemyStart.tileY);
@@ -264,11 +275,12 @@ function generateFor(world: World, player: number, rng: Rng): Command[] {
  * just reporting that they did.
  */
 export function recordMatch(
-  seed: number,
+  match: MatchConfig | number,
   ticks: number,
   mapSize?: number,
 ): { log: CommandLog; checksums: number[] } {
-  const sim = new Simulation(seed, mapSize);
+  const sim = new Simulation(match, mapSize);
+  const seed = typeof match === 'number' ? match : match.seed;
   const rng = new Rng(seed ^ 0xa5a5a5);
   const log: CommandLog = [];
   const checksums: number[] = [];
@@ -291,8 +303,12 @@ export function recordMatch(
 }
 
 /** Replay a recorded log into a fresh simulation, checksumming every tick. */
-export function replayMatch(seed: number, log: CommandLog, mapSize?: number): number[] {
-  const sim = new Simulation(seed, mapSize);
+export function replayMatch(
+  match: MatchConfig | number,
+  log: CommandLog,
+  mapSize?: number,
+): number[] {
+  const sim = new Simulation(match, mapSize);
   const checksums: number[] = [];
   for (let t = 0; t < log.length; t++) {
     // Deep-copy so the replay cannot observe mutations made by the first run,
@@ -318,13 +334,10 @@ export function describeWorld(world: World): string {
     if (defOf(pool.type[i]! as EntityType).isBuilding) buildings++;
     else units++;
   }
-  const p0 = world.player(0);
-  const p1 = world.player(1);
-  return (
-    `tick=${world.tick} units=${units} buildings=${buildings} ` +
-    `p0(min=${p0.minerals} sup=${p0.supplyUsed}/${p0.supplyMax}) ` +
-    `p1(min=${p1.minerals} sup=${p1.supplyUsed}/${p1.supplyMax})`
-  );
+  const perPlayer = world.players
+    .map((p, i) => `p${i}(min=${p.minerals} sup=${p.supplyUsed}/${p.supplyMax})`)
+    .join(' ');
+  return `tick=${world.tick} units=${units} buildings=${buildings} ${perPlayer}`;
 }
 
 export { idIndex, NO_ENTITY };

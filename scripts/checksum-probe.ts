@@ -17,9 +17,8 @@
  */
 
 import { checksumToHex } from '../src/sim/checksum.js';
-import { duelMatch } from '../src/sim/match.js';
+import { coopMatch, duelMatch } from '../src/sim/match.js';
 import { Simulation } from '../src/sim/tick.js';
-import type { PlayerId } from '../src/sim/types.js';
 import { recordMatch } from '../tests/helpers/scripted.js';
 
 const SEED = 0x1234abcd;
@@ -61,6 +60,27 @@ for (let t = 1; t <= BOT_TICKS; t++) {
   bots.step([]);
   if (t % 1000 === 0 || t === 1) {
     lines.push(`  tick ${String(t).padStart(5)}  ${checksumToHex(bots.checksum())}`);
+  }
+}
+
+/**
+ * A third leg on the four-player map.
+ *
+ * The other two legs are both a 1v1 on the duel map, so nothing in them ever
+ * reaches four players, the larger grid, team hostility, or the bot's
+ * team-level decisions — a whole map and half the roster's worth of arithmetic
+ * that the strongest check in the project would otherwise never run under a
+ * second engine. Bot-driven for the same reason the leg above is: it needs no
+ * recorded script to reach states worth checksumming.
+ */
+const COOP_SEED = 0x51ce7a11;
+const COOP_TICKS = 4000;
+lines.push('', `co-op 2v2  seed=${COOP_SEED.toString(16)} ticks=${COOP_TICKS}`);
+const coop = new Simulation(coopMatch(COOP_SEED, { botPlayers: [0, 1, 2, 3] }));
+for (let t = 1; t <= COOP_TICKS; t++) {
+  coop.step([]);
+  if (t % 1000 === 0 || t === 1) {
+    lines.push(`  tick ${String(t).padStart(5)}  ${checksumToHex(coop.checksum())}`);
   }
 }
 

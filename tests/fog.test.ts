@@ -15,7 +15,11 @@
 
 import { describe, expect, it } from 'vitest';
 import { EXPLORED, FogRenderer, UNEXPLORED, VISIBLE } from '../src/render/fog.js';
+import { fromInt } from '../src/sim/fixed.js';
 import { GameMap } from '../src/sim/map.js';
+import { coopMatch } from '../src/sim/match.js';
+import { Simulation } from '../src/sim/tick.js';
+import { EntityType, NO_ENTITY, type PlayerId } from '../src/sim/types.js';
 
 /** Alpha the renderer writes for the texel covering this tile. */
 function alphaAt(fog: FogRenderer, size: number, tx: number, ty: number): number {
@@ -60,6 +64,37 @@ describe('fog texture layout', () => {
       expect(alphaAt(fog, size, tx, ty)).toBe(0);
       expect(alphaAt(fog, size, size - 1 - tx, size - 1 - ty)).toBeGreaterThan(0);
     }
+  });
+
+  it('sees through a partner and not through an opponent', () => {
+    // Shared vision is most of what makes playing together feel like one side
+    // rather than two players who happen to share an enemy — and getting it
+    // wrong is invisible until the moment a partner scouts something and the
+    // other player is still looking at black.
+    const sim = new Simulation(coopMatch(0x51ce7a11));
+    const world = sim.world;
+    const fog = new FogRenderer(world.map);
+
+    // Three units, well apart, one per side of the question. Placed away from
+    // anyone's base so their own starting units cannot be what lights the
+    // ground up.
+    const spots: { player: PlayerId; x: number; y: number }[] = [
+      { player: 0, x: 40, y: 76 },
+      { player: 1, x: 60, y: 76 },
+      { player: 2, x: 80, y: 76 },
+    ];
+    for (const spot of spots) {
+      const id = world.pool.spawn(EntityType.Burstbot, spot.player, fromInt(spot.x), fromInt(spot.y));
+      expect(id).not.toBe(NO_ENTITY);
+    }
+
+    fog.update(world, 0);
+
+    // Our own unit, and our partner's, both light their ground.
+    expect(fog.isVisibleAt(spots[0]!.x + 0.5, spots[0]!.y + 0.5)).toBe(true);
+    expect(fog.isVisibleAt(spots[1]!.x + 0.5, spots[1]!.y + 0.5)).toBe(true);
+    // The opponent's does not, or there would be no fog at all.
+    expect(fog.isVisibleAt(spots[2]!.x + 0.5, spots[2]!.y + 0.5)).toBe(false);
   });
 
   it('bumps its version when visibility is recomputed', () => {

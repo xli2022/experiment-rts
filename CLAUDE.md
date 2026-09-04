@@ -60,6 +60,35 @@ bit-identical. The previous approach wrote each shape twice and trusted the
 copies to agree; they diverged on 926 tiles the moment the corridor brush gained
 a random wobble, because each copy drew its own wobble from the same stream.
 
+Two layouts share the carver: `Lanes` (two starts, 128) and `Quarters` (four
+starts, 152). Adding a map is authoring polylines, not writing a generator.
+
+### Start locations come in mirrored halves
+
+`map.starts[i]` and `map.starts[i + n/2]` are exact 180-degree rotations of one
+another, and `map.expansions` follows the same convention. Teams are then
+*derived* from it — the first half against the second — which is what makes team
+fairness structural instead of something to re-check. Two consequences worth
+holding onto:
+
+- **Player `p`'s opposite number is always `p + n/2`**, on any layout. Anything
+  that wants "the enemy" without scanning the pool should ask for that rather
+  than assuming `1 - p`.
+- **Allies within a half are not mirrors of each other**, and cannot be: only
+  one symmetry is guaranteed and it is the one between the sides. On `Quarters`
+  the two players on a team hold different ground; their *opponents* hold the
+  exact rotation of it.
+
+Everything placed at setup is laid out from the canonical (first-half) site and
+rotated for the other half — see `mirroredHalf`. One extra rule appears with
+four corners: the authored mineral-line offsets run up and to the left, which
+tucks the line into the corner for a base on the left of the map and shoves it
+out toward the middle for one on the right. `Quarters` has a canonical base in
+each, so the line is reflected about the base's own centre for the right-hand
+one. About its *centre*, not its centre tile — the half-tile error is the same
+one described under "Mirror fairness" below, and costs a whole tile of walking
+on every trip for the rest of the match.
+
 `map.elevation` is cosmetic and not checksummed — the simulation decides movement
 from walkability alone — but it is still computed deterministically, because two
 peers rendering visibly different terrain would look exactly like a desync.
@@ -103,6 +132,49 @@ by running bot matches on a symmetric map will report whichever side the
 tie-breaks happen to favour. Fixing it needs a rotation-invariant tie-break in
 A\* and a change to `fmul`'s rounding, and `fmul` is the function everything
 else's correctness rests on.
+
+## Teams
+
+A match is described by one agreed `MatchConfig` — seed, layout, a team per
+player slot, and which slots the AI plays. It is checksummed, so a lobby that
+let two peers disagree shows up as a desync on the first comparison rather than
+as an inexplicable divergence some seconds in.
+
+**A 1v1 is the degenerate case, and that is load-bearing.** Team ids equal player
+ids there, so `world.winner` still reads as a player, `teamsFor(Lanes)` is
+`[0, 1]`, and the duel map plus its opening are byte for byte what they were —
+verified against the pre-teams build, not assumed.
+
+`World.isHostile(index, player)` is the one place hostility is decided. It used
+to live on the entity pool, where it could only compare owners — correct while
+everyone was everyone else's enemy, and quietly wrong the moment two of them
+share a side. The failures it prevents are all quiet ones: a unit that chases a
+partner it can never damage, an attack order that can never resolve, fog that
+stops at your own units, a match that ends when one of two allies loses their
+last building.
+
+**Humans must occupy a contiguous prefix of the roster.** Lockstep indexes its
+per-turn buffer by player id and only human slots ever appear on the wire, so a
+bot in slot 0 with a human in slot 2 stalls every peer forever waiting for a turn
+nobody sends. `coopMatch` puts the humans in 0 and 1 and the AI in 2 and 3 for
+exactly this reason. A 2v2 therefore costs the same bandwidth as a 1v1: the two
+bots are generated locally on both machines.
+
+Vision is shared across a team, in the renderer. It cannot live in the
+simulation — two peers would immediately hold different state — but it is
+derived from checksummed data, so every peer could compute every side's fog if
+it wanted to.
+
+### The lobby handshake has to be waited for, not raced
+
+`joinOnlineRoom` used to resolve the moment it saw the other peer join, and the
+version check rode a message that arrived afterwards. That made the check
+decorative: the match had already begun by the time a mismatch was discovered,
+so all it could do was report a desync it existed to prevent. It now waits for
+the peer's handshake, which also carries the *mode* — an opaque string covering
+everything the lobby chose. The transport never interprets it and only compares
+it for equality, so map, roster and difficulty are all covered by one check that
+cannot drift out of step with what it is guarding.
 
 ## Rendering gotchas worth not rediscovering
 
@@ -258,6 +330,12 @@ checksum, which is the same blindness in a new place. The bot builds, expands
 and fights on its own, so it reaches states no script will, and it is a
 simulation-side command source — running it under both engines costs nothing.
 
+**And a third leg on the four-player map.** Both of the others are a 1v1 on the
+duel map, so neither ever reaches four players, the larger grid, team hostility,
+or the bot's team-level decisions — a whole map and half a roster's worth of
+arithmetic that the strongest check in the project would otherwise never run
+under a second engine.
+
 ## Architecture
 
 ```
@@ -344,6 +422,37 @@ deterministic it runs identically on every peer at zero bandwidth. Single-player
 and multiplayer are therefore one code path, not two. That also means the only
 producer of commands on the wire is local human input, which is what bounds
 packet size.
+
+**Two bots on a side are not two bots.** Run naively, an AI team is much weaker
+than one bot with twice the economy: each half picks its own target, commits on
+its own count, and gets beaten one at a time by an army that never had to fight
+both at once. So *when to commit* and *what to hit* are decided over the team's
+army rather than each bot's own — one centroid, not one each. Every bot on a side
+derives it from the same world in the same ascending pass, so they agree with no
+coordination channel and no shared state to keep in step.
+
+Three other things the bot was simply missing, each worth more than any tuning:
+
+- **It never came home.** An army crossing the map while its own Command Post is
+  being shot is the most expensive mistake available, and the old one made it
+  every match. Defence is checked before attack and, when it applies, is the only
+  order issued.
+- **It attacked the lowest-index enemy building**, which never changed. An army
+  that had fought its way into a base would walk back out past a Barracks to keep
+  pounding a Command Post it had already passed. The target is now the hostile
+  structure nearest the team's army.
+- **It trained workers from one Command Post.** An expansion's mineral line
+  therefore sat empty for minutes after it finished. Every base trains now, and
+  the worker target scales with how many there are to work.
+
+Production queues two deep normally and to the cap once minerals pile up: at two
+deep, every bot in a four-player match floated six to eight thousand minerals for
+the last five minutes — an army it had paid for and never received.
+
+Difficulty is behavioural only: no bonus income, no extra units, no cheating on
+fog. `THINK_INTERVAL` is deliberately *not* a difficulty knob — every bot must
+think on the same tick, or whoever thinks first gets a whole interval of head
+start, which measurably decided a mirror matchup.
 
 ### Movement has three movers, and they are easy to miss
 
