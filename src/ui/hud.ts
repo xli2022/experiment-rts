@@ -56,11 +56,16 @@ export class Hud {
   private lastButtonSignature = '';
   private minimapFrame = 0;
 
+  /** One row per partner in the ally strip, in slot order. */
+  private readonly allyRows: { player: PlayerId; minerals: HTMLElement; supply: HTMLElement }[] = [];
+
   constructor(
     root: HTMLElement,
     private readonly mapSize: number,
     private readonly localPlayer: PlayerId,
     private readonly onMinimapClick: (x: number, z: number, secondary: boolean) => void,
+    /** Slots on the local player's side other than their own, ascending. */
+    allies: readonly PlayerId[] = [],
   ) {
     root.innerHTML = `
       <div class="panel" id="resources">
@@ -74,6 +79,20 @@ export class Hud {
           <span class="stat-value" id="supply-value">0/0</span>
           <span class="stat-label">Supply</span>
         </div>
+      </div>
+
+      <div class="panel" id="allies"${allies.length === 0 ? ' hidden' : ''}>
+        ${allies
+          .map(
+            (p) => `
+          <div class="ally" data-ally="${p}">
+            <span class="stat-dot" style="background:${hex(PLAYER_COLOURS[p] ?? 0x888888)}"></span>
+            <span class="ally-name">Ally ${p + 1}</span>
+            <span class="ally-minerals">0</span>
+            <span class="ally-supply">0/0</span>
+          </div>`,
+          )
+          .join('')}
       </div>
 
       <div class="panel" id="minimap-panel">
@@ -127,6 +146,15 @@ export class Hud {
     this.minimap = must(root, '#minimap') as HTMLCanvasElement;
     this.minimapCtx = this.minimap.getContext('2d')!;
 
+    for (const p of allies) {
+      const row = must(root, `.ally[data-ally="${p}"]`);
+      this.allyRows.push({
+        player: p,
+        minerals: row.querySelector('.ally-minerals') as HTMLElement,
+        supply: row.querySelector('.ally-supply') as HTMLElement,
+      });
+    }
+
     this.muteBtn = must(root, '#mute-btn') as HTMLButtonElement;
     this.muteBtn.addEventListener('click', () => this.toggleMute());
     this.syncMuteLabel();
@@ -145,7 +173,7 @@ export class Hud {
     // Panels swallow pointer events so a click on the command card never also
     // issues a world order behind it.
     for (const sel of [
-      '#resources', '#minimap-panel', '#command-panel', '#fullscreen-btn', '#mute-btn',
+      '#resources', '#allies', '#minimap-panel', '#command-panel', '#fullscreen-btn', '#mute-btn',
     ]) {
       const panel = must(root, sel);
       panel.classList.add('interactive');
@@ -202,6 +230,16 @@ export class Hud {
       'supply-capped',
       (ps.supplyUsed >= ps.supplyMax && ps.supplyMax > 0) || anySupplyBlocked(world, this.localPlayer),
     );
+
+    // A partner's bank and supply, because in co-op the useful question is
+    // often "can they afford this if I cannot" — and because a partner who has
+    // stopped growing has usually stopped playing.
+    for (const row of this.allyRows) {
+      const ally = world.player(row.player);
+      if (!ally) continue;
+      row.minerals.textContent = String(ally.minerals);
+      row.supply.textContent = ally.defeated ? 'out' : `${ally.supplyUsed}/${ally.supplyMax}`;
+    }
   }
 
   updateSelection(world: World, selected: ReadonlySet<number>): void {
@@ -432,8 +470,10 @@ export class Hud {
       const px0 = toFloat(pool.posX[i]!);
       const pz0 = toFloat(pool.posY[i]!);
       // The minimap obeys the same fog rules as the world view; showing enemy
-      // positions here would defeat the entire point of having fog.
-      if (fog && owner !== this.localPlayer) {
+      // positions here would defeat the entire point of having fog. A partner's
+      // army is not an enemy — seeing where they are is the point of the strip
+      // above, and of the map.
+      if (fog && !world.areAllied(owner, this.localPlayer)) {
         const known =
           owner === NEUTRAL
             ? fog.isExploredAt(Math.floor(px0), Math.floor(pz0))

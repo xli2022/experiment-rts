@@ -17,6 +17,7 @@
  */
 
 import { checksumToHex } from '../src/sim/checksum.js';
+import { duelMatch } from '../src/sim/match.js';
 import { Simulation } from '../src/sim/tick.js';
 import type { PlayerId } from '../src/sim/types.js';
 import { recordMatch } from '../tests/helpers/scripted.js';
@@ -55,9 +56,7 @@ for (const t of CHECKPOINTS) {
 const BOT_SEED = 0x51ce7a11;
 const BOT_TICKS = 6000;
 lines.push('', `bot-vs-bot  seed=${BOT_SEED.toString(16)} ticks=${BOT_TICKS}`);
-const bots = new Simulation(BOT_SEED);
-bots.botPlayers.add(0 as PlayerId);
-bots.botPlayers.add(1 as PlayerId);
+const bots = new Simulation(duelMatch(BOT_SEED, { botPlayers: [0, 1] }));
 for (let t = 1; t <= BOT_TICKS; t++) {
   bots.step([]);
   if (t % 1000 === 0 || t === 1) {

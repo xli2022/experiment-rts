@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFS, defOf } from '../src/config/rules.js';
 import { ENTITY_TYPE_COUNT, EntityType, type PlayerId } from '../src/sim/types.js';
+import { duelMatch } from '../src/sim/match.js';
 import { Simulation } from '../src/sim/tick.js';
 
 describe('entity definitions', () => {
@@ -125,9 +126,7 @@ describe('damage is a single number', () => {
 
 describe('flying units in a real match', () => {
   it('get built and fly over terrain the ground army cannot cross', () => {
-    const sim = new Simulation(0x51ce7a11);
-    sim.botPlayers.add(0);
-    sim.botPlayers.add(1);
+    const sim = new Simulation(duelMatch(0x51ce7a11, { botPlayers: [0, 1] }));
 
     let sawBeamdrone = false;
     let beamdroneOverSolidGround = false;

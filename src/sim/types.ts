@@ -29,7 +29,87 @@ export const NO_ENTITY: EntityId = -1;
 /** Player slot. Neutral owns resources and terrain decoration. */
 export type PlayerId = number;
 export const NEUTRAL: PlayerId = -1;
-export const MAX_PLAYERS = 2;
+
+/**
+ * Upper bound on player slots, not the size of a match.
+ *
+ * A match's actual roster is `MatchConfig.teams`, and `world.players.length` is
+ * the number that exist. This constant only bounds what the rest of the engine
+ * must be able to cope with — four, so two players can share a side against two
+ * bots.
+ */
+export const MAX_PLAYERS = 4;
+
+/**
+ * Which side a player is on.
+ *
+ * Players on the same team never fight each other, share vision, and win or
+ * lose together. A 1v1 is the degenerate case where every team has one member,
+ * and team ids there are equal to player ids — which is why nothing about the
+ * duel changes when teams are introduced.
+ */
+export type TeamId = number;
+
+/**
+ * The maps we know how to generate.
+ *
+ * The layout decides how many start locations exist, and therefore how many
+ * players a match on it can hold.
+ */
+export enum MapLayout {
+  /** Three lanes between two opposite corners. Two starts: the 1v1 map. */
+  Lanes = 0,
+  /**
+   * Four starts, a team to each side of the map.
+   *
+   * Allies sit in adjacent corners joined by a back lane of their own, so
+   * reinforcing a partner does not mean walking through the middle.
+   */
+  Quarters = 1,
+}
+
+/** How hard an AI slot plays. Agreed in the lobby, like everything else. */
+export enum BotDifficulty {
+  Easy = 0,
+  Normal = 1,
+  Hard = 2,
+}
+
+/** One AI-controlled slot. */
+export interface BotSlot {
+  readonly player: PlayerId;
+  readonly difficulty: BotDifficulty;
+}
+
+/**
+ * Everything two peers must agree on before the first tick.
+ *
+ * The seed alone used to be enough, because there was exactly one map and
+ * exactly two players. It is not any more: the roster, the sides, and which
+ * slots the AI plays all change what the simulation computes, and a peer that
+ * disagreed about any of them would desync on tick zero rather than diverge
+ * subtly later. So they travel together as one value that the lobby settles and
+ * nothing afterwards mutates.
+ */
+export interface MatchConfig {
+  readonly seed: number;
+  readonly mapSize: number;
+  readonly layout: MapLayout;
+  /**
+   * Team of each player slot; its length is the number of players.
+   *
+   * Indexed by `PlayerId`, so `teams[2] === 1` means slot 2 plays for team 1.
+   */
+  readonly teams: readonly TeamId[];
+  /**
+   * Slots the AI plays, in ascending player order.
+   *
+   * The bot is deterministic and runs inside the simulation on every peer, so
+   * this is part of the agreed setup rather than a local choice — see
+   * `Simulation.step`.
+   */
+  readonly bots: readonly BotSlot[];
+}
 
 export enum EntityType {
   // Units

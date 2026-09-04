@@ -8,11 +8,15 @@
  *
  * ## Why this lives in the renderer
  *
- * Visibility is *per player*, so it cannot live in the simulation — two peers
+ * Visibility is *per side*, so it cannot live in the simulation — two peers
  * would immediately hold different state and desync. It is derived fresh each
  * tick from checksummed simulation data (unit positions and sight ranges), so
- * every peer could compute every player's fog identically if it wanted to; each
+ * every peer could compute every side's fog identically if it wanted to; each
  * simply computes its own.
+ *
+ * Vision is shared across a team. Partners in co-op scout for each other, which
+ * is most of what makes playing together feel like one side rather than two
+ * players who happen to share an enemy.
  *
  * This is presentation, not secrecy. Peer-to-peer lockstep gives every client the
  * full game state by construction, so a modified client could always draw
@@ -102,7 +106,7 @@ export class FogRenderer {
    * "explored" first, then every owned entity re-lights the tiles in its sight
    * radius — so losing a unit correctly darkens the ground it was watching.
    */
-  update(world: World, localPlayer: PlayerId): void {
+  update(world: World, viewer: PlayerId): void {
     const state = this.state;
     for (let i = 0; i < state.length; i++) {
       if (state[i] === VISIBLE) state[i] = EXPLORED;
@@ -111,7 +115,7 @@ export class FogRenderer {
     const pool = world.pool;
     for (let i = 0; i < pool.count; i++) {
       if (pool.alive[i] !== 1) continue;
-      if (pool.owner[i] !== localPlayer) continue;
+      if (!world.areAllied(pool.owner[i]!, viewer)) continue;
 
       const def = defOf(pool.type[i]! as EntityType);
       const sight = toFloat(def.sightRange);
@@ -189,13 +193,14 @@ export class FogRenderer {
   /**
    * Should this entity be drawn?
    *
-   * Own and neutral entities are always drawn — hiding your own units would be
-   * absurd, and mineral patches are terrain. Enemies are drawn only while
-   * something of yours is actually watching them, which is the entire point.
+   * Friendly and neutral entities are always drawn — hiding your own units, or
+   * a partner's, would be absurd, and mineral patches are terrain. Enemies are
+   * drawn only while something on your side is actually watching them, which is
+   * the entire point.
    */
-  shouldDraw(world: World, index: number, localPlayer: PlayerId): boolean {
+  shouldDraw(world: World, index: number, viewer: PlayerId): boolean {
     const owner = world.pool.owner[index]!;
-    if (owner === localPlayer) return true;
+    if (world.areAllied(owner, viewer)) return true;
     if (owner === NEUTRAL) {
       // Resources stay on screen once discovered, like the terrain they sit on.
       return this.isExploredAt(

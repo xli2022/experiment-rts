@@ -133,7 +133,7 @@ function resolveAttackImpact(world: World, attackerIndex: number, target: number
   const targetIndex = idIndex(target);
   const def = defOf(pool.type[attackerIndex]! as EntityType);
   const targetDef = defOf(pool.type[targetIndex]! as EntityType);
-  if (!pool.isHostile(targetIndex, pool.owner[attackerIndex]!)) return;
+  if (!world.isHostile(targetIndex, pool.owner[attackerIndex]!)) return;
   if (targetDef.flying && !def.canHitAir) return;
 
   const dx = pool.posX[targetIndex]! - pool.posX[attackerIndex]!;
@@ -171,8 +171,10 @@ function acquireTarget(world: World, index: number, range: number): number {
   world.grid.forEachNear(px, py, range, (j) => {
     if (j === index) return;
     if (pool.alive[j] !== 1) return;
-    if (!pool.isHostile(j, owner)) return;
-    // Mineral patches are neutral, so `isHostile` already excludes them.
+    if (!world.isHostile(j, owner)) return;
+    // Mineral patches are neutral, so `isHostile` already excludes them, and so
+    // is anything a partner owns — a co-op player's units walk through their
+    // ally's army without either side taking a shot at it.
     // Something we cannot shoot is not a target, and must not be picked as one:
     // acquisition is what `engageNearby` walks toward, so a melee unit that
     // acquired a Beamdrone would trail after it without ever landing a blow.

@@ -22,7 +22,7 @@ import type { Packet, Transport } from './transport.js';
 const CHANNEL_PREFIX = 'experiment-rts:';
 
 type Envelope =
-  | { kind: 'hello'; from: string; seed: number; reply: boolean }
+  | { kind: 'hello'; from: string; seed: number; mode: string; reply: boolean }
   | { kind: 'packet'; from: string; packet: Packet }
   | { kind: 'bye'; from: string };
 
@@ -43,6 +43,13 @@ export interface LobbyResult {
 export function joinLocalRoom(
   room: string,
   seedIfHost: number,
+  /**
+   * Opaque identifier for what this tab wants to play, compared for equality
+   * with the other tab's. Two tabs that picked different modes would generate
+   * different maps from the same seed, which is a desync on tick zero — so the
+   * mismatch is refused with something a person can act on instead.
+   */
+  mode: string,
   timeoutMs = 60000,
 ): Promise<LobbyResult> {
   const channel = new BroadcastChannel(CHANNEL_PREFIX + room);
@@ -75,8 +82,18 @@ export function joinLocalRoom(
           kind: 'hello',
           from: selfId,
           seed: seedIfHost,
+          mode,
           reply: false,
         } satisfies Envelope);
+      }
+
+      if (msg.mode !== mode) {
+        settled = true;
+        clearTimeout(timer);
+        channel.removeEventListener('message', onMessage);
+        channel.close();
+        reject(new Error('The other tab chose a different mode. Pick the same one in both.'));
+        return;
       }
 
       const slot = slotFromPeerIds(selfId, msg.from);
@@ -91,6 +108,7 @@ export function joinLocalRoom(
       kind: 'hello',
       from: selfId,
       seed: seedIfHost,
+      mode,
       reply: true,
     } satisfies Envelope);
 

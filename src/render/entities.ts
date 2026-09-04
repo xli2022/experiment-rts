@@ -142,10 +142,26 @@ export class EntityRenderer {
   private readonly position = new THREE.Vector3();
   private readonly colour = new THREE.Color();
 
+  /**
+   * Player slots this match actually has, ascending.
+   *
+   * Instanced pools are per (type, owner), so this decides how many exist. Built
+   * from the world rather than from a constant: a two-player duel should not
+   * carry four sets of empty meshes around, and a four-player match must not
+   * silently drop two of them.
+   */
+  private readonly owners: number[] = [];
+  /** Team of each slot, for picking which skin a unit wears. */
+  private readonly teamOf: number[] = [];
+
   constructor(
     private readonly provider: ModelProvider,
     world: World,
   ) {
+    for (let p = 0; p < world.players.length; p++) {
+      this.owners.push(p);
+      this.teamOf.push(world.teamOf(p));
+    }
     this.buildPools(world);
 
     // Selection rings are a mark on the ground, not an overlay: they depth-test
@@ -247,12 +263,17 @@ export class EntityRenderer {
       height: model.bindSize.y * scale,
     });
 
-    for (const owner of [0, 1]) {
+    for (const owner of this.owners) {
+      // Skins are authored one per side, not one per slot, so partners wear the
+      // same colours as each other and the opposing pair wears the other set.
+      // That is the read the game needs at a glance; which of the two allied
+      // players a unit belongs to is answered by the minimap and the rings.
+      const skin = textures[this.teamOf[owner] ?? 0] ?? null;
       const material = new THREE.MeshLambertMaterial({
-        map: textures[owner] ?? null,
-        // Without a texture the team colour has to carry the whole read, so the
-        // model is tinted flat rather than left white.
-        color: textures[owner] ? 0xffffff : (PLAYER_COLOURS[owner] ?? 0x9aa4b2),
+        map: skin,
+        // Without a texture the player colour has to carry the whole read, so
+        // the model is tinted flat rather than left white.
+        color: skin ? 0xffffff : (PLAYER_COLOURS[owner] ?? 0x9aa4b2),
       });
       const anim = new AnimatedUnitPool(model, material, POOL_CAPACITY);
       this.animatedPools.set(animatedKey(type, owner), anim);
@@ -260,7 +281,7 @@ export class EntityRenderer {
     }
 
     const spec = this.provider.get(type);
-    for (const owner of [0, 1]) {
+    for (const owner of this.owners) {
       for (let p = 0; p < spec.parts.length; p++) {
         const entry = this.pools.get(poolKey(type, p, owner));
         if (entry) entry.mesh.visible = false;
@@ -375,7 +396,7 @@ export class EntityRenderer {
       EntityType.Turret,
       EntityType.MineralPatch,
     ];
-    const owners = [0, 1, NEUTRAL];
+    const owners = [...this.owners, NEUTRAL];
 
     for (const type of types) {
       const spec = this.provider.get(type);

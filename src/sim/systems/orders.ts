@@ -63,8 +63,11 @@ export function executeCommand(world: World, cmd: Command): void {
       const ti = idIndex(target);
       const targetFlies = defOf(world.pool.type[ti]! as EntityType).flying;
       forEachOwned(world, cmd.units, player, (i) => {
-        // Attacking your own units is not a thing; ignore rather than misfire.
-        if (world.pool.owner[ti] === player) return;
+        // Attacking your own side is not a thing; ignore rather than misfire.
+        // Combat would refuse the damage anyway, so without this the order does
+        // not misfire so much as never end — the unit walks to its partner and
+        // stands there holding an Attack it can never resolve.
+        if (!world.isHostile(ti, player)) return;
         const attacker = defOf(world.pool.type[i]! as EntityType);
         if (attacker.attackRange === 0) return;
         // Dropped per unit rather than for the whole order, so a mixed

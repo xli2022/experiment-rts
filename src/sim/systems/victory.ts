@@ -1,6 +1,11 @@
 /**
  * Win, loss, and draw conditions.
  *
+ * Elimination is per player; the *match* ends per team. A co-op player whose
+ * base is razed is out of the game, but their partner plays on and can still
+ * win it for both of them — which is the whole appeal of playing together, and
+ * is why the surviving-side count below is over teams rather than slots.
+ *
  * A player is eliminated when every structure they own is destroyed — the rule
  * the genre has used since Dune II, and it stops matches dragging on while a
  * lone worker hides in a corner.
@@ -15,7 +20,7 @@
  */
 
 import { defOf } from '../../config/rules.js';
-import { EntityType, NEUTRAL, NO_ENTITY, type PlayerId } from '../types.js';
+import { EntityType, NEUTRAL, NO_ENTITY, type PlayerId, type TeamId } from '../types.js';
 import type { World } from '../world.js';
 
 export function victorySystem(world: World): void {
@@ -66,22 +71,36 @@ export function victorySystem(world: World): void {
     }
   }
 
-  let survivors = 0;
-  let lastAlive: PlayerId = NO_ENTITY;
+  // Count surviving *teams*, not players. A side with one partner left standing
+  // has not lost, and in a 1v1 — where every team has exactly one member — this
+  // is the same count it always was.
+  let survivingTeams = 0;
+  let lastAlive: TeamId = NO_ENTITY;
   for (let p = 0; p < playerCount; p++) {
     if (world.players[p]!.defeated) continue;
-    survivors++;
-    lastAlive = p;
+    const team = world.teamOf(p);
+    // Players are walked in ascending slot order and a team's members are
+    // contiguous in nothing in particular, so count a team once by checking
+    // whether an earlier surviving slot already claimed it.
+    let counted = false;
+    for (let q = 0; q < p; q++) {
+      if (!world.players[q]!.defeated && world.teamOf(q) === team) {
+        counted = true;
+        break;
+      }
+    }
+    if (counted) continue;
+    survivingTeams++;
+    lastAlive = team;
   }
 
-  if (survivors <= 1) {
+  if (survivingTeams <= 1) {
     world.matchOver = true;
     // Zero survivors means both sides were eliminated on the same tick — a
     // genuine draw, which needs to end the match rather than leave it running
     // with nobody able to win it.
     world.winner = lastAlive;
   }
-
 }
 
 /** Cheapest unit among a production list. */

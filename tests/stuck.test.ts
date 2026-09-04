@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import { defOf } from '../src/config/rules.js';
 import { CommandType, type Command } from '../src/sim/commands.js';
 import { fromInt, toFloat } from '../src/sim/fixed.js';
+import { duelMatch } from '../src/sim/match.js';
 import { Simulation } from '../src/sim/tick.js';
 import { BuildState, EntityType, Order, type PlayerId } from '../src/sim/types.js';
 
@@ -315,9 +316,7 @@ describe('nothing is ever pushed into a wall', () => {
 
 describe('pathing invariants over a whole match', () => {
   it('never leaves a unit standing on, or ordered onto, a solid tile', () => {
-    const sim = new Simulation(0x51ce7a11);
-    sim.botPlayers.add(0 as PlayerId);
-    sim.botPlayers.add(1 as PlayerId);
+    const sim = new Simulation(duelMatch(0x51ce7a11, { botPlayers: [0, 1] }));
     const { pool, map } = sim.world;
 
     let onRock = 0;
@@ -341,9 +340,7 @@ describe('pathing invariants over a whole match', () => {
   it('never leaves a unit holding one move order for a whole match', () => {
     // Crossing the entire map takes well under a thousand ticks, so an order
     // held longer than this is one that can never complete.
-    const sim = new Simulation(0x51ce7a11);
-    sim.botPlayers.add(0 as PlayerId);
-    sim.botPlayers.add(1 as PlayerId);
+    const sim = new Simulation(duelMatch(0x51ce7a11, { botPlayers: [0, 1] }));
     const pool = sim.world.pool;
 
     const held = new Int32Array(pool.posX.length);

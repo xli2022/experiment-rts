@@ -27,15 +27,20 @@ import type { Fix } from './fixed.js';
 import {
   BuildState,
   EntityType,
-  NEUTRAL,
   NO_ENTITY,
   Order,
   type EntityId,
   type PlayerId,
 } from './types.js';
 
-/** Maximum simultaneous entities. Two players at 200 supply plus terrain. */
-export const ENTITY_CAPACITY = 2048;
+/**
+ * Maximum simultaneous entities.
+ *
+ * Four players at 200 supply, their buildings, and every mineral patch on the
+ * largest map — with room to spare, because running out is not a graceful
+ * degradation: `spawn` returns `NO_ENTITY` and production silently stops.
+ */
+export const ENTITY_CAPACITY = 4096;
 
 /** Longest path we retain per unit. Longer routes are re-planned on arrival. */
 export const MAX_PATH = 48;
@@ -393,11 +398,5 @@ export class EntityPool {
       x = checksumU32(x, this.freeList[i]!);
     }
     return x;
-  }
-
-  /** Owner test that treats neutral entities as hostile to nobody. */
-  isHostile(index: number, toPlayer: PlayerId): boolean {
-    const o = this.owner[index]!;
-    return o !== NEUTRAL && o !== toPlayer;
   }
 }

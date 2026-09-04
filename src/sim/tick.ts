@@ -25,7 +25,7 @@ import { economySystem } from './systems/economy.js';
 import { movementSystem } from './systems/movement.js';
 import { executeCommand } from './systems/orders.js';
 import { victorySystem } from './systems/victory.js';
-import type { PlayerId } from './types.js';
+import type { MatchConfig } from './types.js';
 import { setupMatch, World } from './world.js';
 
 /**
@@ -46,20 +46,34 @@ export class Simulation {
   private readonly fields: FlowFieldCache;
 
   /**
-   * Player slots driven by the AI.
+   * Difficulty per player slot, or -1 for a slot no bot plays.
    *
    * The bot is deterministic, so it runs here — inside the simulation, on every
    * peer — rather than on one machine that broadcasts its orders. That costs no
    * bandwidth, needs no host, and makes single-player and multiplayer the same
-   * code path.
+   * code path. Which slots it plays therefore has to be agreed before the match
+   * rather than set afterwards, which is why it arrives in the config and this
+   * array is built once and never written again.
    */
-  readonly botPlayers = new Set<PlayerId>();
+  private readonly botOf: Int8Array;
 
-  constructor(seed: number, mapSize?: number) {
-    this.world = new World(seed, mapSize);
+  constructor(config: MatchConfig | number, mapSize?: number) {
+    this.world = new World(config, mapSize);
     setupMatch(this.world);
     this.astar = new AStar(this.world.map);
     this.fields = new FlowFieldCache(this.world.map.width * this.world.map.height);
+
+    this.botOf = new Int8Array(this.world.players.length).fill(-1);
+    for (const bot of this.world.config.bots) {
+      if (bot.player >= 0 && bot.player < this.botOf.length) {
+        this.botOf[bot.player] = bot.difficulty;
+      }
+    }
+  }
+
+  /** Does the AI play this slot? */
+  isBot(player: number): boolean {
+    return (this.botOf[player] ?? -1) >= 0;
   }
 
   /** Advance one tick, applying `commands` at the start of it. */
@@ -76,13 +90,15 @@ export class Simulation {
     // otherwise indistinguishable from a human's — same type, same validation,
     // same ordering.
     let all = commands;
-    if (this.botPlayers.size > 0) {
+    if (world.config.bots.length > 0) {
       all = commands.slice();
-      // Iterate the slots in ascending numeric order; Set iteration order is
-      // insertion order, which callers could vary between peers.
-      for (let p = 0; p < world.players.length; p++) {
-        if (!this.botPlayers.has(p)) continue;
-        const botCmds = generateBotCommands(world, p);
+      // Ascending slot order, from a dense array rather than the config list —
+      // the order bots think in is part of the simulation, so it must not
+      // depend on how a caller happened to sort the roster.
+      for (let p = 0; p < this.botOf.length; p++) {
+        const difficulty = this.botOf[p]!;
+        if (difficulty < 0) continue;
+        const botCmds = generateBotCommands(world, p, difficulty);
         for (let i = 0; i < botCmds.length; i++) all.push(botCmds[i]!);
       }
     }

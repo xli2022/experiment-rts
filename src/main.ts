@@ -12,12 +12,18 @@ import * as THREE from 'three';
 import { defOf } from './config/rules.js';
 import { LockstepRunner } from './net/lockstep.js';
 import { SoloTransport } from './net/localTransport.js';
-import type { Transport } from './net/transport.js';
 import { CommandType, type Command } from './sim/commands.js';
 import { fromFloat, toFloat } from './sim/fixed.js';
-import { MAP_SIZE } from './sim/map.js';
+import { coopMatch, duelMatch, withSeed } from './sim/match.js';
 import { Simulation } from './sim/tick.js';
-import { BuildState, EntityType, NEUTRAL, NO_ENTITY, type PlayerId } from './sim/types.js';
+import {
+  BotDifficulty,
+  BuildState,
+  EntityType,
+  NO_ENTITY,
+  type PlayerId,
+  type TeamId,
+} from './sim/types.js';
 import { EntityRenderer } from './render/entities.js';
 import { RtsCamera } from './render/camera.js';
 import { TerrainRenderer } from './render/terrain.js';
@@ -71,6 +77,10 @@ class Game {
   private readonly runner: LockstepRunner;
   private readonly sim: Simulation;
   private readonly localPlayer: PlayerId;
+  /** The side the local player is on. Fog, hostility and victory all go by it. */
+  private readonly localTeam: TeamId;
+  /** Map side length, read from the generated map rather than a constant. */
+  private readonly mapSize: number;
 
   /** Building type awaiting placement, or null. */
   private placing: EntityType | null = null;
@@ -99,23 +109,23 @@ class Game {
     uiRoot: HTMLElement,
     renderer: THREE.WebGLRenderer,
     gallery: UnitGallery,
-    seed: number,
-    transport: Transport,
-    botPlayers: PlayerId[],
+    setup: MatchSetup,
   ) {
+    const transport = setup.transport;
     this.localPlayer = transport.localPlayer;
-    this.sim = new Simulation(seed);
+    // The whole match — map, roster, sides, and which slots the AI plays —
+    // arrives as one agreed value. Nothing here chooses any of it: a peer that
+    // decided locally would be playing a different game from the one across the
+    // wire, which is a desync rather than a difference of opinion.
+    this.sim = new Simulation(setup.config);
+    this.localTeam = this.sim.world.teamOf(this.localPlayer);
+    this.mapSize = this.sim.world.map.width;
     this.renderer = renderer;
     this.gallery = gallery;
 
-    // Slots played by the AI. Because the bot is deterministic it runs inside
-    // the simulation on every peer, so every peer must agree on this set — it
-    // comes from the lobby, which both sides agreed on before starting.
-    for (const p of botPlayers) this.sim.botPlayers.add(p);
-
     this.scene.fog = new THREE.Fog(0x0b0e14, 90, 190);
 
-    this.camera = new RtsCamera(canvas, MAP_SIZE);
+    this.camera = new RtsCamera(canvas, this.mapSize);
     this.terrain = new TerrainRenderer(this.sim.world.map);
     this.entities = new EntityRenderer(this.provider, this.sim.world);
     this.fog = new FogRenderer(this.sim.world.map);
@@ -143,18 +153,24 @@ class Game {
     this.selection = new Selection(this.localPlayer);
     this.hud = new Hud(
       uiRoot,
-      MAP_SIZE,
+      this.mapSize,
       this.localPlayer,
       (x, z, secondary) => {
         if (secondary) this.issueGroundOrder(x, z, false);
         else this.camera.lookAt(x, z);
       },
+      this.allies(),
     );
 
     this.runner = new LockstepRunner(this.sim, transport, {
       onStep: () => this.consumeSimulationStep(),
       onStall: (waiting) =>
-        this.hud.showBanner(`Waiting for player ${waiting.join(', ')}…`, 'warn'),
+        this.hud.showBanner(
+          waiting.length === 1 && this.sim.world.areAllied(waiting[0]!, this.localPlayer)
+            ? 'Waiting for your ally…'
+            : `Waiting for player ${waiting.map((p) => p + 1).join(', ')}…`,
+          'warn',
+        ),
       onResume: () => this.hud.hideBanner(),
       onDesync: (tick) => {
         this.gallery.close();
@@ -183,9 +199,16 @@ class Game {
     });
   }
 
+  /** Slots on the local player's side other than their own, ascending. */
+  private allies(): PlayerId[] {
+    return this.sim.world
+      .playersOnTeam(this.localTeam)
+      .filter((p) => p !== this.localPlayer);
+  }
+
   private addLights(): void {
     const sun = new THREE.DirectionalLight(0xfff2e0, 2.0);
-    const mapCentre = MAP_SIZE / 2;
+    const mapCentre = this.mapSize / 2;
 
     // Keep the original daylight direction, but aim it through the middle of
     // the battlefield. A directional light's target defaults to the origin,
@@ -196,16 +219,20 @@ class Game {
 
     // One stable map covers the whole battlefield. Following the RTS camera
     // would buy a little more resolution, but it also makes shadows crawl across
-    // the tile grid while panning. The half-diagonal needs roughly 91 units in
-    // this light direction; 96 leaves room for cliffs, units, and map edges.
-    const shadowExtent = MAP_SIZE * 0.75;
+    // the tile grid while panning. Sized from the map rather than a constant,
+    // because the co-op map is larger and a fixed extent would leave two of its
+    // four corners outside the shadow camera entirely.
+    const shadowExtent = this.mapSize * 0.75;
     const shadowCamera = sun.shadow.camera;
     shadowCamera.left = -shadowExtent;
     shadowCamera.right = shadowExtent;
     shadowCamera.top = shadowExtent;
     shadowCamera.bottom = -shadowExtent;
     shadowCamera.near = 30;
-    shadowCamera.far = 200;
+    // Scaled with the map for the same reason as the extent: the far plane has
+    // to reach the corner furthest from the light, and on a larger map that is
+    // further away. At the duel map's size this is exactly the 200 it was.
+    shadowCamera.far = (200 * this.mapSize) / 128;
     shadowCamera.updateProjectionMatrix();
 
     sun.shadow.mapSize.set(2048, 2048);
@@ -483,14 +510,18 @@ class Game {
         return;
       }
       // Own unfinished building: send every selected worker to finish it. Same
-      // verb the player already uses for everything else.
+      // verb the player already uses for everything else. Deliberately our own
+      // and not a partner's — construction credits the owner's build, and a
+      // worker cannot contribute to someone else's site.
       if (owner === this.localPlayer) {
         const def = defOf(type);
         const needsWork = def.isBuilding && world.pool.buildState[hit] !== BuildState.Complete;
         if (needsWork && this.orderWorkersTo(hit)) return;
       }
 
-      if (owner !== this.localPlayer && owner !== NEUTRAL) {
+      // Hostility, not "not mine". Right-clicking an ally used to mean attack,
+      // which in co-op is the one order a player can never want.
+      if (world.isHostile(hit, this.localPlayer)) {
         this.projectiles.spawnClickMarker(
           toFloat(world.pool.posX[hit]!),
           toFloat(world.pool.posY[hit]!),
@@ -894,7 +925,8 @@ class Game {
 
     this.finished = true;
     this.gallery.close();
-    const winner = this.sim.world.winner;
+    const world = this.sim.world;
+    const winner = world.winner;
     const replay = [{ label: 'Play again', primary: true, onClick: () => location.reload() }];
 
     // Both sides can be eliminated on the same tick, which is a draw rather
@@ -908,12 +940,20 @@ class Game {
       return;
     }
 
-    const won = winner === this.localPlayer;
+    // The winner is a *side*. A co-op player whose own base fell while their
+    // partner finished the job has won the match, and telling them otherwise
+    // would be both wrong and a poor reward for holding out.
+    const won = winner === this.localTeam;
+    const shared = this.allies().length > 0;
     this.hud.showDialog(
       won ? 'Victory' : 'Defeat',
       won
-        ? 'Every enemy structure has been destroyed.'
-        : 'All of your structures were destroyed.',
+        ? shared
+          ? 'Every enemy structure has been destroyed. Your side holds the map.'
+          : 'Every enemy structure has been destroyed.'
+        : shared
+          ? 'Every structure on your side was destroyed.'
+          : 'All of your structures were destroyed.',
       replay,
     );
   }
@@ -988,33 +1028,33 @@ async function boot(): Promise<void> {
 
   const params = new URLSearchParams(location.search);
 
-  // `?skip=ai` boots straight into a skirmish, which is what the end-to-end
-  // tests and screenshot tooling use. A seed in the URL makes any match
-  // reproducible, which is how a desync report becomes debuggable.
+  // `?skip=ai` boots straight into a skirmish and `?skip=coop` into a co-op
+  // match with AI on the other three slots, which is what the end-to-end tests
+  // and screenshot tooling use. A seed in the URL makes any match reproducible,
+  // which is how a desync report becomes debuggable.
+  const skip = params.get('skip');
+  const seedParam = Number(params.get('seed') ?? 0) || 0x51ce7a11;
   let setup: MatchSetup;
-  if (params.get('skip') === 'ai') {
+  if (skip === 'ai' || skip === 'coop') {
     renderer.setSize(window.innerWidth, window.innerHeight, false);
     setup = {
       transport: new SoloTransport(),
-      seed: Number(params.get('seed') ?? 0) || 0x51ce7a11,
+      config:
+        skip === 'coop'
+          ? coopMatch(seedParam, {
+              botPlayers: [1, 2, 3],
+              difficulty: BotDifficulty.Normal,
+            })
+          : duelMatch(seedParam, { botPlayers: [1] }),
       localPlayer: 0,
-      botPlayers: [1],
     };
   } else {
     setup = await showHome(uiRoot, renderer, gallery);
     const override = Number(params.get('seed') ?? 0);
-    if (override) setup.seed = override;
+    if (override) setup.config = withSeed(setup.config, override);
   }
 
-  const game = new Game(
-    canvas,
-    uiRoot,
-    renderer,
-    gallery,
-    setup.seed,
-    setup.transport,
-    setup.botPlayers,
-  );
+  const game = new Game(canvas, uiRoot, renderer, gallery, setup);
   game.start();
 
   // Exposed for the end-to-end tests and for debugging a live match.

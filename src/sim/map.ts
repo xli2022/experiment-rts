@@ -21,8 +21,8 @@
 
 import { checksumArray, checksumInit, checksumU32 } from './checksum.js';
 import { toInt, type Fix } from './fixed.js';
-import { carveLayout } from './mapgen.js';
-import { Tile } from './types.js';
+import { carveLayout, layoutSize } from './mapgen.js';
+import { MapLayout, Tile } from './types.js';
 
 export const MAP_SIZE = 128;
 
@@ -64,6 +64,13 @@ export class GameMap {
    */
   readonly occupied: Uint8Array;
 
+  /**
+   * Where each player's first Command Post is centred.
+   *
+   * In mirrored halves: `starts[i]` and `starts[i + n/2]` are exact 180-degree
+   * rotations of one another, so the first half is one team's side of the map
+   * and the second half is the other's. See `Layout.bases`.
+   */
   readonly starts: StartLocation[] = [];
 
   /**
@@ -72,7 +79,8 @@ export class GameMap {
    *
    * Terrain, not ownership — nobody holds an expansion until they build on it,
    * and the simulation treats a Command Post here exactly like the starting
-   * one. Stored in mirrored pairs so neither player is nearer to more of them.
+   * one. Stored in mirrored halves, like `starts`, so neither team is nearer to
+   * more of them.
    */
   readonly expansions: StartLocation[] = [];
 
@@ -192,33 +200,47 @@ export class GameMap {
 }
 
 /**
- * Generate a symmetric two-player map from a seed.
+ * Generate a symmetric map from a seed and a layout.
  *
- * The layout is carved rather than scattered — see `mapgen.ts` for the shape and
- * why. Both peers run this with the same seed during the lobby handshake and
- * must produce byte-identical terrain, so it uses only the seeded RNG.
+ * The layout is carved rather than scattered — see `mapgen.ts` for the shapes
+ * and why. Both peers run this with the same seed and layout, agreed in the
+ * lobby before either side sends anything, and must produce byte-identical
+ * terrain, so it uses only the seeded RNG.
  */
-export function generateMap(seed: number, size = MAP_SIZE): GameMap {
+export function generateMap(
+  seed: number,
+  size = MAP_SIZE,
+  kind: MapLayout = MapLayout.Lanes,
+): GameMap {
   const map = new GameMap(size);
 
-  const { bases, expansions } = carveLayout(map.tiles, map.elevation, size, seed);
-  map.starts.push(
-    { tileX: bases[0].x, tileY: bases[0].y },
-    { tileX: bases[1].x, tileY: bases[1].y },
-  );
+  const { bases, expansions } = carveLayout(map.tiles, map.elevation, size, seed, kind);
+  for (const b of bases) map.starts.push({ tileX: b.x, tileY: b.y });
   for (const e of expansions) map.expansions.push({ tileX: e.x, tileY: e.y });
 
   // The lanes are carved to connect by construction, but a jitter that pinched a
   // corridor shut would be a silent, unwinnable match — so it is still checked,
   // and repaired if it ever happens.
-  ensureConnected(map, map.starts[0]!, map.starts[1]!);
+  //
+  // Every start must reach the first one, which on a map where reachability is
+  // symmetric makes them all mutually reachable. Four starts need this more than
+  // two did: a corridor pinched between two allied bases is not a lost match,
+  // just a partner who can never be helped, which is worse for being subtle.
+  for (let i = 1; i < map.starts.length; i++) {
+    ensureConnected(map, map.starts[0]!, map.starts[i]!);
+  }
   // Terrain is final from here on; freeze its hash so per-tick checksums are cheap.
   map.sealTerrain();
   return map;
 }
 
+/** The map size a layout is designed for. */
+export function mapSizeFor(kind: MapLayout): number {
+  return layoutSize(kind);
+}
+
 /**
- * Guarantee the two starts can reach each other.
+ * Guarantee two starts can reach each other.
  *
  * Random blobs can seal a base off entirely, which would produce a match nobody
  * can win. Rather than rejecting and regenerating — which burns RNG draws and

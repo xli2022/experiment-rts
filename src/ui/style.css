@@ -105,6 +105,60 @@ body {
   letter-spacing: 0.07em;
 }
 
+/* Difficulty picker in the co-op lobby: one row of small toggles rather than a
+   select, so the choice is visible without being opened. */
+#difficulty-row {
+  display: flex;
+  gap: 8px;
+  margin: 4px 0 10px;
+}
+
+.chip {
+  flex: 1;
+  padding: 8px 0;
+  font-size: 13px;
+}
+
+.chip.active {
+  border-color: var(--accent, #7dff9b);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--accent, #7dff9b);
+}
+
+/* The partner strip: only present in co-op, and deliberately quieter than the
+   player's own resources — it is reference, not something to act on. */
+#allies {
+  top: 56px;
+  left: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 14px;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
+.ally {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ally-name {
+  color: var(--muted);
+  min-width: 46px;
+}
+
+.ally-minerals,
+.ally-supply {
+  min-width: 40px;
+  text-align: right;
+}
+
+.ally-supply {
+  color: var(--muted);
+}
+
 /* Production that has finished but cannot be released. The bar is full and
    nothing is happening, so it has to look like a warning rather than progress. */
 #production.blocked #prod-fill {

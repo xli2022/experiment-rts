@@ -18,21 +18,148 @@
  * unordered collections. It is deliberately *stateless* — every decision is
  * re-derived from the world each time — so there is no hidden bot state that
  * could drift between peers.
+ *
+ * ## Two bots on a side are not two bots
+ *
+ * In co-op the AI holds both enemy slots, and the naive version of that is much
+ * weaker than one bot with twice the economy: each half picks its own target,
+ * arrives on its own schedule, and gets beaten twice in a row by an army that
+ * never had to fight both at once. So the offensive decisions — when to commit,
+ * and what to hit — are taken over the *team's* army rather than each bot's own.
+ * Every bot on a side computes that from the same world in the same order and
+ * therefore reaches the same answer, with no coordination channel and no shared
+ * state to keep in step.
  */
 
-import { defOf, SUPPLY_MAX } from '../config/rules.js';
+import { defOf, MAX_PRODUCTION_QUEUE, SUPPLY_MAX } from '../config/rules.js';
 import { CommandType, type Command } from '../sim/commands.js';
-import { BuildState, EntityType, NEUTRAL, Order, type PlayerId } from '../sim/types.js';
+import { fromInt } from '../sim/fixed.js';
+import {
+  BotDifficulty,
+  BuildState,
+  EntityType,
+  NEUTRAL,
+  Order,
+  type PlayerId,
+} from '../sim/types.js';
 import type { World } from '../sim/world.js';
 
-/** The bot reconsiders its plan this often. */
+/**
+ * The bot reconsiders its plan this often.
+ *
+ * The same for every slot and every difficulty, deliberately. Staggering bots by
+ * player read as a harmless way to keep command streams distinguishable in a
+ * replay — commands carry their player anyway — but it hands whoever thinks
+ * first a whole think interval of head start. Measured in a mirror matchup on a
+ * symmetric map, that decided the game: player 0 spent its opening 50 minerals
+ * and had its workers walking before player 1 had taken a turn at all. Making it
+ * a difficulty knob would reintroduce exactly that, between the two sides.
+ */
 const THINK_INTERVAL = 10;
 
-/** Workers to saturate the mineral line before spending on army. */
-const TARGET_WORKERS = 14;
+/** How near a Command Post has to be for an expansion to count as taken. */
+const CLAIMED_RANGE_SQ = 14 * 14;
 
-/** Attack once the army reaches this size, then keep attacking. */
-const ATTACK_ARMY_SIZE = 8;
+/**
+ * How far from a base a hostile has to be before it stops being an emergency.
+ *
+ * Generous, because the point is to catch an attack while the army can still
+ * walk back and do something about it. Measured to a building, so a wide base
+ * effectively defends a wider circle, which is right.
+ */
+const DEFEND_RANGE = fromInt(20);
+
+/**
+ * Patches further than this from one of our own Command Posts are somebody
+ * else's.
+ *
+ * Idle workers used to be handed the nearest live patch on the map. With one
+ * opponent across the map that was always home; with four bases it is
+ * occasionally an ally's mineral line, or an enemy's, and a worker that walks
+ * there is gone for good — it mines into the wrong bank or dies on arrival.
+ */
+const HOME_PATCH_RANGE = fromInt(24);
+
+/**
+ * Everything difficulty actually changes.
+ *
+ * All of it is behavioural: no bonus income, no extra starting units, no
+ * cheating on fog. A harder bot works its economy harder and commits sooner,
+ * which is a thing a player could have done too.
+ */
+interface Tuning {
+  /** Workers to saturate the mineral line before spending on army. */
+  readonly targetWorkers: number;
+  /** Team army size that triggers a push, then keeps triggering it. */
+  readonly attackArmySize: number;
+  /** Barracks the bot will run once minerals are spare. */
+  readonly maxBarracks: number;
+  /** Turrets it will put up at home. */
+  readonly maxTurrets: number;
+  /** Command Posts it will run. */
+  readonly maxBases: number;
+  /** Minerals on hand before it considers another base. */
+  readonly expandAtMinerals: number;
+  /** Concurrent construction sites. */
+  readonly maxSites: number;
+  /** Whether it walks its army home when its base is attacked. */
+  readonly defendsHome: boolean;
+  /** Whether it commits with its partner rather than on its own count. */
+  readonly coordinates: boolean;
+}
+
+const TUNING: Readonly<Record<BotDifficulty, Tuning>> = {
+  // Slow to saturate, slow to commit, and it fights one base at a time. It also
+  // never comes home, which is what makes it beatable by walking around it.
+  [BotDifficulty.Easy]: {
+    targetWorkers: 9,
+    attackArmySize: 12,
+    maxBarracks: 2,
+    maxTurrets: 0,
+    maxBases: 1,
+    expandAtMinerals: 900,
+    maxSites: 1,
+    defendsHome: false,
+    coordinates: false,
+  },
+  // What the skirmish bot has always played like, plus the things that were
+  // simply missing: it defends, and it pushes with its partner.
+  [BotDifficulty.Normal]: {
+    targetWorkers: 14,
+    attackArmySize: 8,
+    maxBarracks: 6,
+    maxTurrets: 2,
+    maxBases: 2,
+    expandAtMinerals: 550,
+    maxSites: 2,
+    defendsHome: true,
+    coordinates: true,
+  },
+  // Saturates two bases, expands off a smaller bank, and commits on a smaller
+  // army — which against two humans means arriving before either of them has an
+  // army of their own.
+  [BotDifficulty.Hard]: {
+    targetWorkers: 18,
+    attackArmySize: 6,
+    maxBarracks: 8,
+    maxTurrets: 3,
+    maxBases: 3,
+    expandAtMinerals: 450,
+    maxSites: 3,
+    defendsHome: true,
+    coordinates: true,
+  },
+};
+
+/**
+ * Minerals in the bank that mean production, not income, is the bottleneck.
+ *
+ * Past this the bot queues barracks to their cap instead of two deep. Measured
+ * over a four-player match, two-deep queues left every bot floating six to
+ * eight thousand minerals for the last five minutes — an army it had paid for
+ * and never received, because the only other outlet was yet another Barracks.
+ */
+const DEEP_QUEUE_MINERALS = 700;
 
 /**
  * Base supply headroom before building another depot.
@@ -43,43 +170,24 @@ const ATTACK_ARMY_SIZE = 8;
  */
 const SUPPLY_BUFFER = 6;
 
-/** Concurrent construction sites the bot will run. */
-const MAX_SITES = 2;
-
-/**
- * Minerals on hand before the bot considers a second base.
- *
- * Comfortably above a Command Post's 400, because expanding at exactly the cost
- * would stall army production for as long as the build takes. Floating this
- * much is the signal that the home mineral line has stopped being the
- * bottleneck.
- */
-const EXPAND_AT_MINERALS = 550;
-/** Command Posts the bot will run. Two bases is plenty to manage well. */
-const MAX_BASES = 2;
-/** How near a Command Post has to be for an expansion to count as taken. */
-const CLAIMED_RANGE_SQ = 14 * 14;
-
-export function generateBotCommands(world: World, player: PlayerId): Command[] {
-  // Every bot thinks on the same tick.
-  //
-  // Staggering them by player read as a harmless way to keep command streams
-  // distinguishable in a replay — commands carry their player anyway — but it
-  // hands whoever thinks first a whole think interval of head start. Measured in
-  // a mirror matchup on a symmetric map, that decided the game: player 0 spent
-  // its opening 50 minerals and had its workers walking before player 1 had
-  // taken a turn at all.
+export function generateBotCommands(
+  world: World,
+  player: PlayerId,
+  difficulty: BotDifficulty = BotDifficulty.Normal,
+): Command[] {
+  // Every bot thinks on the same tick. See THINK_INTERVAL.
   if (world.tick % THINK_INTERVAL !== 0) return [];
   if (world.player(player).defeated) return [];
   if (world.matchOver) return [];
 
+  const tuning = TUNING[difficulty] ?? TUNING[BotDifficulty.Normal];
   const cmds: Command[] = [];
   const s = survey(world, player);
 
   keepWorkersBusy(world, player, s, cmds);
-  manageProduction(world, player, s, cmds);
-  manageConstruction(world, player, s, cmds);
-  manageArmy(world, player, s, cmds);
+  manageProduction(world, player, s, tuning, cmds);
+  manageConstruction(world, player, s, tuning, cmds);
+  manageArmy(world, player, s, tuning, cmds);
 
   return cmds;
 }
@@ -93,12 +201,25 @@ interface Survey {
   depots: number[];
   turrets: number[];
   sites: number[];
+  /** Live patches near one of our own Command Posts. */
   patches: number[];
+  /** Any live patch anywhere, for deciding whether the map is mined out. */
+  livePatches: number;
+  /** Hostile structures, ascending by slot. Killing these is what wins. */
   enemyTargets: number[];
-  /** Enemy combat units by class. Only the air count changes what gets built. */
+  /** Hostile combat units by class. Only the air count changes what gets built. */
   enemyRanged: number;
   enemyMelee: number;
   enemyAir: number;
+  /**
+   * Combat units belonging to anyone on our side, including a partner's.
+   *
+   * The team's fist. Every bot on the side derives it from the same ascending
+   * pass, so all of them agree on how big it is and where its middle is.
+   */
+  teamArmy: number[];
+  /** The nearest hostile to one of our buildings, or -1. */
+  threat: number;
   minerals: number;
   supplyUsed: number;
   supplyMax: number;
@@ -123,14 +244,24 @@ function survey(world: World, player: PlayerId): Survey {
     turrets: [],
     sites: [],
     patches: [],
+    livePatches: 0,
     enemyTargets: [],
     enemyRanged: 0,
     enemyMelee: 0,
     enemyAir: 0,
+    teamArmy: [],
+    threat: -1,
     minerals: world.player(player).minerals,
     supplyUsed: world.player(player).supplyUsed,
     supplyMax: world.player(player).supplyMax,
   };
+
+  // Patches are collected before they can be filtered by distance to a base,
+  // because the bases are found in this same pass. Two short passes rather than
+  // one long one, both in ascending index order.
+  const allPatches: number[] = [];
+  const hostileUnits: number[] = [];
+  const ownBuildings: number[] = [];
 
   for (let i = 0; i < pool.count; i++) {
     if (pool.alive[i] !== 1) continue;
@@ -138,21 +269,40 @@ function survey(world: World, player: PlayerId): Survey {
     const owner = pool.owner[i]!;
 
     if (type === EntityType.MineralPatch) {
-      if (pool.resourceAmount[i]! > 0) s.patches.push(i);
+      if (pool.resourceAmount[i]! > 0) {
+        allPatches.push(i);
+        s.livePatches++;
+      }
       continue;
     }
     if (owner === NEUTRAL) continue;
 
-    if (owner !== player) {
+    const def = defOf(type);
+    const isArmy =
+      type === EntityType.Burstbot ||
+      type === EntityType.Slicebot ||
+      type === EntityType.Beamdrone;
+
+    if (!world.areAllied(owner, player)) {
       // Prefer structures as attack targets; killing buildings is what wins.
-      if (defOf(type).isBuilding) s.enemyTargets.push(i);
-      else if (type === EntityType.Burstbot) s.enemyRanged++;
-      else if (type === EntityType.Slicebot) s.enemyMelee++;
-      else if (type === EntityType.Beamdrone) s.enemyAir++;
+      if (def.isBuilding) s.enemyTargets.push(i);
+      else {
+        hostileUnits.push(i);
+        if (type === EntityType.Burstbot) s.enemyRanged++;
+        else if (type === EntityType.Slicebot) s.enemyMelee++;
+        else if (type === EntityType.Beamdrone) s.enemyAir++;
+      }
       continue;
     }
 
+    // Allied, which includes ourselves. A partner's army counts toward the
+    // team's, but nothing else of theirs is ours to command.
+    if (isArmy) s.teamArmy.push(i);
+    if (owner !== player) continue;
+
     const complete = pool.buildState[i] === BuildState.Complete;
+    if (def.isBuilding) ownBuildings.push(i);
+
     switch (type) {
       case EntityType.Worker:
         s.workers.push(i);
@@ -183,7 +333,70 @@ function survey(world: World, player: PlayerId): Survey {
         break;
     }
   }
+
+  // Patches worth walking to: near a base of ours. Ascending, like everything
+  // else, so ties in `keepWorkersBusy` break the same way on every peer.
+  for (const p of allPatches) {
+    if (nearestOf(world, p, s.commandPosts).distSq <= sq(HOME_PATCH_RANGE)) s.patches.push(p);
+  }
+  // Falling back to every patch matters at exactly one moment: before the first
+  // Command Post finishes on a fresh expansion, and after the last one dies.
+  if (s.patches.length === 0 && s.commandPosts.length === 0) {
+    for (const p of allPatches) s.patches.push(p);
+  }
+
+  s.threat = nearestThreat(world, hostileUnits, ownBuildings);
   return s;
+}
+
+/** Squared distance from entity `i` to the nearest of `others`, plus which. */
+function nearestOf(
+  world: World,
+  i: number,
+  others: readonly number[],
+): { index: number; distSq: number } {
+  const pool = world.pool;
+  let best = -1;
+  let bestDist = Number.POSITIVE_INFINITY;
+  for (const j of others) {
+    const dx = pool.posX[j]! - pool.posX[i]!;
+    const dy = pool.posY[j]! - pool.posY[i]!;
+    const d = dx * dx + dy * dy;
+    if (d < bestDist) {
+      bestDist = d;
+      best = j;
+    }
+  }
+  return { index: best, distSq: bestDist };
+}
+
+/**
+ * The hostile unit nearest to any of our structures, if one is close enough to
+ * count as an attack.
+ *
+ * A lone scouting worker is not an attack, and pulling an army home for one is
+ * how a bot gets pulled out of position on purpose. Anything armed is.
+ */
+function nearestThreat(
+  world: World,
+  hostileUnits: readonly number[],
+  ownBuildings: readonly number[],
+): number {
+  if (ownBuildings.length === 0) return -1;
+  const pool = world.pool;
+  let best = -1;
+  let bestDist = Number.POSITIVE_INFINITY;
+  for (const h of hostileUnits) {
+    if (pool.type[h] === EntityType.Worker) continue;
+    const { index, distSq } = nearestOf(world, h, ownBuildings);
+    if (index < 0) continue;
+    if (distSq > sq(DEFEND_RANGE)) continue;
+    if (distSq < bestDist) {
+      bestDist = distSq;
+      best = h;
+    }
+  }
+  return best;
 }
 
 /** Any worker with nothing to do goes back to the nearest live patch. */
@@ -223,15 +436,22 @@ function manageProduction(
   world: World,
   player: PlayerId,
   s: Survey,
+  tuning: Tuning,
   cmds: Command[],
 ): void {
   const pool = world.pool;
   const supplyFree = s.supplyMax - s.supplyUsed;
   if (supplyFree <= 0) return;
 
-  if (s.workers.length < TARGET_WORKERS && s.commandPosts.length > 0) {
-    const hq = s.commandPosts[0]!;
-    if (pool.prodCount[hq]! < 2 && s.minerals >= defOf(EntityType.Worker).mineralCost) {
+  // Worker target scales with how many bases there are to work: a second
+  // Command Post with nobody mining at it is 400 minerals of decoration.
+  const wantWorkers = tuning.targetWorkers * Math.max(1, s.commandPosts.length);
+  if (s.workers.length < wantWorkers) {
+    // Every base trains, not just the first. One Command Post queueing all the
+    // workers is what left an expansion's mineral line empty for minutes.
+    for (const hq of s.commandPosts) {
+      if (pool.prodCount[hq]! >= 2) continue;
+      if (s.minerals < defOf(EntityType.Worker).mineralCost) break;
       cmds.push({
         type: CommandType.Train,
         player,
@@ -242,8 +462,12 @@ function manageProduction(
     }
   }
 
+  // Two deep normally, so the bank stays available for buildings and the mix
+  // can still react to what gets scouted; full depth once minerals are piling
+  // up faster than they can be spent.
+  const depth = s.minerals >= DEEP_QUEUE_MINERALS ? MAX_PRODUCTION_QUEUE : 2;
   for (const b of s.barracks) {
-    if (pool.prodCount[b]! >= 2) continue;
+    if (pool.prodCount[b]! >= depth) continue;
     const unit = pickUnitToTrain(world, s, b);
     const cost = defOf(unit).mineralCost;
     if (s.minerals < cost) break;
@@ -291,6 +515,7 @@ function manageConstruction(
   world: World,
   player: PlayerId,
   s: Survey,
+  tuning: Tuning,
   cmds: Command[],
 ): void {
   const pool = world.pool;
@@ -298,7 +523,7 @@ function manageConstruction(
 
   staffOrphanedSites(world, player, s, cmds);
 
-  if (s.sites.length >= MAX_SITES) return;
+  if (s.sites.length >= tuning.maxSites) return;
 
   const builder = pickBuilder(world, s);
   if (builder < 0) return;
@@ -307,20 +532,27 @@ function manageConstruction(
   const supplyFree = s.supplyMax - s.supplyUsed;
   // More production capacity means supply drains faster, so keep more headroom.
   const buffer = SUPPLY_BUFFER + s.barracks.length * 4;
+  // A home mineral line that is nearly out is its own reason to expand, whatever
+  // the bank looks like: waiting for a threshold that income can no longer reach
+  // is how a bot mines itself to a standstill on a full map.
+  const patchesRunningOut = s.patches.length <= 2 && s.livePatches > s.patches.length;
 
   let want: EntityType | null = null;
   if (s.supplyMax < SUPPLY_MAX && supplyFree < buffer) {
     want = EntityType.Depot;
   } else if (s.barracks.length < 1) {
     want = EntityType.Barracks;
-  } else if (s.turrets.length < 2 && s.minerals >= 300) {
+  } else if (s.turrets.length < tuning.maxTurrets && s.minerals >= 300) {
     want = EntityType.Turret;
-  } else if (s.minerals >= EXPAND_AT_MINERALS && expansionSite(world, player, s)) {
+  } else if (
+    (s.minerals >= tuning.expandAtMinerals || patchesRunningOut) &&
+    expansionSite(world, player, s, tuning)
+  ) {
     // Floating this much means the mineral line at home cannot absorb the
     // income any more. A second base is what turns it into more income rather
     // than more barracks queueing behind the same eight patches.
     want = EntityType.CommandPost;
-  } else if (s.barracks.length < 6 && s.minerals >= 300) {
+  } else if (s.barracks.length < tuning.maxBarracks && s.minerals >= 300) {
     // Excess minerals are wasted minerals; convert them into production.
     want = EntityType.Barracks;
   }
@@ -331,7 +563,8 @@ function manageConstruction(
 
   // An expansion goes on its site; everything else goes next to the base it
   // supports.
-  const site = want === EntityType.CommandPost ? expansionSite(world, player, s) : null;
+  const site =
+    want === EntityType.CommandPost ? expansionSite(world, player, s, tuning) : null;
   const spot = site ?? findBuildSpot(world, pool.tileX[hq]!, pool.tileY[hq]!, def.footprint);
   if (!spot) return;
 
@@ -349,17 +582,19 @@ function manageConstruction(
  * The nearest expansion worth taking, as a Command Post's top-left tile.
  *
  * "Worth taking" means nobody already has a Command Post on it — including this
- * player, so the bot claims each site once rather than stacking bases — and it
- * is nearer to home than to the enemy. Walking a lone worker past the enemy's
- * front door to build a base is not an expansion, it is a donation.
+ * player and a partner, so a team claims each site once rather than two bots
+ * racing a worker each to the same tile — and it is nearer to home than to any
+ * enemy. Walking a lone worker past the enemy's front door to build a base is
+ * not an expansion, it is a donation.
  */
 function expansionSite(
   world: World,
   player: PlayerId,
   s: Survey,
+  tuning: Tuning,
 ): { x: number; y: number } | null {
   const { map, pool } = world;
-  if (s.commandPosts.length === 0 || s.commandPosts.length >= MAX_BASES) return null;
+  if (s.commandPosts.length === 0 || s.commandPosts.length >= tuning.maxBases) return null;
 
   const home = s.commandPosts[0]!;
   const homeX = pool.tileX[home]!;
@@ -389,10 +624,13 @@ function expansionSite(
     }
     if (contested) continue;
 
-    // Nearer to us than to any enemy base, or it is indefensible.
+    // Nearer to us than to any enemy base, or it is indefensible. An ally's
+    // base does not count against it — a site behind a partner is safer than
+    // one behind us, not less safe.
     let enemyCloser = false;
     for (let i = 0; i < pool.count; i++) {
-      if (pool.alive[i] !== 1 || pool.owner[i] === player || pool.owner[i] === NEUTRAL) continue;
+      if (pool.alive[i] !== 1) continue;
+      if (!world.isHostile(i, player)) continue;
       if (!defOf(pool.type[i]! as EntityType).isBuilding) continue;
       if (sq(pool.tileX[i]! - site.tileX) + sq(pool.tileY[i]! - site.tileY) < dHome) {
         enemyCloser = true;
@@ -620,8 +858,42 @@ function findOpenTileNear(world: World, tx: number, ty: number): number {
   return -1;
 }
 
-/** Send the army at the enemy once it is big enough to matter. */
-function manageArmy(world: World, player: PlayerId, s: Survey, cmds: Command[]): void {
+/**
+ * Defend, then attack.
+ *
+ * Order matters: an army walking across the map while its own Command Post is
+ * being shot is the single most expensive thing a bot can do, and the old one
+ * did it every match. Coming home is checked first and, when it applies, is the
+ * only order issued.
+ */
+function manageArmy(
+  world: World,
+  player: PlayerId,
+  s: Survey,
+  tuning: Tuning,
+  cmds: Command[],
+): void {
+  const pool = world.pool;
+  const beat = Math.floor(world.tick / THINK_INTERVAL);
+
+  // --- defence ------------------------------------------------------------
+  //
+  // Reacted to more often than an attack is re-aimed: an attack that is one
+  // second stale costs a little walking, a defence that is one second stale
+  // costs a building.
+  if (tuning.defendsHome && s.threat >= 0 && s.army.length > 0) {
+    if (beat % 2 !== 0) return;
+    cmds.push({
+      type: CommandType.AttackMove,
+      player,
+      units: s.army.map((i) => pool.idAt(i)),
+      x: pool.posX[s.threat]!,
+      y: pool.posY[s.threat]!,
+    });
+    return;
+  }
+
+  // --- attack -------------------------------------------------------------
   if (s.enemyTargets.length === 0) return;
 
   // Normally wait for a critical mass before committing. But once the map is
@@ -631,32 +903,95 @@ function manageArmy(world: World, player: PlayerId, s: Survey, cmds: Command[]):
   // standing because the winner was one unit short of attacking. With no way to
   // reinforce, whatever is left goes in.
   const cheapest = defOf(EntityType.Burstbot).mineralCost;
-  const canReinforce = s.patches.length > 0 || s.minerals >= cheapest;
-  const required = canReinforce ? ATTACK_ARMY_SIZE : 1;
+  const canReinforce = s.livePatches > 0 || s.minerals >= cheapest;
+  const required = canReinforce ? tuning.attackArmySize : 1;
 
   // With the economy dead and no army left, workers are the only pieces on the
   // board. They fight badly but they do fight, and a base full of them idling
   // next to exhausted patches while the opponent's last buildings stand is a
   // draw by inaction rather than a decision.
   const attackers = s.army.length > 0 ? s.army : !canReinforce ? s.workers : [];
-  if (attackers.length < required) return;
+  if (attackers.length === 0) return;
+
+  // The count that decides whether to commit is the *team's*, not ours. Two
+  // bots each waiting for their own eight units attack four seconds apart and
+  // are beaten one at a time; counting together, they arrive together.
+  const committed = tuning.coordinates ? s.teamArmy.length : attackers.length;
+  if (committed < required) return;
+
   // Re-issue occasionally rather than every think tick, so units get a chance
   // to actually walk somewhere before being redirected.
   //
-  // Note the floor: players think on staggered ticks, so `world.tick /
-  // THINK_INTERVAL` is a fraction for every player but the first, and `% 6`
-  // could then never equal zero. Player 1 never attacked at all.
-  if (Math.floor(world.tick / THINK_INTERVAL) % 6 !== 0) return;
+  // Note the floor: every player thinks on the same tick now, but this used to
+  // divide a staggered tick and produce a fraction for every player but the
+  // first, so `% 6` could never equal zero and player 1 never attacked at all.
+  if (beat % 6 !== 0) return;
 
-  const pool = world.pool;
-  const target = s.enemyTargets[0]!;
-  const units = attackers.map((i) => pool.idAt(i));
+  const target = pickAttackTarget(world, s, tuning);
+  if (target < 0) return;
 
   cmds.push({
     type: CommandType.AttackMove,
     player,
-    units,
+    units: attackers.map((i) => pool.idAt(i)),
     x: pool.posX[target]!,
     y: pool.posY[target]!,
   });
+}
+
+/**
+ * What the side is pushing at: the hostile structure nearest the team's army.
+ *
+ * Two properties matter and the old rule — "the lowest-index enemy building" —
+ * had neither. It never changed, so an army that had fought its way into a base
+ * would walk back out past a Barracks to keep pounding at a Command Post it had
+ * already passed; and it was the same target from anywhere on the map, so two
+ * allied bots on opposite flanks converged on one point by walking through each
+ * other.
+ *
+ * Measuring from the team's centre of mass gives both: the nearest thing gets
+ * killed first, and two bots whose armies are together pick the same target
+ * while two whose armies are apart still agree — they compute one centroid, not
+ * one each.
+ */
+function pickAttackTarget(world: World, s: Survey, tuning: Tuning): number {
+  const pool = world.pool;
+  const from = tuning.coordinates && s.teamArmy.length > 0 ? s.teamArmy : s.army;
+
+  let cx = 0;
+  let cy = 0;
+  let n = 0;
+  for (const i of from) {
+    cx += pool.posX[i]!;
+    cy += pool.posY[i]!;
+    n++;
+  }
+  if (n === 0) {
+    // No army at all: workers are marching, and they start from home.
+    if (s.commandPosts.length === 0) return s.enemyTargets[0]!;
+    cx = pool.posX[s.commandPosts[0]!]!;
+    cy = pool.posY[s.commandPosts[0]!]!;
+    n = 1;
+  }
+  // Exact integer arithmetic: the sums stay far inside float64's exact range
+  // (a position is at most 152 << 16, and there are at most a few hundred of
+  // them), and flooring a correctly-rounded division of exact integers is the
+  // same on every engine.
+  const ax = Math.floor(cx / n);
+  const ay = Math.floor(cy / n);
+
+  let best = -1;
+  let bestDist = Number.POSITIVE_INFINITY;
+  for (const t of s.enemyTargets) {
+    const dx = pool.posX[t]! - ax;
+    const dy = pool.posY[t]! - ay;
+    const d = dx * dx + dy * dy;
+    // Strictly ordered: distance, then ascending slot index, which the scan
+    // order already guarantees by only replacing on a strict improvement.
+    if (d < bestDist) {
+      bestDist = d;
+      best = t;
+    }
+  }
+  return best;
 }

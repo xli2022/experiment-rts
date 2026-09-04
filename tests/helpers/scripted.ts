@@ -15,7 +15,7 @@ import { defOf } from '../../src/config/rules.js';
 import { idIndex } from '../../src/sim/entities.js';
 import { fromInt } from '../../src/sim/fixed.js';
 import { Rng } from '../../src/sim/rng.js';
-import { BuildState, EntityType, MAX_PLAYERS, NO_ENTITY, Order } from '../../src/sim/types.js';
+import { BuildState, EntityType, NO_ENTITY, Order } from '../../src/sim/types.js';
 import { Simulation } from '../../src/sim/tick.js';
 import type { World } from '../../src/sim/world.js';
 
@@ -275,7 +275,10 @@ export function recordMatch(
 
   for (let t = 0; t < ticks; t++) {
     const commands: Command[] = [];
-    for (let p = 0; p < MAX_PLAYERS; p++) {
+    // Every slot in the match, not a constant: `MAX_PLAYERS` bounds what the
+    // engine supports rather than who is playing, and reading it here scripted
+    // two players that did not exist on the duel map.
+    for (let p = 0; p < sim.world.players.length; p++) {
       const forPlayer = generateFor(sim.world, p, rng);
       for (const c of forPlayer) commands.push(c);
     }

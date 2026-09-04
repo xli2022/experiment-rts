@@ -109,12 +109,26 @@ function unorderedPeerConnection(): typeof RTCPeerConnection | undefined {
  *    starting delay forever while the older one adapted against silence.
  * 3: attack wind-up is checksummed simulation state. A v2 peer would still
  *    apply Slicebot damage immediately and diverge on the first melee attack.
+ * 4: the handshake carries the match mode, and is now *waited for* rather than
+ *    raced. Before this a peer resolved the moment it saw the other join, so
+ *    the version check it is here to perform could not actually stop a match
+ *    starting — it only reported afterwards.
  */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 export interface HostConfig {
   roomCode: string;
   seed: number;
+  /**
+   * Opaque identifier for what this peer wants to play.
+   *
+   * The transport never interprets it; it only checks that both sides sent the
+   * same string. Which map, how many players and how hard the AI plays all
+   * change what the simulation computes, so two peers that disagree would
+   * desync on the first tick — and a lobby is the one place that can still be
+   * honest about it.
+   */
+  mode: string;
   /** Optional TURN servers, for players behind symmetric NAT. */
   turnConfig?: RTCIceServer[];
   onStatus?: (message: string) => void;
@@ -129,6 +143,7 @@ export interface JoinResult {
 interface Handshake {
   protocol: number;
   seed: number;
+  mode: string;
 }
 
 /**
@@ -157,7 +172,7 @@ export function slotFromPeerIds(localId: string, remoteId: string): PlayerId {
  * code is the only thing a player has to share.
  */
 export function joinOnlineRoom(config: HostConfig, timeoutMs = 90000): Promise<JoinResult> {
-  const { roomCode, seed, turnConfig, onStatus } = config;
+  const { roomCode, seed, mode, turnConfig, onStatus } = config;
 
   const rtcPolyfill = unorderedPeerConnection();
   const room: Room = joinRoom(
@@ -196,10 +211,13 @@ export function joinOnlineRoom(config: HostConfig, timeoutMs = 90000): Promise<J
     packetAction.onMessage = (data) => transport.receive(data as unknown as Packet);
 
     /**
-     * Settle on a slot once we know who the other peer is.
+     * Settle on a slot once the other peer's handshake has arrived.
      *
-     * Safe to call from both the join callback and the handshake handler,
-     * whichever happens first — the answer does not depend on the order.
+     * Deliberately *not* called from the join callback. Resolving there was a
+     * turn faster and made both the version and mode checks decorative: the
+     * match had already begun by the time the mismatch was discovered, so the
+     * only thing either check could do was report a desync it was meant to
+     * prevent. One extra message is a cheap price for the guarantee.
      */
     const resolveWith = (remoteId: string): void => {
       if (settled) return;
@@ -213,27 +231,46 @@ export function joinOnlineRoom(config: HostConfig, timeoutMs = 90000): Promise<J
       resolve({ transport, seed: agreedSeed, localPlayer: slot });
     };
 
+    const refuse = (message: string): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      room.leave();
+      reject(new Error(message));
+    };
+
+    // Sent once, to whichever peer we learn about first. Peer discovery is
+    // symmetric but its two halves are not ordered, so the greeting has to go
+    // out from whichever side of that race we happen to be on: if their hello
+    // reaches us before our own join callback fires, and we only ever greeted
+    // from the callback, neither peer would ever hear from the other.
+    let greeted = false;
+    const greet = (id: string): void => {
+      if (greeted) return;
+      greeted = true;
+      const hello: Handshake = { protocol: PROTOCOL_VERSION, seed, mode };
+      void handshakeAction.send(hello as unknown as DataPayload, { target: id });
+    };
+
     room.onPeerJoin = (id: string) => {
       onStatus?.('Peer found, agreeing on the map…');
-      // The handshake is only a version check now; the slot needs no
-      // negotiation, and the seed is already derived from the room code by both
-      // sides independently.
-      const hello: Handshake = { protocol: PROTOCOL_VERSION, seed };
-      void handshakeAction.send(hello as unknown as DataPayload, { target: id });
-      resolveWith(id);
+      greet(id);
     };
 
     handshakeAction.onMessage = (data, context) => {
+      greet(context.peerId);
       const msg = data as unknown as Handshake;
       if (msg.protocol !== PROTOCOL_VERSION) {
-        settled = true;
-        clearTimeout(timer);
-        room.leave();
-        reject(
-          new Error(
-            `The other player is running a different version of the game ` +
-              `(protocol ${msg.protocol}, expected ${PROTOCOL_VERSION}).`,
-          ),
+        refuse(
+          `The other player is running a different version of the game ` +
+            `(protocol ${msg.protocol}, expected ${PROTOCOL_VERSION}).`,
+        );
+        return;
+      }
+      if (msg.mode !== mode) {
+        refuse(
+          `You and the other player chose different modes. Both of you need to ` +
+            `pick the same one and enter the same code.`,
         );
         return;
       }

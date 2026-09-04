@@ -174,9 +174,18 @@ function part(
   return rotation ? { geometry, role, offset, rotation } : { geometry, role, offset };
 }
 
-/** Team colours, plus the neutral palette used for resources and terrain. */
-export const PLAYER_COLOURS = [0x4a9eff, 0xff5a4a] as const;
-export const ACCENT_COLOURS = [0xa8d4ff, 0xffb0a4] as const;
+/**
+ * Player colours, plus the neutral palette used for resources and terrain.
+ *
+ * Two hue families, one per team: slots 0 and 1 are cool, slots 2 and 3 warm.
+ * Which *player* a unit belongs to matters far less in play than which *side*
+ * it is on — the question a glance at a battle has to answer is "may I shoot
+ * that", and hue answers it from across the map where a shade could not.
+ * Telling a partner's army from your own is what the selection ring and the
+ * minimap are for.
+ */
+export const PLAYER_COLOURS = [0x4a9eff, 0x35d6bd, 0xff5a4a, 0xffa93d] as const;
+export const ACCENT_COLOURS = [0xa8d4ff, 0x9ff0e4, 0xffb0a4, 0xffd9a0] as const;
 export const DARK_COLOUR = 0x2a3140;
 export const RESOURCE_COLOUR = 0x54e0c8;
 

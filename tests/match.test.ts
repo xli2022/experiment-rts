@@ -21,6 +21,7 @@
 import { describe, expect, it } from 'vitest';
 import { defOf } from '../src/config/rules.js';
 import { EntityType, NEUTRAL, NO_ENTITY, TICKS_PER_SECOND } from '../src/sim/types.js';
+import { duelMatch } from '../src/sim/match.js';
 import { Simulation } from '../src/sim/tick.js';
 
 const SEED = 0x51ce7a11;
@@ -48,9 +49,7 @@ function tally(sim: Simulation, owner: number): Tally {
 
 /** Run a bot-vs-bot match, collecting what actually happened along the way. */
 function playMatch(seed: number, maxTicks = MAX_TICKS) {
-  const sim = new Simulation(seed);
-  sim.botPlayers.add(0);
-  sim.botPlayers.add(1);
+  const sim = new Simulation(duelMatch(seed, { botPlayers: [0, 1] }));
 
   let deaths = 0;
   let shots = 0;

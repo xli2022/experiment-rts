@@ -13,16 +13,19 @@
 import { checksumInit, checksumU32 } from './checksum.js';
 import { EntityPool } from './entities.js';
 import { fromInt, type Fix } from './fixed.js';
-import { GameMap, generateMap, MAP_SIZE, OCCUPIED_RESERVED, OCCUPIED_SOLID } from './map.js';
+import { GameMap, generateMap, OCCUPIED_RESERVED, OCCUPIED_SOLID } from './map.js';
+import { duelMatch } from './match.js';
+import { mirroredHalf } from './mapgen.js';
 import { Rng } from './rng.js';
 import { SpatialGrid } from './spatial.js';
 import {
   EntityType,
-  MAX_PLAYERS,
   NEUTRAL,
   NO_ENTITY,
   type EntityId,
+  type MatchConfig,
   type PlayerId,
+  type TeamId,
 } from './types.js';
 import {
   defOf,
@@ -64,6 +67,8 @@ export interface SimEvents {
 }
 
 export class World {
+  /** What every peer agreed to play before the first tick. Never mutated. */
+  readonly config: MatchConfig;
   readonly map: GameMap;
   readonly pool = new EntityPool();
   readonly grid: SpatialGrid;
@@ -73,13 +78,18 @@ export class World {
   /** Ticks elapsed since the match began. */
   tick = 0;
 
-  /** -1 while the match is running; otherwise the winning player. */
-  winner: PlayerId = NO_ENTITY;
+  /**
+   * -1 while the match is running or after a draw; otherwise the winning team.
+   *
+   * A *team*, not a player: co-op is won together or not at all. In a 1v1 team
+   * ids are equal to player ids, so this reads exactly as it always did.
+   */
+  winner: TeamId = NO_ENTITY;
 
   /**
    * True once the match has ended, win or draw.
    *
-   * Distinct from `winner` because a draw is a real outcome here: both players
+   * Distinct from `winner` because a draw is a real outcome here: both sides
    * can be eliminated on the same tick, and "winner is nobody" must still stop
    * the match rather than leave it running forever.
    */
@@ -104,11 +114,19 @@ export class World {
     completed: [],
   };
 
-  constructor(seed: number, mapSize = MAP_SIZE) {
-    this.map = generateMap(seed, mapSize);
-    this.grid = new SpatialGrid(mapSize);
-    this.rng = new Rng(seed);
-    for (let p = 0; p < MAX_PLAYERS; p++) {
+  /**
+   * A bare seed still means "the 1v1 map", so every existing caller and test
+   * reads the same and produces the same world. Anything else — a different map,
+   * more than two players, teams — comes in as a `MatchConfig`, which is the
+   * thing peers actually agree on.
+   */
+  constructor(config: MatchConfig | number, mapSize?: number) {
+    const cfg = typeof config === 'number' ? duelMatch(config, { mapSize }) : config;
+    this.config = cfg;
+    this.map = generateMap(cfg.seed, cfg.mapSize, cfg.layout);
+    this.grid = new SpatialGrid(cfg.mapSize);
+    this.rng = new Rng(cfg.seed);
+    for (let p = 0; p < cfg.teams.length; p++) {
       this.players.push({
         minerals: STARTING_MINERALS,
         supplyUsed: 0,
@@ -120,6 +138,47 @@ export class World {
 
   player(id: PlayerId): PlayerState {
     return this.players[id]!;
+  }
+
+  /** Which side a player is on. */
+  teamOf(player: PlayerId): TeamId {
+    return this.config.teams[player] ?? player;
+  }
+
+  /**
+   * Do these two slots fight for the same side?
+   *
+   * True for a player and itself, which is what every caller wants: the
+   * question is always "may I shoot this", and the answer for your own units is
+   * the same no as for a partner's.
+   */
+  areAllied(a: PlayerId, b: PlayerId): boolean {
+    if (a === NEUTRAL || b === NEUTRAL) return false;
+    return this.teamOf(a) === this.teamOf(b);
+  }
+
+  /**
+   * May `player` shoot this entity?
+   *
+   * The one place hostility is decided. It used to live on the entity pool,
+   * where it could only ever compare owners — correct while every player was
+   * everyone else's enemy, and quietly wrong the moment two of them share a
+   * side. Neutral entities are hostile to nobody, so mineral patches are
+   * excluded here rather than at every call site.
+   */
+  isHostile(index: number, toPlayer: PlayerId): boolean {
+    const owner = this.pool.owner[index]!;
+    if (owner === NEUTRAL) return false;
+    return !this.areAllied(owner, toPlayer);
+  }
+
+  /** Every slot on `team`, ascending. Allocates; not for per-tick use. */
+  playersOnTeam(team: TeamId): PlayerId[] {
+    const out: PlayerId[] = [];
+    for (let p = 0; p < this.players.length; p++) {
+      if (this.teamOf(p) === team) out.push(p);
+    }
+    return out;
   }
 
   /** Centre position of an entity, in world units. */
@@ -176,6 +235,21 @@ export class World {
    */
   checksum(): number {
     let h = checksumInit();
+    // The roster is agreed out of band, so a lobby that disagreed about it would
+    // otherwise show up as an inexplicable divergence some seconds in. Folded in
+    // here, a mismatch is a desync on the very first comparison, which names the
+    // real problem instead of a symptom.
+    h = checksumU32(h, this.config.layout);
+    h = checksumU32(h, this.config.teams.length);
+    for (let p = 0; p < this.config.teams.length; p++) {
+      h = checksumU32(h, this.config.teams[p]!);
+    }
+    h = checksumU32(h, this.config.bots.length);
+    for (let b = 0; b < this.config.bots.length; b++) {
+      const bot = this.config.bots[b]!;
+      h = checksumU32(h, bot.player);
+      h = checksumU32(h, bot.difficulty);
+    }
     h = checksumU32(h, this.tick);
     h = checksumU32(h, this.rng.state);
     h = checksumU32(h, this.winner);
@@ -246,15 +320,23 @@ const PATCH_OFFSETS: readonly (readonly [number, number])[] = [
 /**
  * Lay a mineral line around a base site.
  *
- * `anchor` is always the *canonical* site — player 0's base, or the first of a
- * mirrored pair of expansions. With `flip` set, each patch is placed at the
- * 180-degree rotation of where it would otherwise go, so the second line is a
- * true rotation of the first rather than the same shape in the same
- * orientation.
+ * `anchor` is always the *canonical* site — the first half of `map.starts` or
+ * of `map.expansions`. With `flip` set, each patch is placed at the 180-degree
+ * rotation of where it would otherwise go, so the second line is a true
+ * rotation of the first rather than the same shape in the same orientation.
  *
  * That distinction is the whole point. Laid out the same way round, one
  * player's workers start on the far side of their own Command Post from their
  * own patches, and their minerals sit between their base and the attack.
+ *
+ * `faceOut` reflects the authored line horizontally about the base's own
+ * centre, for a canonical site that sits in the right half of the map. The
+ * offsets below run up and to the left, which tucks the line into the corner
+ * for a base on the left and shoves it out toward the middle for one on the
+ * right — and on the four-start map both are canonical sites, so one rule for
+ * all of them is not enough. This is a reflection about the base's *centre*,
+ * not its centre tile: half a tile out here is a whole tile of extra walking on
+ * every trip for the rest of the match.
  */
 function placeMineralLine(
   world: World,
@@ -262,14 +344,16 @@ function placeMineralLine(
   anchorY: number,
   count: number,
   flip: boolean,
+  faceOut = false,
 ): number {
   const { map, pool } = world;
   const patchDef = defOf(EntityType.MineralPatch);
   let placed = 0;
   for (let i = 0; i < PATCH_OFFSETS.length && placed < count; i++) {
     const [dx, dy] = PATCH_OFFSETS[i]!;
-    const canonX = anchorX + dx;
+    let canonX = anchorX + dx;
     const canonY = anchorY + dy;
+    if (faceOut) canonX = reflectTile(anchorX, canonX, patchDef.footprint);
     const tx = flip ? mirrorTile(map.width, canonX, patchDef.footprint) : canonX;
     const ty = flip ? mirrorTile(map.height, canonY, patchDef.footprint) : canonY;
     if (!map.canPlace(tx, ty, patchDef.footprint)) continue;
@@ -284,6 +368,19 @@ function placeMineralLine(
 }
 
 /**
+ * Should a base at this tile have its mineral line reflected?
+ *
+ * True for a canonical site in the right half of the map, so the line ends up
+ * on the outside rather than between the base and the middle. Applied to start
+ * locations only: an opening mineral line is mined from tick zero with no say
+ * in the matter, whereas an expansion is walked to by choice and has no
+ * sheltered side to speak of once it is out in the open.
+ */
+function facesOutward(map: GameMap, tileX: number): boolean {
+  return tileX * 2 >= map.width;
+}
+
+/**
  * Build the opening position: a finished Command Post, starting workers, and a
  * mineral line for each player.
  *
@@ -295,19 +392,22 @@ export function setupMatch(world: World): void {
   const hqDef = defOf(EntityType.CommandPost);
   const half = hqDef.footprint >> 1;
 
-  // Player 0's opening is authored; player 1's is that opening rotated 180
-  // degrees about the centre of the map.
+  // Openings are authored for the first half of the starts; the second half is
+  // each of those rotated 180 degrees about the centre of the map. Player `p`'s
+  // opposite number is therefore always `p + n/2`, and the two sides are exact
+  // rotations of each other whether there are two of them or four.
   //
   // Applying the same offsets to a mirrored start instead is *nearly* the same
   // thing and was wrong: a footprint of 4 centred by `start - 2` cannot be
-  // symmetric about a tile, so player 1's whole base landed a tile nearer the
+  // symmetric about a tile, so the mirrored base landed a tile nearer the
   // middle of the map — closer to the centre, to its expansion, and to the
   // enemy, on every axis, from tick zero.
-  const homeX = map.starts[0]!.tileX - half;
-  const homeY = map.starts[0]!.tileY - half;
-
-  for (let p = 0; p < MAX_PLAYERS; p++) {
-    const flip = p === 1;
+  for (let p = 0; p < world.players.length; p++) {
+    const { canonical, flip } = mirroredHalf(p, map.starts.length);
+    const site = map.starts[canonical]!;
+    const homeX = site.tileX - half;
+    const homeY = site.tileY - half;
+    const faceOut = facesOutward(map, site.tileX);
     const hqTileX = flip ? mirrorTile(map.width, homeX, hqDef.footprint) : homeX;
     const hqTileY = flip ? mirrorTile(map.height, homeY, hqDef.footprint) : homeY;
 
@@ -324,8 +424,9 @@ export function setupMatch(world: World): void {
     const centreY = hqTileY + half;
 
     // Mineral line: a tight arc beside the base, on the side away from the
-    // enemy. Always anchored on player 0's base, and rotated for player 1.
-    placeMineralLine(world, homeX + half, homeY + half, PATCHES_PER_BASE, flip);
+    // enemy. Always anchored on the canonical start, and rotated for the half
+    // that is a rotation of it.
+    placeMineralLine(world, homeX + half, homeY + half, PATCHES_PER_BASE, flip, faceOut);
 
     // Starting workers, fanned out on the near side of the Command Post.
     const facing = flip ? -1 : 1;
@@ -347,14 +448,9 @@ export function setupMatch(world: World): void {
   for (let e = 0; e < map.expansions.length; e++) {
     // Anchored on the canonical site of each pair, so the two lines are exact
     // rotations of one another rather than each laid out from its own site.
-    const canonical = map.expansions[e - (e % 2)]!;
-    placeMineralLine(
-      world,
-      canonical.tileX,
-      canonical.tileY,
-      PATCHES_PER_EXPANSION,
-      e % 2 === 1,
-    );
+    const { canonical, flip } = mirroredHalf(e, map.expansions.length);
+    const site = map.expansions[canonical]!;
+    placeMineralLine(world, site.tileX, site.tileY, PATCHES_PER_EXPANSION, flip);
   }
 
   world.recomputeSupply();
@@ -364,4 +460,16 @@ export function setupMatch(world: World): void {
 /** Top-left tile of a footprint rotated 180 degrees about the map centre. */
 function mirrorTile(size: number, tile: number, footprint: number): number {
   return size - 1 - tile - (footprint - 1);
+}
+
+/**
+ * Top-left tile of a footprint reflected about a base's centre on one axis.
+ *
+ * `centre` is a base's centre tile, which for an even footprint is also its
+ * exact geometric centre — a Command Post spans `[c-2, c+2)`. Reflecting the
+ * span `[t, t+f)` about `c` gives `[2c-t-f, 2c-t)`, which is the same shape
+ * `mirrorTile` uses for the map as a whole.
+ */
+function reflectTile(centre: number, tile: number, footprint: number): number {
+  return 2 * centre - tile - footprint;
 }
