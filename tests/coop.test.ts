@@ -610,7 +610,11 @@ describe('surrender', () => {
     sim.step([]);
     // The presentation layer reads `events.deaths` after the step, so queueing
     // them is what makes a conceded base blow up instead of vanishing.
-    expect(world.events.deaths.length).toBeGreaterThanOrEqual(before);
+    //
+    // Exactly, not at least: `>=` would also pass a sweep that queued the whole
+    // *team*, or that queued every entity twice, which are the two ways this
+    // could go wrong without anything else noticing.
+    expect(world.events.deaths.length).toBe(before);
   });
 
   it('leaves the partner able to win it for both of them', () => {
@@ -633,6 +637,72 @@ describe('surrender', () => {
 
     expect(world.matchOver).toBe(true);
     expect(world.winner).toBe(world.teamOf(1));
+  });
+});
+
+describe('the stalemate rule razes a base too', () => {
+  /**
+   * A player reduced to buildings alone, with `minerals` banked.
+   *
+   * The other route into `victorySystem`'s sweep, and the one nobody concedes
+   * their way into: a player who still owns structures but has nothing alive
+   * and nothing affordable is out, and since elimination now destroys what a
+   * player still owns, that verdict demolishes a standing base. It was harmless
+   * while it only set a flag, so it is worth pinning both ways round.
+   */
+  function stranded(minerals: number): { sim: Simulation; world: World } {
+    const sim = new Simulation(coopMatch(SEEDS[0]!));
+    const world = sim.world;
+    for (const i of owned(world, 0)) {
+      if (defOf(world.pool.type[i]! as EntityType).isBuilding) continue;
+      world.pool.destroy(world.pool.idAt(i));
+    }
+    world.player(0).minerals = minerals;
+    world.recomputeSupply();
+    return { sim, world };
+  }
+
+  it('takes the base of a player with nothing alive and nothing affordable', () => {
+    const { sim, world } = stranded(0);
+    expect(owned(world, 0).length).toBeGreaterThan(0);
+    sim.step([]);
+
+    expect(world.player(0).defeated).toBe(true);
+    expect(owned(world, 0)).toEqual([]);
+    // Elimination is still per player: the partner is untouched.
+    expect(world.player(1).defeated).toBe(false);
+    expect(owned(world, 1).length).toBeGreaterThan(0);
+  });
+
+  it('leaves a player who can still afford a worker alone', () => {
+    const { sim, world } = stranded(defOf(EntityType.Worker).mineralCost);
+    const before = owned(world, 0).length;
+    sim.step([]);
+
+    expect(world.player(0).defeated).toBe(false);
+    expect(owned(world, 0).length).toBe(before);
+  });
+
+  it('leaves a player whose worker is already paid for and queued', () => {
+    // "That position cannot change for the rest of time" has to be true, not
+    // nearly true. Minerals spent on a unit already in a queue are gone from the
+    // bank, so an affordability test alone declares the player stuck one tick
+    // before the worker walks out — and now demolishes the Command Post it is
+    // standing in.
+    const { sim, world } = stranded(defOf(EntityType.Worker).mineralCost);
+    const post = owned(world, 0).find((i) => world.pool.type[i] === EntityType.CommandPost)!;
+    executeCommand(world, {
+      type: CommandType.Train,
+      player: 0,
+      building: world.pool.idAt(post),
+      unit: EntityType.Worker,
+    });
+    expect(world.player(0).minerals).toBe(0);
+    const before = owned(world, 0).length;
+    sim.step([]);
+
+    expect(world.player(0).defeated).toBe(false);
+    expect(owned(world, 0).length).toBe(before);
   });
 });
 

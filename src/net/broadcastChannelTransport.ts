@@ -16,7 +16,7 @@
  */
 
 import type { PlayerId } from '../sim/types.js';
-import { slotFromPeerIds } from './trysteroTransport.js';
+import { JOIN_ABANDONED, slotFromPeerIds } from './trysteroTransport.js';
 import type { Packet, Transport } from './transport.js';
 
 const CHANNEL_PREFIX = 'experiment-rts:';
@@ -50,13 +50,36 @@ export function joinLocalRoom(
    * mismatch is refused with something a person can act on instead.
    */
   mode: string,
+  /**
+   * Abandon the attempt and close the channel.
+   *
+   * A caller that only navigates away leaves this channel open and listening. A
+   * `BroadcastChannel` message reaches every other channel object of the same
+   * name in the origin — *including ones in the same document* — so a second
+   * attempt in this tab handshakes with the abandoned first one: same-mode, it
+   * resolves both against each other and the match stalls on a peer that is
+   * really this tab; different-mode, both reject with "the other tab chose a
+   * different mode" when no other tab exists.
+   */
+  signal?: AbortSignal,
   timeoutMs = 60000,
 ): Promise<LobbyResult> {
+  if (signal?.aborted) return Promise.reject(new Error(JOIN_ABANDONED));
+
   const channel = new BroadcastChannel(CHANNEL_PREFIX + room);
   const selfId = `${Date.now().toString(36)}-${Math.floor(Math.random() * 1e9).toString(36)}`;
 
   return new Promise((resolve, reject) => {
     let settled = false;
+
+    const abandon = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      channel.removeEventListener('message', onMessage);
+      channel.close();
+      reject(new Error(JOIN_ABANDONED));
+    };
 
     const finish = (seed: number, slot: PlayerId, peer: string): void => {
       if (settled) return;
@@ -104,6 +127,7 @@ export function joinLocalRoom(
     };
 
     channel.addEventListener('message', onMessage);
+    signal?.addEventListener('abort', abandon, { once: true });
     channel.postMessage({
       kind: 'hello',
       from: selfId,

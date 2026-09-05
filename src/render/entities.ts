@@ -154,11 +154,6 @@ export class EntityRenderer {
   /** Palette entry of each slot. Not the slot itself — see `colourSlotFor`. */
   private readonly colourOf: number[] = [];
 
-  /** Every player slot in the match, ascending. */
-  private get owners(): number[] {
-    return this.teamOf.map((_, p) => p);
-  }
-
   constructor(
     private readonly provider: ModelProvider,
     world: World,
@@ -268,7 +263,7 @@ export class EntityRenderer {
       height: model.bindSize.y * scale,
     });
 
-    for (const owner of this.owners) {
+    for (let owner = 0; owner < this.teamOf.length; owner++) {
       // Skins are authored one per side, not one per slot, so partners wear the
       // same colours as each other and the opposing pair wears the other set.
       // That is the read the game needs at a glance; which of the two allied
@@ -286,7 +281,7 @@ export class EntityRenderer {
     }
 
     const spec = this.provider.get(type);
-    for (const owner of this.owners) {
+    for (let owner = 0; owner < this.teamOf.length; owner++) {
       for (let p = 0; p < spec.parts.length; p++) {
         const entry = this.pools.get(poolKey(type, p, owner));
         if (entry) entry.mesh.visible = false;
@@ -408,7 +403,10 @@ export class EntityRenderer {
       EntityType.Turret,
       EntityType.MineralPatch,
     ];
-    const owners = [...this.owners, NEUTRAL];
+    // Every slot, plus the one neutral owner mineral patches use.
+    const owners: number[] = [];
+    for (let p = 0; p < this.teamOf.length; p++) owners.push(p);
+    owners.push(NEUTRAL);
 
     for (const type of types) {
       const spec = this.provider.get(type);

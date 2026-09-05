@@ -16,6 +16,18 @@
   box-sizing: border-box;
 }
 
+/* Restore what the UA stylesheet promises.
+   `[hidden] { display: none }` is a plain type-less rule, so any author
+   `display` on an id or a class beats it — and most panels here set one. Every
+   element toggled with `el.hidden` therefore needed its own opt-out, and four
+   of them had grown one, each with its own copy of this comment. The one that
+   did not have one rendered as an empty box that, being `interactive`, swallowed
+   clicks in a corner of the screen. One rule, stated once, and the omission
+   cannot be repeated. */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
@@ -144,15 +156,6 @@ body {
 
 /* The partner strip: only present in co-op, and deliberately quieter than the
    player's own resources — it is reference, not something to act on. */
-/* An author `display` beats the UA stylesheet's `[hidden] { display: none }`,
-   so a panel that is sometimes absent needs to say so itself — the same rule
-   `#production` and `#prod-queue` below carry, for the same reason. Without it
-   the strip renders as an empty box in every 1v1 and, being `interactive`,
-   swallows clicks in the corner of the screen. */
-#allies[hidden] {
-  display: none;
-}
-
 #allies {
   top: 56px;
   left: 12px;
@@ -238,10 +241,6 @@ body {
   margin-bottom: 10px;
 }
 
-#production[hidden] {
-  display: none;
-}
-
 #prod-row {
   display: flex;
   justify-content: space-between;
@@ -276,10 +275,6 @@ body {
   margin-top: 5px;
   font-size: 11px;
   color: var(--muted);
-}
-
-#prod-queue[hidden] {
-  display: none;
 }
 
 #command-grid {
@@ -368,12 +363,6 @@ body {
   right: 104px;
 }
 
-/* An author `display` beats `[hidden] { display: none }`, and the shared rule
-   above sets one — so the button that can be hidden has to say so itself. */
-#surrender-btn[hidden] {
-  display: none;
-}
-
 #fullscreen-btn:hover,
 #mute-btn:hover {
   border-color: var(--accent);
@@ -453,6 +442,16 @@ body {
   margin: 0 0 20px;
   line-height: 1.55;
   font-size: 13px;
+}
+
+/* What both peers have to have picked, on the connect screens. Quieter than the
+   blurb above it, because it is a fact to check rather than something to read. */
+.mode-summary {
+  color: var(--text);
+  background: rgba(74, 158, 255, 0.09);
+  border: 1px solid var(--panel-edge);
+  border-radius: 9px;
+  padding: 9px 12px;
 }
 
 .dialog button {

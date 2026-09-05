@@ -54,7 +54,16 @@ const DIFFICULTY_LABELS: Readonly<Record<BotDifficulty, string>> = {
   [BotDifficulty.Hard]: 'Hard',
 };
 
-const DIFFICULTIES = [BotDifficulty.Easy, BotDifficulty.Normal, BotDifficulty.Hard];
+/**
+ * The chips to offer, derived from the labels rather than listed again.
+ *
+ * `DIFFICULTY_LABELS` is a `Record<BotDifficulty, string>`, so the compiler
+ * makes it exhaustive; a hand-written array is not checked against anything, and
+ * a fourth difficulty would simply never get a chip with nothing failing to say
+ * so. Integer-like keys enumerate in ascending numeric order, which is the order
+ * the row should read in anyway.
+ */
+const DIFFICULTIES = Object.keys(DIFFICULTY_LABELS).map(Number) as BotDifficulty[];
 
 /** Turn a choice plus an agreed seed into the match every peer will run. */
 function configFor(mode: LobbyMode, seed: number): MatchConfig {
@@ -80,13 +89,38 @@ function configFor(mode: LobbyMode, seed: number): MatchConfig {
  * exactly the failure the handshake exists to prevent. Serialising the artefact
  * cannot drift from the artefact.
  *
- * The seed is zeroed because it is agreed separately, from the room code. Key
- * order is stable because both peers run the same build — the protocol version
- * check guarantees it — and the string is only ever compared for equality,
- * never parsed.
+ * The seed is zeroed because it is agreed separately, from the room code, and
+ * the string is only ever compared for equality, never parsed.
+ *
+ * What makes it stable is narrower than "both peers run the same build" —
+ * `PROTOCOL_VERSION` is what rules that out, and it only rules it out if
+ * somebody bumps it. It is stable because `matchConfig` returns one
+ * fixed-order object literal whose every value is a finite number or an array
+ * of them: no key is integer-like (which would enumerate first regardless of
+ * insertion order), no field can be `undefined` (silently dropped, so two
+ * different choices would serialise the same), and nothing can reach
+ * `NaN`/`Infinity` (both become `null`). Adding an optional field to
+ * `MatchConfig` breaks that, and the symptom is two players who picked the same
+ * mode being told they did not.
  */
 function modeId(mode: LobbyMode): string {
   return JSON.stringify(configFor(mode, 0));
+}
+
+/**
+ * What the two peers have to agree on, in words.
+ *
+ * The handshake compares `modeId`, and since difficulty follows the player
+ * between screens the likeliest mismatch is now one neither of them chose
+ * deliberately: pick Hard for a skirmish, back out, open co-op, and Hard is
+ * already selected. The transport can only report "you chose different modes"
+ * — it never interprets the string — so the connect screens have to show what
+ * is being compared, or a mismatch is unactionable from anything on screen.
+ */
+function modeSummary(mode: LobbyMode): string {
+  if (mode.kind === 'versus') return 'Versus another player';
+  const label = DIFFICULTY_LABELS[mode.difficulty];
+  return mode.kind === 'skirmish' ? `Skirmish vs AI · ${label}` : `Co-op vs AI · ${label}`;
 }
 
 /**
@@ -109,6 +143,14 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
     overlay.id = 'overlay';
     root.append(overlay);
 
+    // Every route into a match is a click, which is exactly the user gesture
+    // browsers require before an AudioContext may start. Registered once, on
+    // the overlay itself, rather than on entering the menu: the menu is now the
+    // Back destination of three mode screens, and a `once` listener that has
+    // not fired yet is not replaced by registering another — a player
+    // navigating by keyboard would stack one per visit.
+    overlay.addEventListener('pointerdown', () => void audio.resume(), { once: true });
+
     /**
      * How hard the AI plays, shared by every screen that offers the choice.
      *
@@ -125,10 +167,13 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
     };
 
     const showError = (message: string, retry: () => void): void => {
+      // "Back", not "Back to menu": `retry` is the screen the attempt started
+      // from, which since the modes were grouped is the mode screen rather than
+      // the main menu.
       const dialog = render(`
         <h1>Could not connect</h1>
         <p></p>
-        <button class="primary" data-act="retry">Back to menu</button>
+        <button class="primary" data-act="retry">Back</button>
       `);
       dialog.querySelector('p')!.textContent = message;
       dialog.querySelector('[data-act="retry"]')!.addEventListener('click', retry);
@@ -147,10 +192,6 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
     // ---------------------------------------------------------------------
 
     const menu = (): void => {
-      // Every route out of this menu is a click, which is exactly the user
-      // gesture browsers require before an AudioContext may start.
-      overlay.addEventListener('pointerdown', () => void audio.resume(), { once: true });
-
       const dialog = render(`
         <h1>Experiment RTS</h1>
         <p>Gather minerals, build a base, and destroy every enemy structure.</p>
@@ -293,6 +334,27 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
     // Connecting
     // ---------------------------------------------------------------------
 
+    /**
+     * Wire a connect screen's Cancel button to actually abandon the join.
+     *
+     * Navigating away is not enough. Both joins hold a live channel or room for
+     * the whole of their timeout, so a cancelled attempt keeps listening: a
+     * peer (or, for two tabs, this tab's own next attempt) that arrives inside
+     * that window still completes a handshake, and the abandoned promise then
+     * starts a match the player backed out of — or refuses one they never made,
+     * with a message about "the other tab" when there is no other tab. The
+     * signal closes the channel at the source, which is the only place it can
+     * be closed from.
+     */
+    const abandonOn = (dialog: HTMLElement, back: () => void): AbortController => {
+      const attempt = new AbortController();
+      dialog.querySelector('[data-act="cancel"]')!.addEventListener('click', () => {
+        attempt.abort();
+        back();
+      });
+      return attempt;
+    };
+
     const online = (mode: LobbyMode, back: () => void): void => {
       const suggested = generateRoomCode();
       const dialog = render(`
@@ -301,6 +363,8 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
            whoever arrives first hosts. No account, and no server of ours
            involved: once connected, the game runs directly between the two
            browsers.</p>
+        <p class="mode-summary">You are starting: <strong>${modeSummary(mode)}</strong>.
+           The other player has to pick the same, difficulty included.</p>
         <input class="interactive" id="room-code" value="${suggested}"
                maxlength="8" autocomplete="off" spellcheck="false" />
         <button class="primary" data-act="go">Connect</button>
@@ -329,7 +393,7 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
         <button data-act="cancel">Cancel</button>
       `);
       const status = dialog.querySelector('#status') as HTMLElement;
-      dialog.querySelector('[data-act="cancel"]')!.addEventListener('click', back);
+      const attempt = abandonOn(dialog, back);
 
       // Both peers derive the same seed from the room code, so the map is
       // agreed before either side sends anything.
@@ -337,12 +401,14 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
         roomCode: code,
         seed: seedFromRoomCode(code),
         mode: modeId(mode),
+        signal: attempt.signal,
         onStatus: (message) => {
           status.textContent = message;
         },
       })
         .then(({ transport, seed }) => start(transport, mode, seed))
         .catch((error: unknown) => {
+          if (attempt.signal.aborted) return;
           showError(error instanceof Error ? error.message : String(error), back);
         });
     };
@@ -353,14 +419,17 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
         <p>Open this page in a second tab and choose the same option there.
            The two tabs talk directly, with no network involved — handy for
            trying multiplayer without a second machine.</p>
+        <p class="mode-summary">Pick this in the other tab: <strong>${modeSummary(mode)}</strong>.
+           Difficulty counts too.</p>
         <p id="status" style="color:var(--warn)">Waiting for the second tab…</p>
         <button data-act="cancel">Cancel</button>
       `);
-      dialog.querySelector('[data-act="cancel"]')!.addEventListener('click', back);
+      const attempt = abandonOn(dialog, back);
 
-      joinLocalRoom('lan', randomSeed(), modeId(mode))
+      joinLocalRoom('lan', randomSeed(), modeId(mode), attempt.signal)
         .then(({ transport, seed }) => start(transport, mode, seed))
         .catch((error: unknown) => {
+          if (attempt.signal.aborted) return;
           showError(error instanceof Error ? error.message : String(error), back);
         });
     };

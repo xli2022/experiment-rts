@@ -216,13 +216,23 @@ export function applyDamage(world: World, index: number, amount: number): void {
  * built in ascending index order by the combat loop, keeping the destroy order —
  * and therefore the free list, and therefore all future entity ids — identical
  * across peers.
+ *
+ * `from` is where in the list to start, for the one caller that reaps a second
+ * time in the same tick: `victorySystem` queues an eliminated player's estate
+ * *after* this has already run, and the list is only cleared at the top of the
+ * next tick. Skipping what has been reaped is not merely cheaper. An entry
+ * resolves as `pool.destroy(pool.idAt(i))`, which reads the slot's *current*
+ * generation — so a re-walk destroys whatever occupies that slot now, and the
+ * only thing making that harmless today is that nothing happens to spawn
+ * between the two calls. That is an invariant nobody declared and one inserted
+ * system away from a silent entity delete.
  */
-export function reapDead(world: World): void {
+export function reapDead(world: World, from = 0): void {
   const pool = world.pool;
   const deaths = world.events.deaths;
-  if (deaths.length === 0) return;
+  if (from >= deaths.length) return;
 
-  for (let k = 0; k < deaths.length; k++) {
+  for (let k = from; k < deaths.length; k++) {
     const i = deaths[k]!;
     if (pool.alive[i] !== 1) continue;
 

@@ -92,14 +92,20 @@ export interface Layout {
  * other half. Applying the same offsets to a mirrored site instead is *nearly*
  * the same thing, and is the bug that put one player's whole base a tile nearer
  * the middle of the map.
+ *
+ * **`count` must be even.** The whole mirrored-halves argument depends on it,
+ * and an odd list has no answer to give: with `count` 3, indices 1 and 2 both
+ * come back as the rotation of index 0, so two mineral lines are authored on
+ * the same tiles and the second places nothing. Refused here rather than
+ * returning a plausible-looking answer, because the symptom — one expansion
+ * with no minerals at all — reads as a map-authoring mistake rather than as
+ * this helper.
  */
 export function mirroredHalf(index: number, count: number): { canonical: number; flip: boolean } {
+  if (count % 2 !== 0) {
+    throw new Error(`mirrored list of ${count} has no second half; counts must be even`);
+  }
   const half = count >> 1;
-  // A list with no second half has no rotated copies in it, so every entry is
-  // its own canonical site. Without this an odd-length list reports its sole
-  // entry as the 180-degree rotation of itself, which would lay a base's
-  // mineral line out on the wrong side of the map.
-  if (half === 0) return { canonical: index, flip: false };
   return { canonical: index % half, flip: index >= half };
 }
 

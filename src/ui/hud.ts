@@ -85,8 +85,13 @@ export class Hud {
      * lockstep runner, and conceding is an ordinary command that executes on
      * its turn like any other — every peer applies it in the same order, so
      * there is nothing special about it but the button.
+     *
+     * Required, unlike the parameters before it. The button is rendered and
+     * wired unconditionally, so a default would turn a forgotten wire-up into a
+     * confirmation dialog that says "this cannot be undone" and then does
+     * nothing — a runtime state instead of a compile error.
      */
-    private readonly onSurrender: () => void = () => {},
+    private readonly onSurrender: () => void,
   ) {
     const colour = (p: PlayerId): number =>
       PLAYER_COLOURS[colourSlotFor(p, playerCount)] ?? 0x888888;
@@ -137,7 +142,7 @@ export class Hud {
       </div>
 
       <button class="panel" id="surrender-btn" type="button"
-              title="Surrender" aria-label="Surrender">🏳</button>
+              title="Surrender" aria-label="Surrender">🏳️</button>
       <button class="panel" id="mute-btn" type="button"
               title="Mute (M)" aria-label="Toggle sound"></button>
       <button class="panel" id="fullscreen-btn" type="button"
@@ -216,7 +221,11 @@ export class Hud {
       onFullscreenChange(() => this.syncFullscreenLabel());
       this.syncFullscreenLabel();
     } else {
-      this.fullscreenBtn.style.display = 'none';
+      // The same mechanism every other hideable thing in this file uses. An
+      // inline `display` worked only because it outranks the id rule; the
+      // stylesheet now honours `[hidden]` for everything, so there is one way
+      // to hide something rather than three.
+      this.fullscreenBtn.hidden = true;
     }
 
     // Panels swallow pointer events so a click on the command card never also
@@ -461,22 +470,47 @@ export class Hud {
     actions: { label: string; primary?: boolean; onClick: () => void }[],
   ): void {
     this.overlay.classList.remove('hidden');
-    this.overlay.innerHTML = `<div class="dialog"><h1></h1><p></p></div>`;
+    this.overlay.innerHTML =
+      `<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">` +
+      `<h1 id="dialog-title"></h1><p></p></div>`;
     const dialog = this.overlay.querySelector('.dialog')!;
     dialog.querySelector('h1')!.textContent = title;
     dialog.querySelector('p')!.textContent = body;
+    let first: HTMLButtonElement | null = null;
     for (const action of actions) {
       const button = document.createElement('button');
       button.textContent = action.label;
       if (action.primary) button.className = 'primary';
       button.addEventListener('click', action.onClick);
       dialog.append(button);
+      if (first === null || action.primary) first = button;
     }
+    // Move focus into the dialog, and onto the safe option.
+    //
+    // Without this, focus stays wherever it was — which for the surrender
+    // confirmation is the surrender button itself, still focused behind its own
+    // modal, so a second Enter re-opens the dialog instead of answering it. It
+    // also means a screen reader announces the dialog, which a plain div under
+    // no focus does not.
+    first?.focus();
   }
 
   hideDialog(): void {
     this.overlay.classList.add('hidden');
     this.overlay.innerHTML = '';
+  }
+
+  /**
+   * Is a dialog covering the screen?
+   *
+   * The overlay already swallows the pointer, but nothing has ever stopped the
+   * global hotkeys, and until the surrender confirmation there was no dialog a
+   * player was expected to answer *during* a match. Escape — the reflex for
+   * dismissing a confirmation — reached `cancelModes` and threw away a pending
+   * building placement while the dialog stayed on screen.
+   */
+  get dialogOpen(): boolean {
+    return !this.overlay.classList.contains('hidden');
   }
 
   /** Hide the surrender button — there is nothing left to give up. */

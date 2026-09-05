@@ -110,8 +110,12 @@ function unorderedPeerConnection(): typeof RTCPeerConnection | undefined {
  *    raced. Before this a peer resolved the moment it saw the other join, so
  *    the version check it is here to perform could not actually stop a match
  *    starting — it only reported afterwards.
+ * 5: elimination destroys what a defeated player still owns. `pool.alive`, the
+ *    generation counters and the free list are all checksummed, so a v4 peer
+ *    would leave a conceded army standing while a v5 peer razes it, and the two
+ *    diverge on the first player to go out.
  */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 export interface HostConfig {
   roomCode: string;
@@ -129,6 +133,14 @@ export interface HostConfig {
   /** Optional TURN servers, for players behind symmetric NAT. */
   turnConfig?: RTCIceServer[];
   onStatus?: (message: string) => void;
+  /**
+   * Abandon the attempt and leave the room.
+   *
+   * A lobby that only navigates away leaves this room joined: the promise stays
+   * live for the whole timeout, and a peer arriving inside that window still
+   * completes a handshake and starts a match nobody is waiting for.
+   */
+  signal?: AbortSignal;
 }
 
 export interface JoinResult {
@@ -136,6 +148,15 @@ export interface JoinResult {
   seed: number;
   localPlayer: PlayerId;
 }
+
+/**
+ * Rejection message for a join the caller abandoned.
+ *
+ * A sentinel rather than a subclass so both transports can share it and a
+ * caller can tell "you cancelled this" from "this failed", which is the
+ * difference between saying nothing and showing an error nobody caused.
+ */
+export const JOIN_ABANDONED = 'join abandoned';
 
 interface Handshake {
   protocol: number;
@@ -169,7 +190,9 @@ export function slotFromPeerIds(localId: string, remoteId: string): PlayerId {
  * code is the only thing a player has to share.
  */
 export function joinOnlineRoom(config: HostConfig, timeoutMs = 90000): Promise<JoinResult> {
-  const { roomCode, seed, mode, turnConfig, onStatus } = config;
+  const { roomCode, seed, mode, turnConfig, onStatus, signal } = config;
+
+  if (signal?.aborted) return Promise.reject(new Error(JOIN_ABANDONED));
 
   const rtcPolyfill = unorderedPeerConnection();
   const room: Room = joinRoom(
@@ -235,6 +258,8 @@ export function joinOnlineRoom(config: HostConfig, timeoutMs = 90000): Promise<J
       room.leave();
       reject(new Error(message));
     };
+
+    signal?.addEventListener('abort', () => refuse(JOIN_ABANDONED), { once: true });
 
     // Sent once *per peer*. Peer discovery is symmetric but its two halves are
     // not ordered, so the greeting has to go out from whichever side of that

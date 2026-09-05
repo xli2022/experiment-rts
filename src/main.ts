@@ -125,10 +125,20 @@ class Game {
     // whose humans are not the low slots leaves a slot nobody ever sends for
     // and stalls every peer forever, behind a "waiting for player" banner
     // naming someone who is not playing. Failing here says what is wrong.
-    if (humanCount(setup.config) !== transport.playerCount) {
+    //
+    // Both halves are checked, because the count alone does not imply the
+    // shape: `botPlayers: [0, 1]` on the four-corner map leaves two humans
+    // against a two-player transport and passes a count test, while seating
+    // them in slots 2 and 3 — which is precisely the stall this guard exists
+    // to refuse.
+    const humans = humanCount(setup.config);
+    const botsAreHigh = setup.config.bots.every((bot) => bot.player >= humans);
+    if (humans !== transport.playerCount || !botsAreHigh) {
       throw new Error(
-        `roster has ${humanCount(setup.config)} human slots but the transport ` +
-          `carries ${transport.playerCount}; the AI must hold the high slots`,
+        `roster has ${humans} human slots but the transport carries ` +
+          `${transport.playerCount}, and the AI holds slots ` +
+          `[${setup.config.bots.map((b) => b.player).join(', ')}]; the humans ` +
+          `must be the low slots and the AI the high ones`,
       );
     }
     this.sim = new Simulation(setup.config);
@@ -320,6 +330,12 @@ class Game {
   private handleKey(e: KeyboardEvent): void {
     if (e.target instanceof HTMLInputElement) return;
     if (this.gallery.isOpen) return;
+    // A dialog already swallows the pointer; it has to swallow the keyboard
+    // too. The surrender confirmation is the first one a player answers
+    // mid-match, and behind it Escape was cancelling their pending build order
+    // and a command-card letter was queueing a unit in the match they were
+    // deciding whether to concede.
+    if (this.hud.dialogOpen) return;
 
     if (e.code === 'Escape') {
       this.cancelModes();
@@ -1108,6 +1124,24 @@ async function boot(): Promise<void> {
   (window as unknown as { __game: Game }).__game = game;
 }
 
-void boot();
+/**
+ * Say what went wrong, rather than showing a black page.
+ *
+ * By the time `new Game(...)` runs the lobby has already removed its overlay,
+ * so an exception thrown from the constructor — the roster/transport guard
+ * above, `teamsFor`'s roster cap, a WebGL failure — used to leave an empty
+ * `#ui-root` over a cleared canvas with the message only in the console. The
+ * checks are worth nothing if nobody can read them.
+ */
+void boot().catch((error: unknown) => {
+  const uiRoot = document.getElementById('ui-root');
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(error);
+  if (!uiRoot) return;
+  uiRoot.innerHTML = `<div id="overlay"><div class="dialog"><h1>Could not start</h1><p></p>
+      <button class="primary" id="boot-reload" type="button">Reload</button></div></div>`;
+  uiRoot.querySelector('p')!.textContent = message;
+  uiRoot.querySelector('#boot-reload')!.addEventListener('click', () => location.reload());
+});
 
 export { Game };
