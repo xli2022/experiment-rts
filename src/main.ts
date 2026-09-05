@@ -193,6 +193,27 @@ class Game {
           'warn',
         ),
       onResume: () => this.hud.hideBanner(),
+      // A peer that leaves is the end of the match for everyone left, and the
+      // one thing lockstep cannot do is carry on without them: a turn nobody
+      // will ever send for blocks every other peer forever. Nothing was wired
+      // here at all, so the survivor sat behind "Waiting for your ally…" with
+      // no explanation and no way out — and the knocked-out dialog's own Leave
+      // button is a one-click route into exactly that.
+      onPeerTimeout: (player) => {
+        if (this.finished) return;
+        this.finished = true;
+        this.hud.setSurrenderAvailable(false);
+        this.gallery.close();
+        this.hud.showDialog(
+          'Player left',
+          this.sim.world.areAllied(player, this.localPlayer)
+            ? 'Your ally has left the match. Lockstep cannot advance without ' +
+                'every player, so the match cannot continue.'
+            : `Player ${player + 1} has left the match. Lockstep cannot advance ` +
+                `without every player, so the match cannot continue.`,
+          [{ label: 'Back to menu', primary: true, onClick: () => location.reload() }],
+        );
+      },
       onDesync: (tick) => {
         this.gallery.close();
         this.hud.showDialog(
@@ -973,6 +994,21 @@ class Game {
     // buttons have quietly stopped working.
     if (!world.matchOver) {
       if (this.knockedOut || !world.player(this.localPlayer).defeated) return;
+
+      // Nobody else is playing: "your side fights on" would be an invitation to
+      // spectate two bots, and the only exit from that is a page reload. The
+      // solo co-op route puts an AI in the partner's seat, so this is reachable
+      // from a button whose confirmation says the match is over for you.
+      if (humanCount(world.config) <= 1) {
+        this.finished = true;
+        this.hud.setSurrenderAvailable(false);
+        this.gallery.close();
+        this.hud.showDialog('Defeat', 'You conceded the match.', [
+          { label: 'Play again', primary: true, onClick: () => location.reload() },
+        ]);
+        return;
+      }
+
       this.knockedOut = true;
       this.hud.setSurrenderAvailable(false);
       this.hud.showDialog(

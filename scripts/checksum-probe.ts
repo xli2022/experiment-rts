@@ -17,6 +17,7 @@
  */
 
 import { checksumToHex } from '../src/sim/checksum.js';
+import { CommandType } from '../src/sim/commands.js';
 import { coopMatch, duelMatch } from '../src/sim/match.js';
 import { Simulation } from '../src/sim/tick.js';
 import { recordMatch } from '../tests/helpers/scripted.js';
@@ -81,6 +82,32 @@ for (let t = 1; t <= COOP_TICKS; t++) {
   coop.step([]);
   if (t % 1000 === 0 || t === 1) {
     lines.push(`  tick ${String(t).padStart(5)}  ${checksumToHex(coop.checksum())}`);
+  }
+}
+
+/**
+ * A fourth leg that plays through an elimination.
+ *
+ * The three legs above never eliminate anybody — I checked: four seeds of
+ * four-bot co-op run twelve thousand ticks without one — so the code that runs
+ * when a player goes out has never been executed under a second engine. That
+ * code is the most id-sensitive in the simulation: `strip` decides the order
+ * slots return to the free list, and the free list decides every entity id
+ * issued for the rest of the match. Two engines that disagreed there would
+ * diverge on everything afterwards.
+ *
+ * Rather than wait for one to happen, make one happen: concede on a fixed tick
+ * and keep going long enough for the ids to matter.
+ */
+const OUT_SEED = 0x51ce7a11;
+const OUT_AT = 600;
+const OUT_TICKS = 2400;
+lines.push('', `elimination  seed=${OUT_SEED.toString(16)} ticks=${OUT_TICKS}`);
+const out = new Simulation(coopMatch(OUT_SEED, { botPlayers: [0, 1, 2, 3] }));
+for (let t = 1; t <= OUT_TICKS; t++) {
+  out.step(t === OUT_AT ? [{ type: CommandType.Surrender, player: 0 }] : []);
+  if (t === OUT_AT || t % 600 === 0) {
+    lines.push(`  tick ${String(t).padStart(5)}  ${checksumToHex(out.checksum())}`);
   }
 }
 

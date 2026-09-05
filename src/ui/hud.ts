@@ -516,6 +516,13 @@ export class Hud {
   /** Hide the surrender button — there is nothing left to give up. */
   setSurrenderAvailable(available: boolean): void {
     this.surrenderBtn.hidden = !available;
+    // Hiding a panel the pointer is over does not reliably fire `pointerleave`,
+    // and `pointerOverUi` is what suppresses every world click. This button is
+    // hidden at the moment a player is most likely to be hovering it — they
+    // just clicked the flag — so leaving the latch set would cost them
+    // selection, panning and orders for the rest of the match, with no cause
+    // they could see.
+    if (!available) this.pointerOverUi = false;
   }
 
   /**

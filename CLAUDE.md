@@ -168,6 +168,14 @@ razed player's base and left a conceding player's standing — the one case the
 button exists for. The deaths are queued into `world.events.deaths` and reaped
 like any other, so a conceded base blows up instead of blinking away.
 
+**A peer that leaves ends the match for everyone.** Lockstep cannot advance
+past a turn nobody will send, so there is no "play on without them" to offer —
+`onPeerTimeout` exists to say so. It was never wired, which meant a departure
+presented as a permanent "Waiting for your ally…" with no explanation; the
+knocked-out dialog's Leave button then made that a one-click route. Conceding a
+match nobody else is playing ends it outright rather than handing the player a
+spectator seat at a bot fight.
+
 **Humans must occupy a contiguous prefix of the roster.** Lockstep indexes its
 per-turn buffer by player id and only human slots ever appear on the wire, so a
 bot in slot 0 with a human in slot 2 stalls every peer forever waiting for a turn
@@ -344,6 +352,14 @@ crowd against a cliff. Fixes to all three landed without moving a single
 checksum, which is the same blindness in a new place. The bot builds, expands
 and fights on its own, so it reaches states no script will, and it is a
 simulation-side command source — running it under both engines costs nothing.
+
+**And a fourth that plays through an elimination.** None of the other three ever
+eliminates anybody — four seeds of four-bot co-op run twelve thousand ticks
+without one — so the code that runs when a player goes out had never executed
+under a second engine, and it is the most id-sensitive in the simulation:
+`strip` decides the order slots return to the free list, and the free list
+decides every entity id issued afterwards. The leg concedes on a fixed tick
+rather than waiting for an elimination that does not come.
 
 **And a third leg on the four-player map.** Both of the others are a 1v1 on the
 duel map, so neither ever reaches four players, the larger grid, team hostility,
