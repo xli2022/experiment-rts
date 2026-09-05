@@ -20,37 +20,29 @@
  * The two bots play at different strengths. The simulation is exactly
  * rotation-equivariant (see `mirror.test.ts`), so two identical bots on the
  * mirrored map make mirrored moves for the whole match and can only draw — a
- * match that has to *resolve* needs the sides to differ.
+ * match that has to *resolve* needs the sides to differ. There is one scripted
+ * bot, so the other side is the same bot thinking half as often — which, it
+ * turns out, is the side that wins; see `tests/helpers/agents.ts`.
+ *
+ * The bots are hosted, as in play: the match runs through `HeadlessMatch`, so
+ * every order lands one input delay after it was decided.
  */
 
 import { describe, expect, it } from 'vitest';
+import { HeadlessMatch } from '../src/ai/headless.js';
 import { defOf } from '../src/config/rules.js';
-import {
-  BotDifficulty,
-  EntityType,
-  NEUTRAL,
-  NO_ENTITY,
-  TICKS_PER_SECOND,
-  type MatchConfig,
-} from '../src/sim/types.js';
+import { EntityType, NEUTRAL, NO_ENTITY, TICKS_PER_SECOND } from '../src/sim/types.js';
 import { duelMatch } from '../src/sim/match.js';
-import { Simulation } from '../src/sim/tick.js';
+import { unequalAgents } from './helpers/agents.js';
 
 const SEED = 0x51ce7a11;
 /** Long enough for a match between unequal bots to resolve, with headroom. */
 const MAX_TICKS = TICKS_PER_SECOND * 60 * 30;
 
-/** Hard in one seat, Normal in the other. */
-function unequal(seed: number, hardSeat: 0 | 1): MatchConfig {
-  const base = duelMatch(seed, { botPlayers: [0, 1] });
-  const normal = hardSeat === 0 ? 1 : 0;
-  return {
-    ...base,
-    bots: [
-      { player: hardSeat, difficulty: BotDifficulty.Hard },
-      { player: normal, difficulty: BotDifficulty.Normal },
-    ].sort((a, b) => a.player - b.player),
-  };
+/** The full-speed bot in one seat, the half-speed one in the other. */
+function unequal(seed: number, fullSpeedSeat: 0 | 1): HeadlessMatch {
+  const config = duelMatch(seed, { botPlayers: [0, 1] });
+  return new HeadlessMatch(config, unequalAgents(config, fullSpeedSeat));
 }
 
 interface Tally {
@@ -59,7 +51,7 @@ interface Tally {
   buildings: number;
 }
 
-function tally(sim: Simulation, owner: number): Tally {
+function tally(sim: HeadlessMatch, owner: number): Tally {
   const pool = sim.world.pool;
   const out: Tally = { workers: 0, army: 0, buildings: 0 };
   for (let i = 0; i < pool.count; i++) {
@@ -73,8 +65,8 @@ function tally(sim: Simulation, owner: number): Tally {
 }
 
 /** Run a bot-vs-bot match, collecting what actually happened along the way. */
-function playMatch(seed: number, maxTicks = MAX_TICKS, hardSeat: 0 | 1 = 0) {
-  const sim = new Simulation(unequal(seed, hardSeat));
+function playMatch(seed: number, maxTicks = MAX_TICKS, fullSpeedSeat: 0 | 1 = 0) {
+  const sim = unequal(seed, fullSpeedSeat);
 
   let deaths = 0;
   let shots = 0;
@@ -83,7 +75,7 @@ function playMatch(seed: number, maxTicks = MAX_TICKS, hardSeat: 0 | 1 = 0) {
   let ticks = 0;
 
   for (let t = 0; t < maxTicks; t++) {
-    sim.step([]);
+    sim.step();
     ticks = t + 1;
     deaths += sim.world.events.deaths.length;
     shots += sim.world.events.shots.length / 2;

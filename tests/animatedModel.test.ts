@@ -30,15 +30,11 @@ if (typeof ProgressEvent === 'undefined') {
   });
 }
 
-const MODEL_PATH = fileURLToPath(new URL('../public/models/sword-machine.glb', import.meta.url));
-const MOVING_MESH_PATH = fileURLToPath(
-  new URL('../public/models/necromancer.glb', import.meta.url),
-);
-const FIRE_DRAGON_PATH = fileURLToPath(
-  new URL('../public/models/fire-dragon.glb', import.meta.url),
-);
-const TREANT_PATH = fileURLToPath(new URL('../public/models/treant.glb', import.meta.url));
-const STATIC_MESH_PATH = fileURLToPath(new URL('../public/models/slime.glb', import.meta.url));
+const MODEL_PATH = fileURLToPath(new URL('../public/units/sword-machine.glb', import.meta.url));
+const MOVING_MESH_PATH = fileURLToPath(new URL('../public/units/necromancer.glb', import.meta.url));
+const FIRE_DRAGON_PATH = fileURLToPath(new URL('../public/units/fire-dragon.glb', import.meta.url));
+const TREANT_PATH = fileURLToPath(new URL('../public/units/treant.glb', import.meta.url));
+const STATIC_MESH_PATH = fileURLToPath(new URL('../public/units/slime.glb', import.meta.url));
 
 let assetUrl: string;
 let allClips: AnimatedModel;

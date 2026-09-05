@@ -29,10 +29,11 @@
  * it afterwards — so stalling is not a failure mode here, it is the design.
  */
 
-import type { Command } from '../sim/commands.js';
+import { MAX_COMMAND_UNITS, type Command } from '../sim/commands.js';
 import { checksumToHex } from '../sim/checksum.js';
+import { hostedBy, hostOf, rosterProblem } from '../sim/match.js';
 import type { Simulation } from '../sim/tick.js';
-import { CHECKSUM_INTERVAL, MS_PER_TICK, type PlayerId } from '../sim/types.js';
+import { CHECKSUM_INTERVAL, MS_PER_TICK, type MatchConfig, type PlayerId } from '../sim/types.js';
 import type { Packet, Transport, TurnCommands } from './transport.js';
 
 /** Ticks per command turn. */
@@ -72,6 +73,53 @@ const ADAPT_INTERVAL_TURNS = 20;
  * so shrinking the delay is only considered when there are turns to spare.
  */
 const HEADROOM_TO_SPEED_UP = 2;
+
+/**
+ * Commands a hosted bot slot may send per turn.
+ *
+ * Bots are players hosted by a peer, so their commands share the wire with the
+ * human's, and the wire has a hard ceiling: a packet over one transport chunk
+ * is reassembled by arrival order and scrambled (see `TRANSPORT_CHUNK_BYTES`).
+ * The human slot is not capped — a person cannot click fast enough to matter —
+ * but nothing bounds what a program emits, so hosted slots are. `AgentDriver`
+ * paces a bot inside this budget and queues the rest; the check in `issue` is
+ * the last line, not a normal path. `tests/wire.test.ts` sizes the worst packet
+ * from it.
+ */
+export const HOSTED_COMMANDS_PER_TURN = 4;
+
+/**
+ * Bot slots one peer may host on a networked transport.
+ *
+ * Every hosted slot adds its own entry to every packet and its own share of the
+ * send history, so the wire's ceiling is set by how many a peer hosts.
+ * `tests/wire.test.ts` sizes the worst packet for exactly this many; a roster
+ * that dealt more to one peer would pass the count check and put a packet on
+ * the wire that nothing ever measured. Solo play is exempt: one peer hosts
+ * every bot, and nothing crosses a wire.
+ */
+export const MAX_HOSTED_PER_PEER = 1;
+
+/**
+ * Why `config` cannot be played over a transport with `playerCount` peers, or
+ * null when it can: the roster's shape (`rosterProblem`) and, on a wire, the
+ * hosting ceiling above. The one check, used by the runner and by `Game`.
+ */
+export function hostingProblem(config: MatchConfig, playerCount: number): string | null {
+  const shape = rosterProblem(config, playerCount);
+  if (shape !== null) return shape;
+  if (playerCount <= 1) return null;
+  for (let p = 0; p < playerCount; p++) {
+    const hosted = hostedBy(config, p);
+    if (hosted.length > MAX_HOSTED_PER_PEER) {
+      return (
+        `peer ${p} would host ${hosted.length} bots [${hosted.join(', ')}]; ` +
+        `the wire is sized for ${MAX_HOSTED_PER_PEER} per peer`
+      );
+    }
+  }
+  return null;
+}
 
 /** Older turns repeated in each packet, to ride out packet loss. */
 const REDUNDANT_TURNS = 2;
@@ -124,8 +172,21 @@ export class LockstepRunner {
   private tick = 0;
   private accumulatorMs = 0;
 
-  /** Commands the local player has issued but not yet broadcast. */
-  private pendingLocal: Command[] = [];
+  /**
+   * The slots this peer sends for: the human's own, then the bots it hosts.
+   *
+   * Derived from the agreed config rather than from the transport, so every
+   * peer computes the same dealing and nobody has to be told. See `hostOf`.
+   */
+  private readonly owned: readonly PlayerId[];
+
+  /** Commands issued for each owned slot but not yet broadcast, by slot. */
+  private readonly pending = new Map<PlayerId, Command[]>();
+
+  /** Hosted-slot commands refused by the per-turn budget, for tests and the debug overlay. */
+  droppedByBudget = 0;
+
+  private readonly config: MatchConfig;
 
   /**
    * turn -> per-player command lists. A `null` entry means "not yet received".
@@ -191,21 +252,52 @@ export class LockstepRunner {
     transport.onPacket((p) => this.receive(p));
     transport.onPeerLost((p) => this.events.onPeerTimeout?.(p));
 
+    // The roster and the wire meet here. The transport carries one peer per
+    // human, and every other slot is a bot dealt to one of those peers; a
+    // roster whose humans are not exactly the low slots would leave a slot
+    // nobody sends for, and every peer would wait on it forever.
+    this.config = simulation.world.config;
+    const problem = hostingProblem(this.config, transport.playerCount);
+    if (problem !== null) throw new Error(problem);
+    this.owned = [transport.localPlayer, ...hostedBy(this.config, transport.localPlayer)];
+    for (const slot of this.owned) this.pending.set(slot, []);
+
     // The first few turns come up for execution before anyone has had a chance
     // to broadcast for them, so seed them as *received and empty* for every
-    // player. Note this fills each slot with `[]`, not `null` — a null slot
+    // slot. Note this fills each slot with `[]`, not `null` — a null slot
     // means "still waiting", so seeding with nulls would stall every peer on
     // turn 0 forever. Every peer does this identically, so they agree.
     for (let t = 0; t < INPUT_DELAY_TURNS; t++) {
-      const slots = new Array<Command[] | null>(transport.playerCount);
+      const slots = new Array<Command[] | null>(this.config.teams.length);
       for (let p = 0; p < slots.length; p++) slots[p] = [];
       this.buffer.set(t, slots);
     }
   }
 
-  /** Queue a command for the local player. Executed INPUT_DELAY_TURNS later. */
-  issue(command: Command): void {
-    this.pendingLocal.push(command);
+  /** The slots this peer sends for: the local player first, then the bots it hosts. */
+  get ownedPlayers(): readonly PlayerId[] {
+    return this.owned;
+  }
+
+  /**
+   * Queue a command for a slot this peer sends for. Executed `inputDelayTurns`
+   * later. Returns false when it was refused: a slot this peer does not own, or
+   * a hosted slot past its per-turn budget or naming too many units.
+   */
+  issue(command: Command, player: PlayerId = this.transport.localPlayer): boolean {
+    const queue = this.pending.get(player);
+    if (!queue) {
+      throw new Error(`player ${this.transport.localPlayer} does not send for slot ${player}`);
+    }
+    if (player !== this.transport.localPlayer) {
+      const units = 'units' in command ? command.units.length : 0;
+      if (queue.length >= HOSTED_COMMANDS_PER_TURN || units > MAX_COMMAND_UNITS) {
+        this.droppedByBudget++;
+        return false;
+      }
+    }
+    queue.push(command);
+    return true;
   }
 
   /** Current simulation tick. */
@@ -309,18 +401,23 @@ export class LockstepRunner {
   }
 
   private enterStall(turn: number, slots: (Command[] | null)[] | undefined): void {
+    // Report the peers we are waiting on, not the slots: a missing bot slot is
+    // its host's silence, and naming the bot would send a player looking for a
+    // "player 3" who is a program on their partner's machine.
     const waiting: PlayerId[] = [];
-    for (let p = 0; p < this.transport.playerCount; p++) {
+    for (let p = 0; p < this.config.teams.length; p++) {
       if (!slots || slots[p] === null) {
-        if (p !== this.transport.localPlayer) waiting.push(p);
+        if (this.owned.includes(p)) continue;
+        const host = hostOf(this.config, p);
+        if (!waiting.includes(host)) waiting.push(host);
       }
     }
 
-    // Make sure our own commands for this turn went out — if the local player is
-    // the one missing, we are stalling on ourselves, which should never happen
-    // but is worth self-healing rather than deadlocking.
-    if (slots && slots[this.transport.localPlayer] === null) {
-      this.setTurn(turn, this.transport.localPlayer, []);
+    // Make sure our own commands for this turn went out — if a slot we send for
+    // is the one missing, we are stalling on ourselves, which should never
+    // happen but is worth self-healing rather than deadlocking.
+    for (const slot of this.owned) {
+      if (slots && slots[slot] === null) this.setTurn(turn, slot, []);
     }
 
     if (this.state !== 'stalled') {
@@ -415,27 +512,29 @@ export class LockstepRunner {
     const target = turn + this.delayTurns;
     const first = this.sentThrough + 1;
 
+    // One entry per owned slot per turn: the human's own and every bot this
+    // peer hosts. The history and the redundancy window are counted in turns,
+    // so both scale with how many slots ride in each.
+    const perTurn = this.owned.length;
     for (let t = first; t <= target; t++) {
-      // Commands ride the first turn we open — the one we would have sent
-      // anyway. Turns beyond it are pure headroom and go out empty.
-      const mine = t === first ? this.pendingLocal : [];
-      this.recentSent.push({
-        turn: t,
-        player: this.transport.localPlayer,
-        commands: mine,
-      });
-      while (this.recentSent.length > SEND_HISTORY_TURNS) this.recentSent.shift();
+      for (const slot of this.owned) {
+        // Commands ride the first turn we open — the one we would have sent
+        // anyway. Turns beyond it are pure headroom and go out empty.
+        const mine = t === first ? this.pending.get(slot)! : [];
+        this.recentSent.push({ turn: t, player: slot, commands: mine });
 
-      // Record our own commands locally too — we are a peer like any other, and
-      // the turn cannot execute until every slot including ours is filled.
-      this.setTurn(t, this.transport.localPlayer, mine);
+        // Record our own commands locally too — we are a peer like any other,
+        // and the turn cannot execute until every slot including ours is filled.
+        this.setTurn(t, slot, mine);
+      }
+      while (this.recentSent.length > SEND_HISTORY_TURNS * perTurn) this.recentSent.shift();
     }
 
     if (target >= first) {
       // Only once something was actually scheduled: if the delay just shrank
       // and we opened nothing, the commands must stay pending rather than
       // vanish into a turn we never sent.
-      this.pendingLocal = [];
+      for (const slot of this.owned) this.pending.set(slot, []);
       this.sentThrough = target;
     }
 
@@ -443,7 +542,7 @@ export class LockstepRunner {
     // held back for stall recovery so normal packets stay small.
     const packet: Packet = {
       player: this.transport.localPlayer,
-      turns: this.recentSent.slice(-(REDUNDANT_TURNS + 1)),
+      turns: this.recentSent.slice(-(REDUNDANT_TURNS + 1) * perTurn),
     };
 
     // Attach the most recent checksum so peers can compare. Sent on the same
@@ -503,6 +602,11 @@ export class LockstepRunner {
       // Turns already executed are dropped; redundant copies of them are the
       // normal case, not an error.
       if (entry.turn * TICKS_PER_TURN < this.tick) continue;
+      // A slot is filled only by the peer that hosts it. Our own slots never
+      // arrive from outside, and a packet claiming a slot its sender does not
+      // host is ignored — first-write-wins would otherwise let a lie in.
+      if (this.owned.includes(entry.player)) continue;
+      if (hostOf(this.config, entry.player) !== packet.player) continue;
       this.setTurn(entry.turn, entry.player, entry.commands);
     }
 
@@ -530,7 +634,7 @@ export class LockstepRunner {
   }
 
   private emptyTurn(): (Command[] | null)[] {
-    const slots = new Array<Command[] | null>(this.transport.playerCount);
+    const slots = new Array<Command[] | null>(this.config.teams.length);
     for (let p = 0; p < slots.length; p++) slots[p] = null;
     return slots;
   }

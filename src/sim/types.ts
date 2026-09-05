@@ -68,17 +68,31 @@ export enum MapLayout {
   Quarters = 1,
 }
 
-/** How hard an AI slot plays. Agreed in the lobby, like everything else. */
-export enum BotDifficulty {
-  Easy = 0,
-  Normal = 1,
-  Hard = 2,
+/**
+ * Which brain plays an AI slot. Agreed in the lobby, like everything else.
+ *
+ * Every bot is a player: it is hosted by one human peer, reads the world through
+ * the same `Agent` interface, and its commands cross the wire like a human's.
+ * The simulation itself runs no bot — see `src/ai/agent.ts`.
+ */
+export enum BotKind {
+  /**
+   * The scripted bot: a fixed, tuned strategy with full map knowledge. It is a
+   * pure function of the world, which is what lets the determinism and mirror
+   * probes drive whole matches with it and expect the same answer every time.
+   */
+  Scripted = 0,
+  /**
+   * The learned bot: sees only what a human sees and samples its actions, so
+   * no two matches are alike. Only ever hosted by one peer.
+   */
+  Neural = 1,
 }
 
 /** One AI-controlled slot. */
 export interface BotSlot {
   readonly player: PlayerId;
-  readonly difficulty: BotDifficulty;
+  readonly kind: BotKind;
 }
 
 /**
@@ -104,9 +118,10 @@ export interface MatchConfig {
   /**
    * Slots the AI plays, in ascending player order.
    *
-   * The bot is deterministic and runs inside the simulation on every peer, so
-   * this is part of the agreed setup rather than a local choice — see
-   * `Simulation.step`.
+   * The simulation never reads this except to fold it into the checksum. It is
+   * agreed anyway, because the peers deal these slots out among themselves
+   * (`hostOf`) and a peer that thought a slot was a bot's while another thought
+   * it was a human's would wait forever on a turn nobody sends.
    */
   readonly bots: readonly BotSlot[];
 }

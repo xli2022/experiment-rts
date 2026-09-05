@@ -76,7 +76,7 @@ export interface LoadedUnitModel {
 function assetUrl(name: string): string {
   // Pages serves the game from a subdirectory, so asset URLs need the same
   // prefix Vite gives the bundle.
-  return `${import.meta.env.BASE_URL}models/${name}`;
+  return `${import.meta.env.BASE_URL}units/${name}`;
 }
 
 /**

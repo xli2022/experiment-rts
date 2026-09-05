@@ -17,7 +17,7 @@
  */
 
 import { coopMatch, duelMatch } from '../src/sim/match.js';
-import { BotDifficulty } from '../src/sim/types.js';
+import { unequalAgents } from '../tests/helpers/agents.js';
 import {
   describeMismatch,
   fullScript,
@@ -41,39 +41,10 @@ function report(r: MirrorReport & { winnerB?: number }): void {
 const t0 = performance.now();
 report(probeScript('harvest only', duelMatch(SEED, { botPlayers: [] }), harvestScript, 3000));
 report(probeScript('scripted match', duelMatch(SEED, { botPlayers: [] }), fullScript, 6500));
+report(probeBots('scripted mirror', duelMatch(SEED, { botPlayers: [0, 1] }), 20000));
+const duel = duelMatch(SEED, { botPlayers: [0, 1] });
 report(
-  probeBots(
-    'Hard mirror',
-    duelMatch(SEED, { botPlayers: [0, 1], difficulty: BotDifficulty.Hard }),
-    20000,
-  ),
+  probePair('seats swapped', duel, duel, 20000, unequalAgents(duel, 0), unequalAgents(duel, 1)),
 );
-const base = duelMatch(SEED, { botPlayers: [0, 1] });
-report(
-  probePair(
-    'seats swapped',
-    {
-      ...base,
-      bots: [
-        { player: 0, difficulty: BotDifficulty.Hard },
-        { player: 1, difficulty: BotDifficulty.Normal },
-      ],
-    },
-    {
-      ...base,
-      bots: [
-        { player: 0, difficulty: BotDifficulty.Normal },
-        { player: 1, difficulty: BotDifficulty.Hard },
-      ],
-    },
-    20000,
-  ),
-);
-report(
-  probeBots(
-    'Quarters, four Hard bots',
-    coopMatch(SEED, { botPlayers: [0, 1, 2, 3], difficulty: BotDifficulty.Hard }),
-    6000,
-  ),
-);
+report(probeBots('Quarters, four bots', coopMatch(SEED, { botPlayers: [0, 1, 2, 3] }), 6000));
 console.log(`${((performance.now() - t0) / 1000).toFixed(1)}s`);

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rtsml"
+version = "0.1.0"
+description = "Training for the experiment-rts neural bot: imitation, PPO with a league, ONNX export"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.26", "torch>=2.4", "onnx>=1.16", "onnxruntime>=1.18"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+rtsml-imitate = "rtsml.imitation:main"
+rtsml-ppo = "rtsml.ppo:main"
+rtsml-export = "rtsml.export:main"
+rtsml-eval = "rtsml.evaluate:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["rtsml*"]
+
+[tool.setuptools.package-data]
+rtsml = ["spec.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

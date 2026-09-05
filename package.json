@@ -11,15 +11,22 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "format": "prettier --write \"src/**/*.{ts,css}\" \"tests/**/*.ts\"",
+    "format": "prettier --write \"src/**/*.{ts,css}\" \"tests/**/*.ts\" \"tools/**/*.ts\"",
     "determinism:node": "vite-node scripts/checksum-probe.ts",
     "determinism:bun": "bun run scripts/checksum-probe.ts",
     "determinism:cross": "bash scripts/cross-engine.sh",
     "mirror:probe": "vite-node scripts/mirror-probe.ts",
+    "ml:spec": "vite-node tools/ml/spec.ts",
+    "ml:serve": "bun run tools/ml/serve.ts",
+    "ml:bench": "bun run tools/ml/bench.ts",
+    "ml:arena": "bun run tools/ml/arena.ts",
+    "ml:record": "bun run tools/ml/record.ts",
+    "smoke:neural": "node scripts/smoke-neural.mjs",
     "import:athena2": "node scripts/import-athena2-models.mjs",
     "textures": "node scripts/encode-textures.mjs"
   },
   "dependencies": {
+    "onnxruntime-web": "^1.29.0",
     "three": "^0.185.1",
     "trystero": "^0.25.3"
   },

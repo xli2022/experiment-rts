@@ -9,10 +9,12 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { HeadlessMatch } from '../src/ai/headless.js';
 import { checksumToHex } from '../src/sim/checksum.js';
 import { coopMatch } from '../src/sim/match.js';
 import { Simulation } from '../src/sim/tick.js';
 import { EntityType } from '../src/sim/types.js';
+import { scriptedAgents } from './helpers/agents.js';
 import { cloneCommands, describeWorld, recordMatch, replayMatch } from './helpers/scripted.js';
 
 const SEED = 0x1234abcd;
@@ -172,19 +174,21 @@ describe('deterministic simulation', () => {
     }
   });
 
-  it('reproduces a bot-driven co-op match from the config alone', () => {
+  it('reproduces a bot-driven co-op match from the config and the agents alone', () => {
     // The bots are the whole command stream here: nothing is recorded, nothing
-    // is replayed, and two simulations built from the same agreed config have to
-    // arrive at the same state anyway. That is the property single-player and
-    // co-op both actually rely on — bot commands never cross the wire.
+    // is replayed, and two headless matches built from the same config and the
+    // same kind of agent have to arrive at the same state anyway. In play a
+    // bot's commands cross the wire, so this is not what keeps two peers
+    // together — it is what makes every bot-driven probe in this project
+    // reproducible, and the cross-engine check meaningful.
     const config = coopMatch(SEED, { botPlayers: [0, 1, 2, 3] });
-    const a = new Simulation(config);
-    const b = new Simulation(config);
+    const a = new HeadlessMatch(config, scriptedAgents(config));
+    const b = new HeadlessMatch(config, scriptedAgents(config));
     for (let t = 0; t < COOP_TICKS; t++) {
-      a.step([]);
-      b.step([]);
-      if (a.checksum() !== b.checksum()) {
-        throw new Error(`bot-driven co-op peers diverged at tick ${t}`);
+      a.step();
+      b.step();
+      if (a.sim.checksum() !== b.sim.checksum()) {
+        throw new Error(`bot-driven co-op matches diverged at tick ${t}`);
       }
     }
     // And the match was worth checksumming: four bots that never built anything
@@ -201,13 +205,14 @@ describe('deterministic simulation', () => {
     // claimed contact happened inside it. Hostility on this map is a *team*
     // question rather than an owner one, which is precisely the new arithmetic
     // these legs exist to checksum.
-    const sim = new Simulation(coopMatch(SEED, { botPlayers: [0, 1, 2, 3] }));
+    const config = coopMatch(SEED, { botPlayers: [0, 1, 2, 3] });
+    const sim = new HeadlessMatch(config, scriptedAgents(config));
     const world = sim.world;
 
     let crossTeamShots = 0;
     const shooters = new Set<number>();
     for (let t = 0; t < COOP_TICKS; t++) {
-      sim.step([]);
+      sim.step();
       const shots = world.events.shots;
       for (let k = 0; k + 1 < shots.length; k += 2) {
         const attacker = world.pool.owner[shots[k]!]!;

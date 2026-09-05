@@ -16,16 +16,26 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { HeadlessMatch } from '../src/ai/headless.js';
 import { PATCHES_PER_BASE, defOf } from '../src/config/rules.js';
 import { CommandType } from '../src/sim/commands.js';
 import { fromInt } from '../src/sim/fixed.js';
-import { coopMatch, duelMatch, humanCount, matchConfig, teamsFor } from '../src/sim/match.js';
+import {
+  coopMatch,
+  duelMatch,
+  hostOf,
+  hostedBy,
+  humanCount,
+  isBotSlot,
+  matchConfig,
+  teamsFor,
+} from '../src/sim/match.js';
 import { GameMap, generateMap } from '../src/sim/map.js';
 import { mirror } from '../src/sim/mapgen.js';
 import { colourSlotFor } from '../src/render/models/procedural.js';
 import { Simulation } from '../src/sim/tick.js';
 import {
-  BotDifficulty,
+  BotKind,
   BuildState,
   EntityType,
   MapLayout,
@@ -37,6 +47,7 @@ import {
 } from '../src/sim/types.js';
 import { executeCommand } from '../src/sim/systems/orders.js';
 import type { World } from '../src/sim/world.js';
+import { scriptedAgents } from './helpers/agents.js';
 
 const SEEDS = [0x51ce7a11, 0, 7, 99, 0xdecafbad | 0];
 
@@ -143,9 +154,9 @@ describe('match configuration', () => {
   });
 
   it('leaves the humans on a contiguous prefix of the roster', () => {
-    // Lockstep indexes its per-turn buffer by player id and only human slots
-    // ever appear on the wire, so a bot in slot 0 with a human in slot 2 would
-    // stall every peer forever waiting for a turn nobody sends.
+    // The transports number their peers from zero and every bot is dealt to
+    // one of those peers, so a bot in slot 0 with a human in slot 2 would
+    // leave a slot nobody sends for and stall every peer forever.
     for (const config of [
       duelMatch(1, { botPlayers: [1] }),
       coopMatch(1),
@@ -156,12 +167,84 @@ describe('match configuration', () => {
     }
   });
 
+  it('takes per-slot brains, and names win over the shorthand', () => {
+    // A scripted partner beside neural opponents is the roster the lobby
+    // builds for solo co-op; the two ways of naming a slot must agree.
+    const mixed = coopMatch(7, {
+      botSlots: [
+        { player: 3, kind: BotKind.Neural },
+        { player: 1, kind: BotKind.Scripted },
+        { player: 2, kind: BotKind.Neural },
+      ],
+    });
+    expect(mixed.bots).toEqual([
+      { player: 1, kind: BotKind.Scripted },
+      { player: 2, kind: BotKind.Neural },
+      { player: 3, kind: BotKind.Neural },
+    ]);
+    const both = coopMatch(7, {
+      botPlayers: [2, 3],
+      kind: BotKind.Scripted,
+      botSlots: [{ player: 3, kind: BotKind.Neural }],
+    });
+    expect(both.bots).toEqual([
+      { player: 2, kind: BotKind.Scripted },
+      { player: 3, kind: BotKind.Neural },
+    ]);
+    // Naming slots either way switches the co-op default off entirely.
+    expect(coopMatch(7, { botSlots: [{ player: 3, kind: BotKind.Neural }] }).bots).toEqual([
+      { player: 3, kind: BotKind.Neural },
+    ]);
+  });
+
+  it('deals every bot to a human peer, round-robin in roster order', () => {
+    // Derived from the agreed config and never negotiated, so every peer
+    // computes the same dealing. Single-player hosts everything on peer 0;
+    // two tabs take one bot each; a bot below the human prefix cannot occur.
+    const duel = duelMatch(1, { botPlayers: [1], kind: BotKind.Neural });
+    expect(isBotSlot(duel, 1)).toBe(true);
+    expect(isBotSlot(duel, 0)).toBe(false);
+    expect(hostOf(duel, 0)).toBe(0);
+    expect(hostOf(duel, 1)).toBe(0);
+    expect(hostedBy(duel, 0)).toEqual([1]);
+
+    const coop = coopMatch(1, { botPlayers: [2, 3] });
+    expect(hostOf(coop, 2)).toBe(0);
+    expect(hostOf(coop, 3)).toBe(1);
+    expect(hostedBy(coop, 0)).toEqual([2]);
+    expect(hostedBy(coop, 1)).toEqual([3]);
+
+    const solo = coopMatch(1, {
+      botSlots: [
+        { player: 1, kind: BotKind.Scripted },
+        { player: 2, kind: BotKind.Neural },
+        { player: 3, kind: BotKind.Neural },
+      ],
+    });
+    expect(humanCount(solo)).toBe(1);
+    expect(hostedBy(solo, 0)).toEqual([1, 2, 3]);
+
+    const mixedPair = coopMatch(1, {
+      botSlots: [
+        { player: 2, kind: BotKind.Scripted },
+        { player: 3, kind: BotKind.Neural },
+      ],
+    });
+    expect(hostedBy(mixedPair, 0)).toEqual([2]);
+    expect(hostedBy(mixedPair, 1)).toEqual([3]);
+
+    // No humans at all: nothing is on a wire, and a headless driver owns it all.
+    const allBots = coopMatch(1, { botPlayers: [0, 1, 2, 3] });
+    expect(hostedBy(allBots, 0)).toEqual([0, 1, 2, 3]);
+  });
+
   it('folds the roster into the checksum', () => {
     // A lobby mismatch is otherwise an inexplicable divergence some seconds in.
-    // Folded in, it is a desync on the very first comparison.
-    const easy = new Simulation(coopMatch(5, { difficulty: BotDifficulty.Easy }));
-    const hard = new Simulation(coopMatch(5, { difficulty: BotDifficulty.Hard }));
-    expect(easy.checksum()).not.toBe(hard.checksum());
+    // Folded in, it is a desync on the very first comparison — including which
+    // bot plays a slot, which decides who hosts it.
+    const scripted = new Simulation(coopMatch(5, { kind: BotKind.Scripted }));
+    const neural = new Simulation(coopMatch(5, { kind: BotKind.Neural }));
+    expect(scripted.checksum()).not.toBe(neural.checksum());
   });
 });
 
@@ -707,41 +790,8 @@ describe('the stalemate rule razes a base too', () => {
 });
 
 describe('the bot on a side', () => {
-  /** A four-bot co-op match, played out. */
-  function playCoop(ticks: number, difficulty = BotDifficulty.Normal) {
-    const sim = new Simulation(
-      matchConfig(MapLayout.Quarters, SEEDS[0]!, {
-        botPlayers: [0, 1, 2, 3],
-        difficulty,
-      }),
-    );
-    const world = sim.world;
-    let alliedShots = 0;
-    let hostileShots = 0;
-    for (let t = 0; t < ticks && !world.matchOver; t++) {
-      sim.step([]);
-      const shots = world.events.shots;
-      for (let k = 0; k + 1 < shots.length; k += 2) {
-        const attacker = world.pool.owner[shots[k]!]!;
-        const victim = world.pool.owner[shots[k + 1]!]!;
-        if (world.areAllied(attacker, victim)) alliedShots++;
-        else hostileShots++;
-      }
-    }
-    return { sim, world, alliedShots, hostileShots };
-  }
-
-  it('never fires on its partner, and does fire on the other side', () => {
-    const { alliedShots, hostileShots } = playCoop(3600);
-    expect(alliedShots).toBe(0);
-    expect(hostileShots).toBeGreaterThan(20);
-  });
-
-  it('gets an army across the map and into an enemy base', () => {
-    // The coverage assertion for everything else about the bot. A bot that
-    // builds and never arrives keeps a co-op match running forever, and every
-    // claim about its strategy would be untested.
-    const { world } = playCoop(6000);
+  /** How close any combat unit stands to a Command Post it is hostile to. */
+  function closestToEnemyPost(world: World): number {
     let closest = Number.POSITIVE_INFINITY;
     for (let i = 0; i < world.pool.count; i++) {
       if (world.pool.alive[i] !== 1) continue;
@@ -758,7 +808,48 @@ describe('the bot on a side', () => {
         if (d < closest) closest = d;
       }
     }
-    expect(closest).toBeLessThan(20);
+    return closest;
+  }
+
+  /** A four-bot co-op match, played out through the hosted path. */
+  function playCoop(ticks: number) {
+    const config = matchConfig(MapLayout.Quarters, SEEDS[0]!, { botPlayers: [0, 1, 2, 3] });
+    const sim = new HeadlessMatch(config, scriptedAgents(config));
+    const world = sim.world;
+    let alliedShots = 0;
+    let hostileShots = 0;
+    let closestEver = Number.POSITIVE_INFINITY;
+    for (let t = 0; t < ticks && !world.matchOver; t++) {
+      sim.step();
+      const shots = world.events.shots;
+      for (let k = 0; k + 1 < shots.length; k += 2) {
+        const attacker = world.pool.owner[shots[k]!]!;
+        const victim = world.pool.owner[shots[k + 1]!]!;
+        if (world.areAllied(attacker, victim)) alliedShots++;
+        else hostileShots++;
+      }
+      closestEver = Math.min(closestEver, closestToEnemyPost(world));
+    }
+    return { sim, world, alliedShots, hostileShots, closestEver };
+  }
+
+  it('never fires on its partner, and does fire on the other side', () => {
+    const { alliedShots, hostileShots } = playCoop(3600);
+    expect(alliedShots).toBe(0);
+    expect(hostileShots).toBeGreaterThan(20);
+  });
+
+  it('gets an army across the map and into an enemy base', () => {
+    // The coverage assertion for everything else about the bot. A bot that
+    // builds and never arrives keeps a co-op match running forever, and every
+    // claim about its strategy would be untested.
+    //
+    // The closest approach over the whole match, not where the armies stand
+    // on the last tick: an army that has been into a base and come home to
+    // answer a raid has done exactly what this asks, and a snapshot of tick
+    // 6000 reads it as never having left.
+    const { closestEver } = playCoop(6000);
+    expect(closestEver).toBeLessThan(20);
   });
 
   /**
@@ -769,10 +860,9 @@ describe('the bot on a side', () => {
    * last position, so units that simply died there would read as units that
    * declined to come home.
    */
-  function stageRaid(difficulty: BotDifficulty): number {
-    const sim = new Simulation(
-      matchConfig(MapLayout.Quarters, SEEDS[0]!, { botPlayers: [0], difficulty }),
-    );
+  function stageRaid(raided: boolean): number {
+    const config = matchConfig(MapLayout.Quarters, SEEDS[0]!, { botPlayers: [0] });
+    const sim = new HeadlessMatch(config, scriptedAgents(config));
     const world = sim.world;
     const home = world.map.starts[0]!;
     const middle = { tileX: world.map.width >> 1, tileY: world.map.height >> 1 };
@@ -783,13 +873,15 @@ describe('the bot on a side', () => {
     }
     // A raiding party inside the bot's base, close enough to count as an
     // attack. Armed, because a lone scouting worker deliberately does not.
-    for (let k = 0; k < 3; k++) {
-      spawnAt(world, EntityType.Burstbot, 2, home.tileX + 7, home.tileY + k);
+    if (raided) {
+      for (let k = 0; k < 3; k++) {
+        spawnAt(world, EntityType.Burstbot, 2, home.tileX + 7, home.tileY + k);
+      }
     }
     world.recomputeSupply();
 
     const before = defenders.map((i) => distanceToTile(world, i, home));
-    for (let t = 0; t < 600; t++) sim.step([]);
+    for (let t = 0; t < 600; t++) sim.step();
 
     let gained = 0;
     let alive = 0;
@@ -807,13 +899,13 @@ describe('the bot on a side', () => {
     // The thing the old bot never did: it would cross the map while its own
     // Command Post was being shot, which is the most expensive mistake a bot
     // can make and the one a human notices first.
-    expect(stageRaid(BotDifficulty.Normal)).toBeGreaterThan(15);
+    expect(stageRaid(true)).toBeGreaterThan(15);
   });
 
-  it('leaves the easy bot out of position, which is what makes it easy', () => {
+  it('leaves its army where it is when nothing attacks', () => {
     // The contrast that gives the assertion above its meaning: same staging,
-    // same raid, and the only difference is the difficulty knob.
-    expect(stageRaid(BotDifficulty.Easy)).toBeLessThan(3);
+    // and the only difference is whether there is a raid to answer.
+    expect(stageRaid(false)).toBeLessThan(3);
   });
 });
 

@@ -1,23 +1,20 @@
 /**
- * The AI opponent.
+ * The scripted bot.
  *
- * ## Why this lives inside the simulation
+ * ## A player, not a system
  *
- * The bot is a pure function of world state: given the same world and the same
- * tick, it emits the same commands. That means it can run *on every peer* rather
- * than on one machine that broadcasts its decisions — costing zero bandwidth,
- * needing no ownership negotiation, and surviving the host disconnecting.
+ * This used to run inside `Simulation.step`, on every peer, which is only
+ * possible for a bot that is a pure function of the world. It is hosted now —
+ * `ScriptedAgent` wraps it, `AgentDriver` calls it once a tick on one peer, and
+ * its commands cross the wire and execute one input delay later, exactly like a
+ * human's. See `agent.ts` for why every bot took that path.
  *
- * It also means single-player and multiplayer are the same code path. A skirmish
- * is just a match where one slot's commands come from here instead of from a
- * network packet, so the multiplayer plumbing is exercised every time anyone
- * plays alone.
- *
- * The flip side is that this file lives under the same determinism rules as the
- * rest of the simulation: no `Math.random`, no wall-clock, no iteration over
- * unordered collections. It is deliberately *stateless* — every decision is
- * re-derived from the world each time — so there is no hidden bot state that
- * could drift between peers.
+ * It is still a pure function of world state: given the same world and the same
+ * tick, it emits the same commands, with no `Math.random`, no wall-clock, no
+ * iteration over unordered collections and no state of its own. Nothing
+ * structural depends on that any more, but the determinism and mirror probes
+ * do — they drive whole matches with this bot and expect the same answer every
+ * time, on every engine — so `tests/sealed-sim.test.ts` scans this file too.
  *
  * ## Two bots on a side are not two bots
  *
@@ -36,28 +33,27 @@ import { CommandType, type Command } from '../sim/commands.js';
 import { fromInt, toInt, sqRange, vecLenSqRaw } from '../sim/fixed.js';
 import { mirrorTile } from '../sim/map.js';
 import { mirroredHalf } from '../sim/mapgen.js';
-import {
-  BotDifficulty,
-  BuildState,
-  EntityType,
-  NEUTRAL,
-  Order,
-  type PlayerId,
-} from '../sim/types.js';
+import { BuildState, EntityType, NEUTRAL, Order, type PlayerId } from '../sim/types.js';
 import type { World } from '../sim/world.js';
 
 /**
  * The bot reconsiders its plan this often.
  *
- * The same for every slot and every difficulty, deliberately. Staggering bots by
- * player read as a harmless way to keep command streams distinguishable in a
- * replay — commands carry their player anyway — but it hands whoever thinks
- * first a whole think interval of head start. Measured in a mirror matchup on a
- * symmetric map, that decided the game: player 0 spent its opening 50 minerals
- * and had its workers walking before player 1 had taken a turn at all. Making it
- * a difficulty knob would reintroduce exactly that, between the two sides.
+ * The same for every slot, deliberately. Staggering bots by player read as a
+ * harmless way to keep command streams distinguishable in a replay — commands
+ * carry their player anyway — but it hands whoever thinks first a whole think
+ * interval of head start. Measured in a mirror matchup on a symmetric map, that
+ * decided the game: player 0 spent its opening 50 minerals and had its workers
+ * walking before player 1 had taken a turn at all.
+ *
+ * `ScriptedAgent` accepts a different interval, for tests that need a match
+ * between unequal bots to resolve — never for play. Do not read it as a
+ * strength dial: the cadence gates below (`beat % 2`, `beat % 6`) make its
+ * effect anything but monotonic. Measured over eight seeds from both seats, a
+ * bot thinking every 20 ticks beat this one 8–0, every 30 lost 8–0, and every
+ * 40 won 5–3.
  */
-const THINK_INTERVAL = 10;
+export const THINK_INTERVAL = 10;
 
 /** How near a Command Post has to be for an expansion to count as taken. */
 const CLAIMED_RANGE = fromInt(14);
@@ -83,11 +79,13 @@ const DEFEND_RANGE = fromInt(20);
 const HOME_PATCH_RANGE = fromInt(24);
 
 /**
- * Everything difficulty actually changes.
+ * The knobs the strategy turns on.
  *
- * All of it is behavioural: no bonus income, no extra starting units, no
- * cheating on fog. A harder bot works its economy harder and commits sooner,
- * which is a thing a player could have done too.
+ * There used to be three settings of these — Easy, Normal and Hard — and only
+ * the last survives: one scripted bot, and the neural bot as the other choice.
+ * Everything here is behavioural: no bonus income, no extra starting units, no
+ * cheating on fog. It works its economy hard and commits early, which is a thing
+ * a player could have done too.
  */
 interface Tuning {
   /** Workers to saturate the mineral line before spending on army. */
@@ -110,47 +108,19 @@ interface Tuning {
   readonly coordinates: boolean;
 }
 
-const TUNING: Readonly<Record<BotDifficulty, Tuning>> = {
-  // Slow to saturate, slow to commit, and it fights one base at a time. It also
-  // never comes home, which is what makes it beatable by walking around it.
-  [BotDifficulty.Easy]: {
-    targetWorkers: 9,
-    attackArmySize: 12,
-    maxBarracks: 2,
-    maxTurrets: 0,
-    maxBases: 1,
-    expandAtMinerals: 900,
-    maxSites: 1,
-    defendsHome: false,
-    coordinates: false,
-  },
-  // What the skirmish bot has always played like, plus the things that were
-  // simply missing: it defends, and it pushes with its partner.
-  [BotDifficulty.Normal]: {
-    targetWorkers: 14,
-    attackArmySize: 8,
-    maxBarracks: 6,
-    maxTurrets: 2,
-    maxBases: 2,
-    expandAtMinerals: 550,
-    maxSites: 2,
-    defendsHome: true,
-    coordinates: true,
-  },
-  // Saturates two bases, expands off a smaller bank, and commits on a smaller
-  // army — which against two humans means arriving before either of them has an
-  // army of their own.
-  [BotDifficulty.Hard]: {
-    targetWorkers: 18,
-    attackArmySize: 6,
-    maxBarracks: 8,
-    maxTurrets: 3,
-    maxBases: 3,
-    expandAtMinerals: 450,
-    maxSites: 3,
-    defendsHome: true,
-    coordinates: true,
-  },
+// Saturates two bases, expands off a smaller bank, and commits on a small army
+// — which against two humans means arriving before either of them has an army
+// of their own. These are the values the Hard tier shipped with.
+const TUNING: Tuning = {
+  targetWorkers: 18,
+  attackArmySize: 6,
+  maxBarracks: 8,
+  maxTurrets: 3,
+  maxBases: 3,
+  expandAtMinerals: 450,
+  maxSites: 3,
+  defendsHome: true,
+  coordinates: true,
 };
 
 /**
@@ -172,17 +142,18 @@ const DEEP_QUEUE_MINERALS = 700;
  */
 const SUPPLY_BUFFER = 6;
 
-export function generateBotCommands(
-  world: World,
-  player: PlayerId,
-  difficulty: BotDifficulty = BotDifficulty.Normal,
-): Command[] {
-  // Every bot thinks on the same tick. See THINK_INTERVAL.
-  if (world.tick % THINK_INTERVAL !== 0) return [];
+/**
+ * One think: everything the bot wants to order right now.
+ *
+ * Ungated on purpose — `ScriptedAgent` decides *when* to think, so that a
+ * handicapped agent can think less often without this file knowing. Commands
+ * may name any number of units; the agent chunks them to `MAX_COMMAND_UNITS`.
+ */
+export function botThink(world: World, player: PlayerId): Command[] {
   if (world.player(player).defeated) return [];
   if (world.matchOver) return [];
 
-  const tuning = TUNING[difficulty] ?? TUNING[BotDifficulty.Normal];
+  const tuning = TUNING;
   const cmds: Command[] = [];
   const s = survey(world, player);
 

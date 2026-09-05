@@ -18,7 +18,7 @@
  *
  * ## Both peers must choose the same thing
  *
- * The map, the number of players and the AI's difficulty all change what the
+ * The map, the number of players and which bot plays all change what the
  * simulation computes, so a lobby that let two peers disagree would produce a
  * desync on the first tick rather than a game. The choice is therefore reduced
  * to one opaque string (`modeId`) that the transports compare during their
@@ -29,53 +29,72 @@ import { joinLocalRoom } from '../net/broadcastChannelTransport.js';
 import { SoloTransport } from '../net/localTransport.js';
 import { generateRoomCode, joinOnlineRoom, seedFromRoomCode } from '../net/trysteroTransport.js';
 import type { Transport } from '../net/transport.js';
+import type { AgentDeps } from '../ai/factory.js';
+import { NeuralAgent } from '../ai/neural/agent.js';
+import { loadNeuralRuntime, probeNeuralModel } from '../ai/neural/browser.js';
+import type { WorkerRuntime } from '../ai/neural/runtime.js';
 import { coopMatch, duelMatch } from '../sim/match.js';
-import { BotDifficulty, type MatchConfig } from '../sim/types.js';
+import { BotKind, type MatchConfig } from '../sim/types.js';
 import { audio } from '../audio/audio.js';
 
 export interface MatchSetup {
   transport: Transport;
   /** The whole agreed description of the match. */
   config: MatchConfig;
+  /** What the bots this peer hosts need that the config cannot carry: a loaded neural runtime. */
+  agentDeps?: AgentDeps;
 }
 
 /** What the player picked, before a seed is known. */
 type LobbyMode =
   /** One human against one AI, on the duel map. */
-  | { kind: 'skirmish'; difficulty: BotDifficulty }
+  | { kind: 'skirmish'; bot: BotKind }
   /** Two humans on the duel map. */
   | { kind: 'versus' }
   /** Two players a side on the four-corner map, against the AI. */
-  | { kind: 'coop'; difficulty: BotDifficulty; withAiPartner: boolean };
+  | { kind: 'coop'; bot: BotKind; withAiPartner: boolean };
 
-const DIFFICULTY_LABELS: Readonly<Record<BotDifficulty, string>> = {
-  [BotDifficulty.Easy]: 'Easy',
-  [BotDifficulty.Normal]: 'Normal',
-  [BotDifficulty.Hard]: 'Hard',
+const BOT_LABELS: Readonly<Record<BotKind, string>> = {
+  [BotKind.Scripted]: 'Scripted',
+  [BotKind.Neural]: 'Neural',
 };
 
 /**
  * The chips to offer, derived from the labels rather than listed again.
  *
- * `DIFFICULTY_LABELS` is a `Record<BotDifficulty, string>`, so the compiler
- * makes it exhaustive; a hand-written array is not checked against anything, and
- * a fourth difficulty would simply never get a chip with nothing failing to say
- * so. Integer-like keys enumerate in ascending numeric order, which is the order
+ * `BOT_LABELS` is a `Record<BotKind, string>`, so the compiler makes it
+ * exhaustive; a hand-written array is not checked against anything, and a new
+ * kind of bot would simply never get a chip with nothing failing to say so.
+ * Integer-like keys enumerate in ascending numeric order, which is the order
  * the row should read in anyway.
  */
-const DIFFICULTIES = Object.keys(DIFFICULTY_LABELS).map(Number) as BotDifficulty[];
+const BOT_KINDS = Object.keys(BOT_LABELS).map(Number) as BotKind[];
+
+/**
+ * Whether a mode has a slot the neural model would play. The chip is shared
+ * by every mode with an AI in it, so this is the one question every start
+ * path asks before it connects or begins.
+ */
+function needsNeuralModel(mode: LobbyMode): boolean {
+  return mode.kind !== 'versus' && mode.bot === BotKind.Neural;
+}
 
 /** Turn a choice plus an agreed seed into the match every peer will run. */
 function configFor(mode: LobbyMode, seed: number): MatchConfig {
   if (mode.kind === 'versus') return duelMatch(seed, { botPlayers: [] });
   if (mode.kind === 'skirmish') {
-    return duelMatch(seed, { botPlayers: [1], difficulty: mode.difficulty });
+    return duelMatch(seed, { botPlayers: [1], kind: mode.bot });
   }
+  // Slot 1 is the second human seat. Filling it with a bot is what lets one
+  // person try the co-op map without waiting for a partner — and that partner
+  // is always the scripted bot: a known quantity beside you, one model in the
+  // tab at most, and the opponents are what the chip chooses.
   return coopMatch(seed, {
-    difficulty: mode.difficulty,
-    // Slot 1 is the second human seat. Filling it with a bot is what lets one
-    // person try the co-op map without waiting for a partner.
-    botPlayers: mode.withAiPartner ? [1, 2, 3] : [2, 3],
+    botSlots: [
+      ...(mode.withAiPartner ? [{ player: 1, kind: BotKind.Scripted }] : []),
+      { player: 2, kind: mode.bot },
+      { player: 3, kind: mode.bot },
+    ],
   });
 }
 
@@ -110,16 +129,17 @@ function modeId(mode: LobbyMode): string {
 /**
  * What the two peers have to agree on, in words.
  *
- * The handshake compares `modeId`, and since difficulty follows the player
+ * The handshake compares `modeId`, and since the AI choice follows the player
  * between screens the likeliest mismatch is now one neither of them chose
- * deliberately: pick Hard for a skirmish, back out, open co-op, and Hard is
- * already selected. The transport can only report "you chose different modes"
- * — it never interprets the string — so the connect screens have to show what
- * is being compared, or a mismatch is unactionable from anything on screen.
+ * deliberately: pick Neural for a skirmish, back out, open co-op, and Neural
+ * is already selected. The transport can only report "you chose different
+ * modes" — it never interprets the string — so the connect screens have to
+ * show what is being compared, or a mismatch is unactionable from anything on
+ * screen.
  */
 function modeSummary(mode: LobbyMode): string {
   if (mode.kind === 'versus') return 'Versus another player';
-  const label = DIFFICULTY_LABELS[mode.difficulty];
+  const label = BOT_LABELS[mode.bot];
   return mode.kind === 'skirmish' ? `Skirmish vs AI · ${label}` : `Co-op vs AI · ${label}`;
 }
 
@@ -127,7 +147,7 @@ function modeSummary(mode: LobbyMode): string {
  * One action button on a mode screen.
  *
  * `run` takes no argument and builds its own mode when clicked, rather than
- * being handed one when the screen is drawn: the difficulty chips can change
+ * being handed one when the screen is drawn: the bot chips can change
  * the answer after that, so a mode captured up front would start the match on
  * whatever was selected when the screen opened.
  */
@@ -152,16 +172,51 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
     overlay.addEventListener('pointerdown', () => void audio.resume(), { once: true });
 
     /**
-     * How hard the AI plays, shared by every screen that offers the choice.
+     * Which bot plays, shared by every screen that offers the choice.
      *
-     * One value rather than one per screen, so a player who sets Hard for a
-     * skirmish and then opens co-op finds Hard still selected. It also survives
-     * the Back button out of the connect screens, which route back to the mode
-     * they came from.
+     * One value rather than one per screen, so a player who picks Neural for a
+     * skirmish and then opens co-op finds Neural still selected. It also
+     * survives the Back button out of the connect screens, which route back to
+     * the mode they came from.
      */
-    let difficulty = BotDifficulty.Normal;
+    let bot = BotKind.Scripted;
+
+    /**
+     * Whether this build ships a model: unknown until the manifest has been
+     * asked for, then yes or no. The Neural chip is disabled until it is yes —
+     * shown, so the choice is visible; disabled, so a match is never started
+     * for a slot nothing can play. A mode screen open when the answer arrives
+     * is redrawn so the chip comes alive without a click.
+     */
+    let neuralAvailable: boolean | null = null;
+    let redrawMode: (() => void) | null = null;
+    void probeNeuralModel().then((manifest) => {
+      neuralAvailable = manifest !== null;
+      redrawMode?.();
+    });
+
+    /**
+     * The model, loaded once per page and shared by every neural slot this
+     * peer hosts. Loaded *before* connecting, so a peer that cannot run the
+     * model never leaves the other waiting on a match that will not start.
+     */
+    let runtimeLoading: Promise<WorkerRuntime> | null = null;
+    const ensureRuntime = (): Promise<WorkerRuntime> => {
+      if (runtimeLoading === null) {
+        runtimeLoading = loadNeuralRuntime().catch((error: unknown) => {
+          runtimeLoading = null;
+          throw error;
+        });
+      }
+      return runtimeLoading.then((runtime) => {
+        if (!runtime.disposed) return runtime;
+        runtimeLoading = null;
+        return ensureRuntime();
+      });
+    };
 
     const render = (html: string): HTMLElement => {
+      redrawMode = null;
       overlay.innerHTML = `<div class="dialog">${html}</div>`;
       return overlay.querySelector('.dialog') as HTMLElement;
     };
@@ -183,8 +238,34 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
     // and is what the game actually reads, so a second copy could only ever
     // disagree with it.
     const start = (transport: Transport, mode: LobbyMode, seed: number): void => {
-      overlay.remove();
-      resolve({ transport, config: configFor(mode, seed) });
+      const config = configFor(mode, seed);
+      if (!needsNeuralModel(mode)) {
+        overlay.remove();
+        resolve({ transport, config });
+        return;
+      }
+      // Already loaded by `withModel` on the way here; this only unwraps it.
+      void ensureRuntime().then((runtime) => {
+        overlay.remove();
+        resolve({ transport, config, agentDeps: { neural: () => new NeuralAgent(runtime) } });
+      });
+    };
+
+    /** Run `then` once the model a mode needs is loaded, or explain why it cannot be. */
+    const withModel = (mode: LobbyMode, back: () => void, then: () => void): void => {
+      if (!needsNeuralModel(mode)) {
+        then();
+        return;
+      }
+      render(`
+        <h1>Loading the neural bot…</h1>
+        <p>Fetching the model and starting its worker. This happens once.</p>
+      `);
+      ensureRuntime()
+        .then(then)
+        .catch((error: unknown) => {
+          showError(error instanceof Error ? error.message : String(error), back);
+        });
     };
 
     // ---------------------------------------------------------------------
@@ -208,21 +289,26 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
       dialog.querySelector('[data-act="units"]')!.addEventListener('click', onShowAllUnits);
     };
 
-    /** Render a mode: what it is, how hard the AI plays, and how to start it. */
+    /** Render a mode: what it is, which bot plays, and how to start it. */
     const modeScreen = (spec: {
       title: string;
       blurb: string;
-      /** Show the difficulty picker. True exactly when the mode has an AI in it. */
+      /** Show the bot picker. True exactly when the mode has an AI in it. */
       hasBots: boolean;
       actions: ModeAction[];
       back: () => void;
     }): void => {
       const chips = spec.hasBots
-        ? `<div id="difficulty-row" role="group" aria-label="AI difficulty">
-             ${DIFFICULTIES.map(
-               (d) =>
-                 `<button class="chip" data-difficulty="${d}">${DIFFICULTY_LABELS[d]}</button>`,
-             ).join('')}
+        ? `<div id="difficulty-row" role="group" aria-label="AI opponent">
+             ${BOT_KINDS.map((k) => {
+               const off = k === BotKind.Neural && neuralAvailable !== true;
+               const title = !off
+                 ? ''
+                 : neuralAvailable === null
+                   ? ' title="Checking whether this build ships a model…"'
+                   : ' title="This build ships no neural model. See ml/README.md for how to train and export one."';
+               return `<button class="chip" data-bot="${k}"${off ? ' disabled' : ''}${title}>${BOT_LABELS[k]}</button>`;
+             }).join('')}
            </div>`
         : '';
 
@@ -239,17 +325,19 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
         <button data-act="back">Back</button>
       `);
 
+      redrawMode = () => modeScreen(spec);
+
       if (spec.hasBots) {
         const syncChips = (): void => {
-          for (const chip of dialog.querySelectorAll<HTMLElement>('[data-difficulty]')) {
-            const value = Number(chip.dataset.difficulty);
-            chip.classList.toggle('active', value === difficulty);
-            chip.setAttribute('aria-pressed', String(value === difficulty));
+          for (const chip of dialog.querySelectorAll<HTMLElement>('[data-bot]')) {
+            const value = Number(chip.dataset.bot);
+            chip.classList.toggle('active', value === bot);
+            chip.setAttribute('aria-pressed', String(value === bot));
           }
         };
-        for (const chip of dialog.querySelectorAll<HTMLElement>('[data-difficulty]')) {
+        for (const chip of dialog.querySelectorAll<HTMLElement>('[data-bot]')) {
           chip.addEventListener('click', () => {
-            difficulty = Number(chip.dataset.difficulty) as BotDifficulty;
+            bot = Number(chip.dataset.bot) as BotKind;
             syncChips();
           });
         }
@@ -266,15 +354,18 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
       modeScreen({
         title: 'Skirmish vs AI',
         blurb: `One base each, on the three-lane map, against a single AI opponent.
-                Difficulty changes only what it does — how hard it works its
-                economy, how soon it commits, whether it comes home when its base
-                is attacked. It gets no bonus income and no extra units.`,
+                Scripted plays one fixed, tuned strategy and reads the whole map;
+                Neural is a learned player that sees only what you would. Neither
+                gets bonus income or extra units.`,
         hasBots: true,
         actions: [
           {
             label: 'Start match',
             primary: true,
-            run: () => start(new SoloTransport(), { kind: 'skirmish', difficulty }, randomSeed()),
+            run: () =>
+              withModel({ kind: 'skirmish', bot }, skirmish, () =>
+                start(new SoloTransport(), { kind: 'skirmish', bot }, randomSeed()),
+              ),
           },
         ],
         back: menu,
@@ -284,7 +375,7 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
     const coop = (): void => {
       const withPartner = (withAiPartner: boolean): LobbyMode => ({
         kind: 'coop',
-        difficulty,
+        bot,
         withAiPartner,
       });
       modeScreen({
@@ -304,7 +395,10 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
           {
             // The only route that fills the second human seat with an AI.
             label: 'Play solo with an AI partner',
-            run: () => start(new SoloTransport(), withPartner(true), randomSeed()),
+            run: () =>
+              withModel(withPartner(true), coop, () =>
+                start(new SoloTransport(), withPartner(true), randomSeed()),
+              ),
           },
         ],
         back: menu,
@@ -355,8 +449,21 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
       return attempt;
     };
 
+    // Hosting a bot over WebRTC is the same dealing as over two tabs, so the
+    // model a neural slot needs is loaded before the room-code screen, as it
+    // is before two tabs connect: in online co-op each browser hosts one of
+    // the two bots, and a peer that cannot run the model must find out here
+    // rather than leave the other waiting on a match that will not start.
     const online = (mode: LobbyMode, back: () => void): void => {
+      withModel(mode, back, () => onlineRoom(mode, back));
+    };
+
+    const onlineRoom = (mode: LobbyMode, back: () => void): void => {
       const suggested = generateRoomCode();
+      const bothHost = needsNeuralModel(mode)
+        ? ` Each browser runs one of the two learned bots, so the other player's
+           browser loads the model too.`
+        : '';
       const dialog = render(`
         <h1>Play online</h1>
         <p>Share a code with the other player. You both enter the same code —
@@ -364,7 +471,7 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
            involved: once connected, the game runs directly between the two
            browsers.</p>
         <p class="mode-summary">You are starting: <strong>${modeSummary(mode)}</strong>.
-           The other player has to pick the same, difficulty included.</p>
+           The other player has to pick the same, AI included.${bothHost}</p>
         <input class="interactive" id="room-code" value="${suggested}"
                maxlength="8" autocomplete="off" spellcheck="false" />
         <button class="primary" data-act="go">Connect</button>
@@ -414,13 +521,17 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
     };
 
     const local = (mode: LobbyMode, back: () => void): void => {
+      withModel(mode, back, () => localRoom(mode, back));
+    };
+
+    const localRoom = (mode: LobbyMode, back: () => void): void => {
       const dialog = render(`
         <h1>Two tabs</h1>
         <p>Open this page in a second tab and choose the same option there.
            The two tabs talk directly, with no network involved — handy for
            trying multiplayer without a second machine.</p>
         <p class="mode-summary">Pick this in the other tab: <strong>${modeSummary(mode)}</strong>.
-           Difficulty counts too.</p>
+           The AI choice counts too.</p>
         <p id="status" style="color:var(--warn)">Waiting for the second tab…</p>
         <button data-act="cancel">Cancel</button>
       `);

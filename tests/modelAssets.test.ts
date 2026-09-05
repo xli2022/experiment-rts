@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { EXPECTED_FACTIONS, type ExpectedFaction } from './athena2Factions.js';
 
-const MODEL_ROOT = fileURLToPath(new URL('../public/models/', import.meta.url));
+const MODEL_ROOT = fileURLToPath(new URL('../public/units/', import.meta.url));
 const EXPECTED_UNITS = [
   'Alligator',
   'Archer',

@@ -13,3 +13,10 @@ assets/
 test-results/
 playwright-report/
 *.log
+
+# Python training package: build products and training runs.
+__pycache__/
+*.egg-info/
+.pytest_cache/
+ml/runs/
+runs/

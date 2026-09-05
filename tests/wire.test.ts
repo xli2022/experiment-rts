@@ -26,10 +26,18 @@ import { fromInt } from '../src/sim/fixed.js';
 import { Simulation } from '../src/sim/tick.js';
 import { CHECKSUM_INTERVAL, MS_PER_TICK, type PlayerId } from '../src/sim/types.js';
 import { LocalNetwork } from '../src/net/localTransport.js';
-import { LockstepRunner } from '../src/net/lockstep.js';
+import {
+  HOSTED_COMMANDS_PER_TURN,
+  hostingProblem,
+  LockstepRunner,
+  MAX_HOSTED_PER_PEER,
+} from '../src/net/lockstep.js';
 import { MAX_SELECTION } from '../src/input/selection.js';
 import { TRANSPORT_CHUNK_BYTES } from '../src/net/trysteroTransport.js';
 import type { Packet, Transport } from '../src/net/transport.js';
+import { MAX_COMMAND_UNITS } from '../src/sim/commands.js';
+import { coopMatch, duelMatch, hostedBy } from '../src/sim/match.js';
+import { BotKind } from '../src/sim/types.js';
 
 const SEED = 0xbeef01;
 
@@ -260,17 +268,29 @@ describe('packets fit in one chunk', () => {
     return { type: CommandType.Move, player: 1, units, x: -2147483648, y: -2147483648 };
   }
 
-  /** A packet carrying `perTurn` worst-case commands in each of its three turns. */
-  function worstPacket(perTurn: number): Packet {
-    return {
-      player: 1,
-      turns: [0, 1, 2].map((t) => ({
+  /**
+   * A packet carrying `humanPerTurn` worst-case commands for the human slot and
+   * `hostedPerTurn` for each of `hostedSlots` bot slots, in each of its three
+   * turns — one entry per owned slot per turn, which is the shape `broadcast`
+   * produces for a peer that hosts bots.
+   */
+  function worstPacket(humanPerTurn: number, hostedPerTurn = 0, hostedSlots = 0): Packet {
+    const turns: Packet['turns'] = [];
+    for (const t of [0, 1, 2]) {
+      turns.push({
         turn: 99999 + t,
         player: 1 as PlayerId,
-        commands: Array.from({ length: perTurn }, fullSelectionMove),
-      })),
-      checksum: { tick: 999999, value: 0xffffffff },
-    };
+        commands: Array.from({ length: humanPerTurn }, fullSelectionMove),
+      });
+      for (let slot = 0; slot < hostedSlots; slot++) {
+        turns.push({
+          turn: 99999 + t,
+          player: (2 + slot) as PlayerId,
+          commands: Array.from({ length: hostedPerTurn }, fullSelectionMove),
+        });
+      }
+    }
+    return { player: 1, turns, checksum: { tick: 999999, value: 0xffffffff } };
   }
 
   it('fits a hard burst of full-selection orders with room to spare', () => {
@@ -285,6 +305,19 @@ describe('packets fit in one chunk', () => {
     expect(bytes * 4).toBeLessThan(TRANSPORT_CHUNK_BYTES);
   });
 
+  it('fits that burst plus a hosted bot at its full budget, with headroom', () => {
+    // A bot is a player hosted by a peer, so its commands share the packet
+    // with the human's. The runner caps a hosted slot at
+    // HOSTED_COMMANDS_PER_TURN commands of MAX_COMMAND_UNITS units; here every
+    // one of them is worst-case, in every repeated turn, on top of the human's
+    // own beyond-human burst.
+    const bytes = wireBytes(worstPacket(4, HOSTED_COMMANDS_PER_TURN, MAX_HOSTED_PER_PEER));
+    expect(
+      `${bytes} bytes vs ${TRANSPORT_CHUNK_BYTES} limit: ${bytes < TRANSPORT_CHUNK_BYTES}`,
+    ).toBe(`${bytes} bytes vs ${TRANSPORT_CHUNK_BYTES} limit: true`);
+    expect(bytes * 2).toBeLessThan(TRANSPORT_CHUNK_BYTES);
+  });
+
   it('reports the burst size that would actually overflow', () => {
     // Documents the real ceiling rather than asserting a number nobody checked.
     // Human input cannot approach it; the guard is against a future change to
@@ -294,10 +327,40 @@ describe('packets fit in one chunk', () => {
     expect(perTurn).toBeGreaterThan(16);
   });
 
-  it('is bounded by a selection cap the UI enforces', () => {
-    // The only producer of wire commands is local human input: bot commands are
-    // generated inside the simulation on every peer and never sent. So the cap
-    // on selection size is the cap on packet size.
+  it('is bounded by the caps its two producers enforce', () => {
+    // Wire commands come from two places: local human input, bounded by the
+    // selection cap, and the bots this peer hosts, bounded by the runner's
+    // per-turn budget and the unit cap. The two unit caps are one number.
+    expect(MAX_SELECTION).toBe(MAX_COMMAND_UNITS);
     expect(MAX_SELECTION).toBeLessThanOrEqual(64);
+
+    // And no roster the lobby can put on a two-peer wire hosts more bots on one
+    // peer than the worst packet above was sized for — which the runner now
+    // enforces (`hostingProblem`) rather than this test merely assuming.
+    const kinds = [BotKind.Scripted, BotKind.Neural];
+    const rosters = [duelMatch(1, { botPlayers: [] })];
+    for (const a of kinds) {
+      for (const b of kinds) {
+        rosters.push(
+          coopMatch(1, {
+            botSlots: [
+              { player: 2, kind: a },
+              { player: 3, kind: b },
+            ],
+          }),
+        );
+      }
+    }
+    for (const config of rosters) {
+      for (const peer of [0, 1]) {
+        expect(hostedBy(config, peer).length).toBeLessThanOrEqual(MAX_HOSTED_PER_PEER);
+      }
+      expect(hostingProblem(config, 2)).toBeNull();
+    }
+    // A roster that seats the humans high is refused for its shape, and one
+    // that would put two bots on a peer for the ceiling; solo play is exempt.
+    expect(hostingProblem(coopMatch(1, { botPlayers: [0, 1] }), 2)).toMatch(/low slots/);
+    expect(hostingProblem(coopMatch(1, { botPlayers: [1, 2, 3] }), 1)).toBeNull();
+    expect(hostingProblem(coopMatch(1, { botPlayers: [2, 3] }), 3)).toMatch(/transport carries/);
   });
 });

@@ -21,8 +21,8 @@
  * `npm run textures`.
  */
 
-import { spawn } from "node:child_process";
-import { createReadStream } from "node:fs";
+import { spawn } from 'node:child_process';
+import { createReadStream } from 'node:fs';
 import {
   access,
   copyFile,
@@ -32,46 +32,37 @@ import {
   readdir,
   rm,
   writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, dirname, extname, join, resolve } from "node:path";
-import { createInterface } from "node:readline";
-import { fileURLToPath } from "node:url";
-import sharp from "sharp";
-import * as THREE from "three";
-import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
-import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { TGALoader } from "three/examples/jsm/loaders/TGALoader.js";
-import { ATHENA2_FACTIONS, ATHENA2_MODELS } from "./athena2-models.mjs";
-import { readFbxTakeWindows } from "./fbx-take-window.mjs";
-import { buildUnitySampledSkeletonModel } from "./unity-sampled-skeleton.mjs";
+} from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, dirname, extname, join, resolve } from 'node:path';
+import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
+import sharp from 'sharp';
+import * as THREE from 'three';
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { TGALoader } from 'three/examples/jsm/loaders/TGALoader.js';
+import { ATHENA2_FACTIONS, ATHENA2_MODELS } from './athena2-models.mjs';
+import { readFbxTakeWindows } from './fbx-take-window.mjs';
+import { buildUnitySampledSkeletonModel } from './unity-sampled-skeleton.mjs';
 
 installBrowserShims();
 const warnedTrajectoryCycles = new Set();
 
 const args = parseArgs(process.argv.slice(2));
-const modelRoot = resolve(required(args, "meshes"));
-const textureRoot = resolve(required(args, "textures"));
-const animationRoot = resolve(
-  args.animations ?? join(modelRoot, "..", "Animations"),
-);
-const outputRoot = resolve(
-  args.out ?? fileURLToPath(new URL("../public/models/", import.meta.url)),
-);
+const modelRoot = resolve(required(args, 'meshes'));
+const textureRoot = resolve(required(args, 'textures'));
+const animationRoot = resolve(args.animations ?? join(modelRoot, '..', 'Animations'));
+const outputRoot = resolve(args.out ?? fileURLToPath(new URL('../public/units/', import.meta.url)));
 const textureStage = resolve(
-  args["texture-stage"] ??
-    fileURLToPath(new URL("../assets/textures/", import.meta.url)),
+  args['texture-stage'] ?? fileURLToPath(new URL('../assets/textures/', import.meta.url)),
 );
-const only = args.only
-  ? new Set(args.only.split(",").map((value) => value.trim()))
-  : null;
-const includeExisting = args["include-existing"] === "true";
+const only = args.only ? new Set(args.only.split(',').map((value) => value.trim())) : null;
+const includeExisting = args['include-existing'] === 'true';
 
 await validateAnimationInventory(animationRoot);
-console.log(
-  `Reading baked clip timings for ${ATHENA2_MODELS.length} Athena2 units...`,
-);
+console.log(`Reading baked clip timings for ${ATHENA2_MODELS.length} Athena2 units...`);
 const authoredTimings = new Map();
 const authoredRunSizes = new Map();
 for (const spec of ATHENA2_MODELS) {
@@ -96,12 +87,11 @@ if (unfactionedModels.length > 0) {
   throw new Error(
     `Published units have no faction assignment: ${unfactionedModels
       .map((model) => model.unit)
-      .join(", ")}`,
+      .join(', ')}`,
   );
 }
 const selected = publishedModels.filter(
-  (model) =>
-    (!model.existing || includeExisting) && (!only || only.has(model.slug)),
+  (model) => (!model.existing || includeExisting) && (!only || only.has(model.slug)),
 );
 
 await mkdir(outputRoot, { recursive: true });
@@ -111,27 +101,23 @@ await pruneExcludedOutputs(excludedModels, outputRoot, textureStage);
 await pruneLegacyOutputs(ATHENA2_MODELS, outputRoot, textureStage);
 
 if (selected.length === 0) {
-  const requestedExcluded = excludedModels.filter((model) =>
-    only?.has(model.slug),
-  );
+  const requestedExcluded = excludedModels.filter((model) => only?.has(model.slug));
   if (requestedExcluded.length > 0) {
     throw new Error(
       `Requested units are explicitly excluded from public output: ${requestedExcluded
         .map((model) => model.unit)
-        .join(", ")}`,
+        .join(', ')}`,
     );
   }
-  const requestedIncomplete = incompleteModels.filter((model) =>
-    only?.has(model.slug),
-  );
+  const requestedIncomplete = incompleteModels.filter((model) => only?.has(model.slug));
   if (requestedIncomplete.length > 0) {
     throw new Error(
       `Requested units have missing required animations: ${requestedIncomplete
         .map((model) => model.unit)
-        .join(", ")}`,
+        .join(', ')}`,
     );
   }
-  throw new Error("No complete models selected");
+  throw new Error('No complete models selected');
 }
 
 let normalized = { paths: new Map(), tempRoot: null };
@@ -141,22 +127,10 @@ try {
   // Sending those specs through the legacy normalizer or multipart probe is
   // both wasted work and risks failing before Unity can author the final rig.
   const fbxSelected = selected.filter((spec) => !spec.unitySampledSkeleton);
-  normalized = await normalizeLegacyFbx(
-    fbxSelected,
-    modelRoot,
-    args.unity,
-    args.blender,
-  );
-  joined = await joinMultipartGeometry(
-    fbxSelected,
-    modelRoot,
-    normalized.paths,
-    args.blender,
-  );
+  normalized = await normalizeLegacyFbx(fbxSelected, modelRoot, args.unity, args.blender);
+  joined = await joinMultipartGeometry(fbxSelected, modelRoot, normalized.paths, args.blender);
   for (const [index, spec] of selected.entries()) {
-    console.log(
-      `[${index + 1}/${selected.length}] ${spec.unit} <- ${spec.source}`,
-    );
+    console.log(`[${index + 1}/${selected.length}] ${spec.unit} <- ${spec.source}`);
     await importModel(
       spec,
       modelRoot,
@@ -175,39 +149,30 @@ try {
   }
 }
 
-await writeCatalog(
-  outputRoot,
-  authoredTimings,
-  authoredRunSizes,
-  publishedModels,
-);
+await writeCatalog(outputRoot, authoredTimings, authoredRunSizes, publishedModels);
 console.log(
-  `\nImported ${selected.length} model${selected.length === 1 ? "" : "s"}. ` +
-    "Run `npm run textures` to encode the staged team skins.",
+  `\nImported ${selected.length} model${selected.length === 1 ? '' : 's'}. ` +
+    'Run `npm run textures` to encode the staged team skins.',
 );
 
 function hasCompleteAnimationSet(timings) {
-  return ["run", "attack", "die"].every(
+  return ['run', 'attack', 'die'].every(
     (name) => timings?.[name]?.frames > 1 && timings[name].frameRate > 0,
   );
 }
 
 function missingAnimationNames(timings) {
-  return ["run", "attack", "die"].filter(
+  return ['run', 'attack', 'die'].filter(
     (name) => !(timings?.[name]?.frames > 1 && timings[name].frameRate > 0),
   );
 }
 
 async function pruneIncompleteOutputs(models, output, stage) {
   if (models.length === 0) return;
-  console.warn(
-    `Excluding ${models.length} units with missing required animations:`,
-  );
+  console.warn(`Excluding ${models.length} units with missing required animations:`);
   for (const spec of models) {
-    const missing = missingAnimationNames(
-      authoredTimings.get(spec.animationAsset),
-    );
-    console.warn(`  ${spec.unit}: ${missing.join(", ")}`);
+    const missing = missingAnimationNames(authoredTimings.get(spec.animationAsset));
+    console.warn(`  ${spec.unit}: ${missing.join(', ')}`);
     await Promise.all([
       rm(join(output, `${spec.slug}.glb`), { force: true }),
       rm(join(output, `${spec.slug}-blue.ktx2`), { force: true }),
@@ -223,7 +188,7 @@ async function pruneExcludedOutputs(models, output, stage) {
   console.warn(
     `Excluding ${models.length} complete units from public output: ${models
       .map((model) => model.unit)
-      .join(", ")}`,
+      .join(', ')}`,
   );
   await Promise.all(
     models.flatMap((spec) => [
@@ -269,7 +234,7 @@ async function importModel(
   };
   const originalGeometryPath = spec.geometryFile
     ? join(source, spec.geometryFile)
-    : originalPaths[spec.geometry ?? "run"];
+    : originalPaths[spec.geometry ?? 'run'];
   const [blue, red] = spec.skins.map((skin) => join(textures, skin));
   if (spec.unitySampledSkeleton) {
     await Promise.all(
@@ -281,12 +246,7 @@ async function importModel(
         red,
       ].map((path) => access(path)),
     );
-    const data = await buildUnitySampledSkeletonModel(
-      source,
-      spec,
-      timings,
-      unityOverride,
-    );
+    const data = await buildUnitySampledSkeletonModel(source, spec, timings, unityOverride);
     validateGlb(data, spec);
     await Promise.all([
       writeFile(join(output, `${spec.slug}.glb`), new Uint8Array(data)),
@@ -296,10 +256,7 @@ async function importModel(
     return;
   }
   const paths = Object.fromEntries(
-    Object.entries(originalPaths).map(([name, path]) => [
-      name,
-      normalizedPaths.get(path) ?? path,
-    ]),
+    Object.entries(originalPaths).map(([name, path]) => [name, normalizedPaths.get(path) ?? path]),
   );
   const animationPaths = spec.pristineClips ? originalPaths : paths;
   const takeWindows = Object.fromEntries(
@@ -311,9 +268,7 @@ async function importModel(
     ),
   );
   await Promise.all(
-    [...Object.values(originalPaths), originalGeometryPath, blue, red].map(
-      (path) => access(path),
-    ),
+    [...Object.values(originalPaths), originalGeometryPath, blue, red].map((path) => access(path)),
   );
 
   const geometryPath =
@@ -325,49 +280,26 @@ async function importModel(
     ...new Set(
       geometryParts.map((part) => {
         if (!(part.source in paths)) {
-          throw new Error(
-            `${spec.unit} geometry part ${part.name}: unknown source ${part.source}`,
-          );
+          throw new Error(`${spec.unit} geometry part ${part.name}: unknown source ${part.source}`);
         }
         return part.source;
       }),
     ),
   ];
-  const [runScene, runClipScene, attackScene, dieScene, geometryPartEntries] =
-    await Promise.all([
-      loadFbx(geometryPath),
-      geometryPath === animationPaths.run && geometryParts.length === 0
-        ? Promise.resolve(null)
-        : loadFbx(animationPaths.run),
-      loadFbx(animationPaths.attack),
-      loadFbx(animationPaths.die),
-      Promise.all(
-        partSources.map(async (name) => [name, await loadFbx(paths[name])]),
-      ),
-    ]);
+  const [runScene, runClipScene, attackScene, dieScene, geometryPartEntries] = await Promise.all([
+    loadFbx(geometryPath),
+    geometryPath === animationPaths.run && geometryParts.length === 0
+      ? Promise.resolve(null)
+      : loadFbx(animationPaths.run),
+    loadFbx(animationPaths.attack),
+    loadFbx(animationPaths.die),
+    Promise.all(partSources.map(async (name) => [name, await loadFbx(paths[name])])),
+  ]);
   const geometryPartScenes = new Map(geometryPartEntries);
   const runAnimationScene = runClipScene ?? runScene;
-  const runSourceClip = authoredClip(
-    runAnimationScene,
-    runScene,
-    spec,
-    "run",
-    timings.run,
-  );
-  const attackSourceClip = authoredClip(
-    attackScene,
-    runScene,
-    spec,
-    "attack",
-    timings.attack,
-  );
-  const dieSourceClip = authoredClip(
-    dieScene,
-    runScene,
-    spec,
-    "die",
-    timings.die,
-  );
+  const runSourceClip = authoredClip(runAnimationScene, runScene, spec, 'run', timings.run);
+  const attackSourceClip = authoredClip(attackScene, runScene, spec, 'attack', timings.attack);
+  const dieSourceClip = authoredClip(dieScene, runScene, spec, 'die', timings.die);
   const clipScenes = {
     run: runAnimationScene,
     attack: attackScene,
@@ -391,70 +323,48 @@ async function importModel(
   // and carry that manifest correction on the exported model node instead.
   if (spec.rotateX !== 0) {
     runScene.quaternion.premultiply(
-      new THREE.Quaternion().setFromAxisAngle(
-        new THREE.Vector3(1, 0, 0),
-        spec.rotateX,
-      ),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), spec.rotateX),
     );
   }
   if (spec.rotateY !== 0) {
     runScene.quaternion.premultiply(
-      new THREE.Quaternion().setFromAxisAngle(
-        new THREE.Vector3(0, 1, 0),
-        spec.rotateY,
-      ),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), spec.rotateY),
     );
   }
 
   const clips = [
-    namedClip(
-      runScene,
-      runSourceClip,
-      "run",
-      spec,
-      timings.run,
-      runAnimationScene,
-      {
-        completeRestPose: geometryParts.length > 0,
-        corrections: geometryCorrections.get("run"),
-        takeWindow: takeWindowForClip(
-          takeWindows.run,
-          runSourceClip,
-          spec,
-          "run",
-          timings.run,
-          animationPaths.run !== originalPaths.run,
-        ),
-      },
-    ),
-    namedClip(
-      runScene,
-      attackSourceClip,
-      "attack",
-      spec,
-      timings.attack,
-      attackScene,
-      {
-        completeRestPose: geometryParts.length > 0,
-        corrections: geometryCorrections.get("attack"),
-        takeWindow: takeWindowForClip(
-          takeWindows.attack,
-          attackSourceClip,
-          spec,
-          "attack",
-          timings.attack,
-          animationPaths.attack !== originalPaths.attack,
-        ),
-      },
-    ),
-    namedClip(runScene, dieSourceClip, "die", spec, timings.die, dieScene, {
+    namedClip(runScene, runSourceClip, 'run', spec, timings.run, runAnimationScene, {
       completeRestPose: geometryParts.length > 0,
-      corrections: geometryCorrections.get("die"),
+      corrections: geometryCorrections.get('run'),
+      takeWindow: takeWindowForClip(
+        takeWindows.run,
+        runSourceClip,
+        spec,
+        'run',
+        timings.run,
+        animationPaths.run !== originalPaths.run,
+      ),
+    }),
+    namedClip(runScene, attackSourceClip, 'attack', spec, timings.attack, attackScene, {
+      completeRestPose: geometryParts.length > 0,
+      corrections: geometryCorrections.get('attack'),
+      takeWindow: takeWindowForClip(
+        takeWindows.attack,
+        attackSourceClip,
+        spec,
+        'attack',
+        timings.attack,
+        animationPaths.attack !== originalPaths.attack,
+      ),
+    }),
+    namedClip(runScene, dieSourceClip, 'die', spec, timings.die, dieScene, {
+      completeRestPose: geometryParts.length > 0,
+      corrections: geometryCorrections.get('die'),
       takeWindow: takeWindowForClip(
         takeWindows.die,
         dieSourceClip,
         spec,
-        "die",
+        'die',
         timings.die,
         animationPaths.die !== originalPaths.die,
       ),
@@ -480,18 +390,11 @@ async function importModel(
   ]);
 }
 
-function applyGeometryPartOverrides(
-  targetScene,
-  geometryPartScenes,
-  clipScenes,
-  spec,
-) {
+function applyGeometryPartOverrides(targetScene, geometryPartScenes, clipScenes, spec) {
   const corrections = new Map();
   for (const part of spec.geometryParts ?? []) {
     if (!part.name || !part.source || !part.bindAnchor) {
-      throw new Error(
-        `${spec.unit}: geometry parts require name, source, and bindAnchor`,
-      );
+      throw new Error(`${spec.unit}: geometry parts require name, source, and bindAnchor`);
     }
     const sourceScene = geometryPartScenes.get(part.source);
     if (!sourceScene) {
@@ -515,8 +418,7 @@ function applyGeometryPartOverrides(
         `${spec.unit} geometry part ${part.name}: ${part.source} skin lacks bind anchor ${part.bindAnchor}`,
       );
     }
-    const sourceInverse =
-      sourcePart.skeleton.boneInverses[sourceAnchorIndex].clone();
+    const sourceInverse = sourcePart.skeleton.boneInverses[sourceAnchorIndex].clone();
 
     // Each non-owning clip used the part from its own FBX at a potentially
     // different bind pose. Derive the local anchor pose that makes the
@@ -544,21 +446,10 @@ function applyGeometryPartOverrides(
         .clone()
         .multiply(clipPart.skeleton.boneInverses[clipAnchorIndex])
         .multiply(sourceInverse.clone().invert());
-      addGeometryCorrection(
-        corrections,
-        clipName,
-        part.bindAnchor,
-        correction,
-        spec,
-      );
+      addGeometryCorrection(corrections, clipName, part.bindAnchor, correction, spec);
     }
 
-    const targetNodes = attachMissingSkinBones(
-      targetScene,
-      sourcePart,
-      spec,
-      part,
-    );
+    const targetNodes = attachMissingSkinBones(targetScene, sourcePart, spec, part);
     const bones = sourcePart.skeleton.bones.map((bone) => {
       const target = targetNodes.get(bone.name);
       if (!target?.isBone) {
@@ -569,9 +460,7 @@ function applyGeometryPartOverrides(
       return target;
     });
     const bindMatrix = sourcePart.bindMatrix.clone();
-    const boneInverses = sourcePart.skeleton.boneInverses.map((inverse) =>
-      inverse.clone(),
-    );
+    const boneInverses = sourcePart.skeleton.boneInverses.map((inverse) => inverse.clone());
     targetPart.removeFromParent();
     sourcePart.removeFromParent();
     targetScene.add(sourcePart);
@@ -579,7 +468,7 @@ function applyGeometryPartOverrides(
     targetScene.updateMatrixWorld(true);
     console.log(
       `${spec.unit}: replacing ${part.name} geometry from ${part.source} ` +
-        `(${sourcePart.geometry.getAttribute("position").count} vertices)`,
+        `(${sourcePart.geometry.getAttribute('position').count} vertices)`,
     );
   }
   return corrections;
@@ -652,20 +541,12 @@ function addGeometryCorrection(corrections, clipName, anchor, matrix, spec) {
 function matrixMaxElementDelta(left, right) {
   let maximum = 0;
   for (let index = 0; index < 16; index++) {
-    maximum = Math.max(
-      maximum,
-      Math.abs(left.elements[index] - right.elements[index]),
-    );
+    maximum = Math.max(maximum, Math.abs(left.elements[index] - right.elements[index]));
   }
   return maximum;
 }
 
-async function normalizeLegacyFbx(
-  specs,
-  meshes,
-  unityOverride,
-  blenderOverride,
-) {
+async function normalizeLegacyFbx(specs, meshes, unityOverride, blenderOverride) {
   const sourcesFor = (method) => [
     ...new Set(
       specs
@@ -677,14 +558,14 @@ async function normalizeLegacyFbx(
         ),
     ),
   ];
-  const unitySources = sourcesFor("unity");
-  const blenderSources = sourcesFor("blender");
+  const unitySources = sourcesFor('unity');
+  const blenderSources = sourcesFor('blender');
   const originals = [...unitySources, ...blenderSources];
   if (originals.length === 0) return { paths: new Map(), tempRoot: null };
   await Promise.all(originals.map((path) => access(path)));
 
-  const tempRoot = await mkdtemp(join(tmpdir(), "rts-athena2-normalize-"));
-  const outputRoot = join(tempRoot, "Normalized");
+  const tempRoot = await mkdtemp(join(tmpdir(), 'rts-athena2-normalize-'));
+  const outputRoot = join(tempRoot, 'Normalized');
   await mkdir(outputRoot, { recursive: true });
   const paths = new Map();
   let outputIndex = 0;
@@ -692,46 +573,41 @@ async function normalizeLegacyFbx(
   if (unitySources.length > 0) {
     const unity = await firstAvailablePath([
       unityOverride ? resolve(unityOverride) : null,
-      "C:\\Program Files\\Unity\\Hub\\Editor\\2022.3.62f3\\Editor\\Unity.exe",
+      'C:\\Program Files\\Unity\\Hub\\Editor\\2022.3.62f3\\Editor\\Unity.exe',
     ]);
     if (!unity) {
       throw new Error(
-        "The selected Athena2 units contain legacy FBXs. Install Unity 2022.3 " +
-          "or pass its editor path with --unity.",
+        'The selected Athena2 units contain legacy FBXs. Install Unity 2022.3 ' +
+          'or pass its editor path with --unity.',
       );
     }
     const localAppData = process.env.LOCALAPPDATA;
-    if (!localAppData)
-      throw new Error("LOCALAPPDATA is required to locate Unity's FBX SDK");
+    if (!localAppData) throw new Error("LOCALAPPDATA is required to locate Unity's FBX SDK");
     const fbxPackage = join(
       localAppData,
-      "Unity",
-      "cache",
-      "packages",
-      "packages.unity.com",
-      "com.autodesk.fbx@5.1.1",
+      'Unity',
+      'cache',
+      'packages',
+      'packages.unity.com',
+      'com.autodesk.fbx@5.1.1',
     );
-    await access(join(fbxPackage, "package.json"));
+    await access(join(fbxPackage, 'package.json'));
 
-    const editorRoot = join(tempRoot, "Assets", "Editor");
-    const packagesRoot = join(tempRoot, "Packages");
-    const settingsRoot = join(tempRoot, "ProjectSettings");
+    const editorRoot = join(tempRoot, 'Assets', 'Editor');
+    const packagesRoot = join(tempRoot, 'Packages');
+    const settingsRoot = join(tempRoot, 'ProjectSettings');
     await Promise.all(
-      [editorRoot, packagesRoot, settingsRoot].map((path) =>
-        mkdir(path, { recursive: true }),
-      ),
+      [editorRoot, packagesRoot, settingsRoot].map((path) => mkdir(path, { recursive: true })),
     );
-    const sourceScript = fileURLToPath(
-      new URL("./unity-normalize-fbx.cs", import.meta.url),
-    );
+    const sourceScript = fileURLToPath(new URL('./unity-normalize-fbx.cs', import.meta.url));
     await Promise.all([
-      copyFile(sourceScript, join(editorRoot, "RtsFbxNormalizer.cs")),
+      copyFile(sourceScript, join(editorRoot, 'RtsFbxNormalizer.cs')),
       writeFile(
-        join(packagesRoot, "manifest.json"),
+        join(packagesRoot, 'manifest.json'),
         `${JSON.stringify(
           {
             dependencies: {
-              "com.autodesk.fbx": `file:${fbxPackage.replaceAll("\\", "/")}`,
+              'com.autodesk.fbx': `file:${fbxPackage.replaceAll('\\', '/')}`,
             },
           },
           null,
@@ -739,8 +615,8 @@ async function normalizeLegacyFbx(
         )}\n`,
       ),
       writeFile(
-        join(settingsRoot, "ProjectVersion.txt"),
-        "m_EditorVersion: 2022.3.62f3\nm_EditorVersionWithRevision: 2022.3.62f3\n",
+        join(settingsRoot, 'ProjectVersion.txt'),
+        'm_EditorVersion: 2022.3.62f3\nm_EditorVersionWithRevision: 2022.3.62f3\n',
       ),
     ]);
 
@@ -749,21 +625,21 @@ async function normalizeLegacyFbx(
       paths.set(source, destination);
       return `${source}\t${destination}`;
     });
-    const manifest = join(tempRoot, "unity-fbx-jobs.tsv");
-    await writeFile(manifest, `${jobs.join("\n")}\n`);
+    const manifest = join(tempRoot, 'unity-fbx-jobs.tsv');
+    await writeFile(manifest, `${jobs.join('\n')}\n`);
     console.log(`Normalizing ${jobs.length} legacy FBX files with Unity...`);
     await runProcess(unity, [
-      "-batchmode",
-      "-nographics",
-      "-quit",
-      "-projectPath",
+      '-batchmode',
+      '-nographics',
+      '-quit',
+      '-projectPath',
       tempRoot,
-      "-executeMethod",
-      "RtsFbxNormalizer.Run",
-      "-rtsFbxManifest",
+      '-executeMethod',
+      'RtsFbxNormalizer.Run',
+      '-rtsFbxManifest',
       manifest,
-      "-logFile",
-      join(tempRoot, "unity.log"),
+      '-logFile',
+      join(tempRoot, 'unity.log'),
     ]);
   }
 
@@ -771,8 +647,8 @@ async function normalizeLegacyFbx(
     const blender = await findBlender(blenderOverride);
     if (!blender) {
       throw new Error(
-        "Some Athena2 animation curves require Blender 4.5. Install it or " +
-          "pass its executable path with --blender.",
+        'Some Athena2 animation curves require Blender 4.5. Install it or ' +
+          'pass its executable path with --blender.',
       );
     }
     const jobs = blenderSources.map((source) => {
@@ -780,18 +656,16 @@ async function normalizeLegacyFbx(
       paths.set(source, destination);
       return { source, destination };
     });
-    const manifest = join(tempRoot, "blender-fbx-jobs.json");
+    const manifest = join(tempRoot, 'blender-fbx-jobs.json');
     await writeFile(manifest, `${JSON.stringify(jobs, null, 2)}\n`);
-    const script = fileURLToPath(
-      new URL("./blender-roundtrip-fbx.py", import.meta.url),
-    );
+    const script = fileURLToPath(new URL('./blender-roundtrip-fbx.py', import.meta.url));
     console.log(`Repairing ${jobs.length} FBX animation files with Blender...`);
     await runProcess(blender, [
-      "--background",
-      "--factory-startup",
-      "--python",
+      '--background',
+      '--factory-startup',
+      '--python',
       script,
-      "--",
+      '--',
       manifest,
     ]);
   }
@@ -800,20 +674,11 @@ async function normalizeLegacyFbx(
   return { paths, tempRoot };
 }
 
-async function joinMultipartGeometry(
-  specs,
-  meshes,
-  normalizedPaths,
-  blenderOverride,
-) {
+async function joinMultipartGeometry(specs, meshes, normalizedPaths, blenderOverride) {
   const jobs = [];
   for (const spec of specs) {
     if (!spec.joinInBlender) continue;
-    const original = join(
-      meshes,
-      spec.source,
-      spec.geometryFile ?? spec.files[spec.geometry],
-    );
+    const original = join(meshes, spec.source, spec.geometryFile ?? spec.files[spec.geometry]);
     const source = normalizedPaths.get(original) ?? original;
     const scene = await loadFbx(source);
     let skinnedCount = 0;
@@ -827,13 +692,13 @@ async function joinMultipartGeometry(
   const blender = await findBlender(blenderOverride);
   if (!blender) {
     throw new Error(
-      "The selected Athena2 units contain multipart rigs. Install Blender 4.5 " +
-        "or pass its executable path with --blender.",
+      'The selected Athena2 units contain multipart rigs. Install Blender 4.5 ' +
+        'or pass its executable path with --blender.',
     );
   }
 
-  const tempRoot = await mkdtemp(join(tmpdir(), "rts-athena2-blender-"));
-  const outputRoot = join(tempRoot, "Joined");
+  const tempRoot = await mkdtemp(join(tmpdir(), 'rts-athena2-blender-'));
+  const outputRoot = join(tempRoot, 'Joined');
   await mkdir(outputRoot, { recursive: true });
   const paths = new Map();
   const manifestJobs = jobs.map(({ spec, source }, index) => {
@@ -841,19 +706,17 @@ async function joinMultipartGeometry(
     paths.set(spec.slug, destination);
     return { source, destination };
   });
-  const manifest = join(tempRoot, "fbx-jobs.json");
+  const manifest = join(tempRoot, 'fbx-jobs.json');
   await writeFile(manifest, `${JSON.stringify(manifestJobs, null, 2)}\n`);
 
-  const script = fileURLToPath(
-    new URL("./blender-normalize-fbx.py", import.meta.url),
-  );
+  const script = fileURLToPath(new URL('./blender-normalize-fbx.py', import.meta.url));
   console.log(`Joining ${jobs.length} multipart model rigs with Blender...`);
   await runProcess(blender, [
-    "--background",
-    "--factory-startup",
-    "--python",
+    '--background',
+    '--factory-startup',
+    '--python',
     script,
-    "--",
+    '--',
     manifest,
   ]);
   await Promise.all([...paths.values()].map((path) => access(path)));
@@ -865,13 +728,7 @@ async function findBlender(override) {
   return firstAvailablePath([
     override ? resolve(override) : null,
     localAppData
-      ? join(
-          localAppData,
-          "Programs",
-          "Blender Foundation",
-          "Blender 4.5",
-          "blender.exe",
-        )
+      ? join(localAppData, 'Programs', 'Blender Foundation', 'Blender 4.5', 'blender.exe')
       : null,
   ]);
 }
@@ -883,7 +740,7 @@ async function firstAvailablePath(candidates) {
       await access(candidate);
       return candidate;
     } catch (error) {
-      if (error.code !== "ENOENT") throw error;
+      if (error.code !== 'ENOENT') throw error;
     }
   }
   return null;
@@ -892,37 +749,29 @@ async function firstAvailablePath(candidates) {
 async function runProcess(command, commandArgs) {
   await new Promise((resolvePromise, reject) => {
     const child = spawn(command, commandArgs, {
-      stdio: ["ignore", "inherit", "inherit"],
+      stdio: ['ignore', 'inherit', 'inherit'],
       windowsHide: true,
     });
-    child.on("error", reject);
-    child.on("exit", (code, signal) => {
+    child.on('error', reject);
+    child.on('exit', (code, signal) => {
       if (code === 0) resolvePromise();
-      else
-        reject(
-          new Error(
-            `${command} exited with ${code ?? `signal ${signal ?? "unknown"}`}`,
-          ),
-        );
+      else reject(new Error(`${command} exited with ${code ?? `signal ${signal ?? 'unknown'}`}`));
     });
   });
 }
 
 async function stageTexture(source, destination) {
   const extension = extname(source).toLowerCase();
-  if (extension === ".png") {
+  if (extension === '.png') {
     await copyFile(source, destination);
     return;
   }
-  if (extension !== ".tga") {
+  if (extension !== '.tga') {
     throw new Error(`Unsupported team texture format: ${source}`);
   }
 
   const bytes = await readFile(source);
-  const array = bytes.buffer.slice(
-    bytes.byteOffset,
-    bytes.byteOffset + bytes.byteLength,
-  );
+  const array = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   const image = new TGALoader().parse(array);
   await sharp(image.data, {
     raw: { width: image.width, height: image.height, channels: 4 },
@@ -933,17 +782,13 @@ async function stageTexture(source, destination) {
 
 async function loadFbx(path) {
   const bytes = await readFile(path);
-  const array = bytes.buffer.slice(
-    bytes.byteOffset,
-    bytes.byteOffset + bytes.byteLength,
-  );
+  const array = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   const originalError = console.error;
   let ignoredTrajectoryCycle = false;
   console.error = (message, object, ...rest) => {
     if (
-      message ===
-        "THREE.Object3D.add: object can't be added as a child of itself." &&
-      object?.name?.startsWith("z_DTrajEdit_")
+      message === "THREE.Object3D.add: object can't be added as a child of itself." &&
+      object?.name?.startsWith('z_DTrajEdit_')
     ) {
       // Sphinx's run FBX contains a circular 3ds Max trajectory-helper link.
       // Object3D correctly refuses that editor-only edge; the rig and mesh are
@@ -954,15 +799,10 @@ async function loadFbx(path) {
     originalError(message, object, ...rest);
   };
   try {
-    const scene = new FBXLoader().parse(
-      array,
-      `${dirname(path).replaceAll("\\", "/")}/`,
-    );
+    const scene = new FBXLoader().parse(array, `${dirname(path).replaceAll('\\', '/')}/`);
     if (ignoredTrajectoryCycle && !warnedTrajectoryCycles.has(path)) {
       warnedTrajectoryCycles.add(path);
-      console.warn(
-        `${basename(path)}: ignored a cyclic editor-only trajectory helper`,
-      );
+      console.warn(`${basename(path)}: ignored a cyclic editor-only trajectory helper`);
     }
     return scene;
   } finally {
@@ -979,8 +819,7 @@ function authoredClip(scene, bindScene, spec, clipName, timing) {
     bindScene.traverse((object) => {
       if (!bone && object.isBone) bone = object;
     });
-    if (!bone)
-      throw new Error(`${spec.unit} ${clipName}: no bone for static pose`);
+    if (!bone) throw new Error(`${spec.unit} ${clipName}: no bone for static pose`);
     const values = new Float32Array(8);
     bone.quaternion.toArray(values, 0);
     bone.quaternion.toArray(values, 4);
@@ -997,7 +836,7 @@ function authoredClip(scene, bindScene, spec, clipName, timing) {
   if (nonEmpty.length === 0) {
     throw new Error(
       `${spec.unit} ${clipName}: expected one non-empty animation, found ` +
-        `${scene.animations.length} (${scene.animations.map((clip) => clip.duration).join(", ")})`,
+        `${scene.animations.length} (${scene.animations.map((clip) => clip.duration).join(', ')})`,
     );
   }
   if (nonEmpty.length === 1) return nonEmpty[0];
@@ -1027,9 +866,7 @@ function takeWindowForClip(windows, clip, spec, clipName, timing, normalized) {
       stop = Math.max(stop, track.times.at(-1));
     }
     if (!(stop > start)) {
-      throw new Error(
-        `${spec.unit} ${clipName}: normalized clip has an empty time window`,
-      );
+      throw new Error(`${spec.unit} ${clipName}: normalized clip has an empty time window`);
     }
     // Blender and Unity export repaired actions in a zero-based time domain,
     // while the source FBX stack and Unity's per-file clip override can refer
@@ -1047,7 +884,7 @@ function takeWindowForClip(windows, clip, spec, clipName, timing, normalized) {
   if (exact.length === 1) return exact[0];
   throw new Error(
     `${spec.unit} ${clipName}: could not select ${clip.name} from FBX takes ` +
-      `(${windows.map((window) => window.name).join(", ")})`,
+      `(${windows.map((window) => window.name).join(', ')})`,
   );
 }
 
@@ -1059,14 +896,12 @@ function mergeRenderableMeshes(scene, spec) {
     if (object.isMesh) renderableMeshes.push(object);
   });
   if (skinnedMeshes.length === 0) {
-    throw new Error(
-      `${spec.unit} geometry: expected a skinned mesh after joining`,
-    );
+    throw new Error(`${spec.unit} geometry: expected a skinned mesh after joining`);
   }
 
   const mesh = skinnedMeshes.reduce((largest, candidate) =>
-    candidate.geometry.getAttribute("position").count >
-    largest.geometry.getAttribute("position").count
+    candidate.geometry.getAttribute('position').count >
+    largest.geometry.getAttribute('position').count
       ? candidate
       : largest,
   );
@@ -1078,9 +913,7 @@ function mergeRenderableMeshes(scene, spec) {
   // selected KTX2 team skin. Groups would nevertheless become multiple glTF
   // primitives, so flatten them explicitly.
   mesh.geometry.clearGroups();
-  const material = Array.isArray(mesh.material)
-    ? mesh.material[0]
-    : mesh.material;
+  const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
   mesh.material = material ?? new THREE.MeshStandardMaterial();
   validateSkinnedMesh(mesh, spec);
 
@@ -1099,12 +932,8 @@ function mergeRenderableMeshes(scene, spec) {
 function applyBoundsVertexCount(mesh, spec) {
   const retained = spec.boundsVertexCount;
   if (retained === null) return;
-  const position = mesh.geometry.getAttribute("position");
-  if (
-    !Number.isSafeInteger(retained) ||
-    retained <= 0 ||
-    retained > position.count
-  ) {
+  const position = mesh.geometry.getAttribute('position');
+  if (!Number.isSafeInteger(retained) || retained <= 0 || retained > position.count) {
     throw new Error(
       `${spec.unit} geometry: invalid bounds vertex count ${retained} for ${position.count} vertices`,
     );
@@ -1122,17 +951,9 @@ function applyBoundsVertexCount(mesh, spec) {
 }
 
 function validateSkinnedMesh(mesh, spec) {
-  for (const attribute of [
-    "position",
-    "normal",
-    "uv",
-    "skinIndex",
-    "skinWeight",
-  ]) {
+  for (const attribute of ['position', 'normal', 'uv', 'skinIndex', 'skinWeight']) {
     if (!mesh.geometry.getAttribute(attribute)) {
-      throw new Error(
-        `${spec.unit} geometry: missing ${attribute} geometry attribute`,
-      );
+      throw new Error(`${spec.unit} geometry: missing ${attribute} geometry attribute`);
     }
   }
   if (mesh.skeleton.bones.length === 0) {
@@ -1217,7 +1038,7 @@ function mergeMeshParts(base, renderableMeshes, scene, spec) {
 }
 
 function matrixKey(matrix) {
-  return matrix.elements.map((value) => value.toFixed(5)).join(",");
+  return matrix.elements.map((value) => value.toFixed(5)).join(',');
 }
 
 function combineGeometry(sources, spec) {
@@ -1227,27 +1048,20 @@ function combineGeometry(sources, spec) {
     let geometry = source.geometry.clone();
     if (geometry.index) geometry = geometry.toNonIndexed();
     if (source.transform) geometry.applyMatrix4(source.transform);
-    if (!geometry.getAttribute("normal")) geometry.computeVertexNormals();
-    const position = geometry.getAttribute("position");
-    const normal = geometry.getAttribute("normal");
-    const uv = geometry.getAttribute("uv");
+    if (!geometry.getAttribute('normal')) geometry.computeVertexNormals();
+    const position = geometry.getAttribute('position');
+    const normal = geometry.getAttribute('normal');
+    const uv = geometry.getAttribute('uv');
     if (!position || !normal || !uv) {
-      throw new Error(
-        `${spec.unit} geometry: a rigid part lacks position/normal/uv`,
-      );
+      throw new Error(`${spec.unit} geometry: a rigid part lacks position/normal/uv`);
     }
-    const skinIndex = geometry.getAttribute("skinIndex");
-    const skinWeight = geometry.getAttribute("skinWeight");
+    const skinIndex = geometry.getAttribute('skinIndex');
+    const skinWeight = geometry.getAttribute('skinWeight');
     if (
       source.rigidJoint === null &&
-      (!skinIndex ||
-        !skinWeight ||
-        skinIndex.itemSize !== 4 ||
-        skinWeight.itemSize !== 4)
+      (!skinIndex || !skinWeight || skinIndex.itemSize !== 4 || skinWeight.itemSize !== 4)
     ) {
-      throw new Error(
-        `${spec.unit} geometry: the deforming mesh lacks skin weights`,
-      );
+      throw new Error(`${spec.unit} geometry: the deforming mesh lacks skin weights`);
     }
     chunks.push({
       position,
@@ -1286,13 +1100,13 @@ function combineGeometry(sources, spec) {
           const sourceJoint = chunk.skinIndex.getComponent(vertex, component);
           const destinationJoint = chunk.jointMap[sourceJoint];
           if (destinationJoint === undefined) {
-            throw new Error(
-              `${spec.unit} geometry: skin index ${sourceJoint} has no merged joint`,
-            );
+            throw new Error(`${spec.unit} geometry: skin index ${sourceJoint} has no merged joint`);
           }
           skinIndices[destination * 4 + component] = destinationJoint;
-          skinWeights[destination * 4 + component] =
-            chunk.skinWeight.getComponent(vertex, component);
+          skinWeights[destination * 4 + component] = chunk.skinWeight.getComponent(
+            vertex,
+            component,
+          );
         }
       }
     }
@@ -1300,14 +1114,11 @@ function combineGeometry(sources, spec) {
   }
 
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
-  geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
-  geometry.setAttribute("skinIndex", new THREE.BufferAttribute(skinIndices, 4));
-  geometry.setAttribute(
-    "skinWeight",
-    new THREE.BufferAttribute(skinWeights, 4),
-  );
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  geometry.setAttribute('skinIndex', new THREE.BufferAttribute(skinIndices, 4));
+  geometry.setAttribute('skinWeight', new THREE.BufferAttribute(skinWeights, 4));
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
   return geometry;
@@ -1316,7 +1127,7 @@ function combineGeometry(sources, spec) {
 function demoteMesh(object) {
   object.isMesh = false;
   object.isSkinnedMesh = false;
-  object.type = "Group";
+  object.type = 'Group';
   object.geometry = undefined;
   object.material = undefined;
   object.skeleton = undefined;
@@ -1341,9 +1152,7 @@ function validateGlb(data, spec) {
     const type = view.getUint32(offset + 4, true);
     if (type === 0x4e4f534a) {
       json = JSON.parse(
-        new TextDecoder()
-          .decode(bytes.subarray(offset + 8, offset + 8 + length))
-          .trim(),
+        new TextDecoder().decode(bytes.subarray(offset + 8, offset + 8 + length)).trim(),
       );
       break;
     }
@@ -1352,21 +1161,13 @@ function validateGlb(data, spec) {
   if (!json) throw new Error(`${spec.unit}: exported GLB has no JSON chunk`);
 
   if (json.meshes?.length !== 1 || json.meshes[0].primitives?.length !== 1) {
-    throw new Error(
-      `${spec.unit}: exported GLB must contain one mesh with one primitive`,
-    );
+    throw new Error(`${spec.unit}: exported GLB must contain one mesh with one primitive`);
   }
   if (json.skins?.length !== 1) {
     throw new Error(`${spec.unit}: exported GLB must contain one skin`);
   }
   const attributes = json.meshes[0].primitives[0].attributes ?? {};
-  for (const attribute of [
-    "POSITION",
-    "NORMAL",
-    "TEXCOORD_0",
-    "JOINTS_0",
-    "WEIGHTS_0",
-  ]) {
+  for (const attribute of ['POSITION', 'NORMAL', 'TEXCOORD_0', 'JOINTS_0', 'WEIGHTS_0']) {
     if (!(attribute in attributes)) {
       throw new Error(`${spec.unit}: exported GLB is missing ${attribute}`);
     }
@@ -1374,18 +1175,15 @@ function validateGlb(data, spec) {
   const clipNames = (json.animations ?? [])
     .map((clip) => clip.name)
     .sort()
-    .join(",");
-  if (clipNames !== "attack,die,run") {
-    throw new Error(
-      `${spec.unit}: exported GLB clips are ${clipNames || "absent"}`,
-    );
+    .join(',');
+  if (clipNames !== 'attack,die,run') {
+    throw new Error(`${spec.unit}: exported GLB clips are ${clipNames || 'absent'}`);
   }
 }
 
 function validateClipTargets(scene, clips, spec) {
   for (const clip of clips) {
-    if (!clip.validate())
-      throw new Error(`${spec.unit} ${clip.name}: invalid animation clip`);
+    if (!clip.validate()) throw new Error(`${spec.unit} ${clip.name}: invalid animation clip`);
     for (const track of clip.tracks) {
       const parsed = THREE.PropertyBinding.parseTrackName(track.name);
       if (!THREE.PropertyBinding.findNode(scene, parsed.nodeName)) {
@@ -1424,19 +1222,17 @@ function namedClip(scene, clip, name, spec, timing, sourceScene, options = {}) {
   }
   if (dropped.length > 0) {
     const sourceJoints = skinJointNames(sourceScene);
-    const missingJoints = [...new Set(dropped)].filter((node) =>
-      sourceJoints.has(node),
-    );
+    const missingJoints = [...new Set(dropped)].filter((node) => sourceJoints.has(node));
     if (missingJoints.length > 0) {
       throw new Error(
         `${spec.unit} ${name}: geometry rig is missing animated skin joints ` +
-          `(${missingJoints.join(", ")})`,
+          `(${missingJoints.join(', ')})`,
       );
     }
-    const examples = [...new Set(dropped)].slice(0, 4).join(", ");
+    const examples = [...new Set(dropped)].slice(0, 4).join(', ');
     console.warn(
       `${spec.unit} ${name}: dropping ${dropped.length} absent helper tracks` +
-        (examples ? ` (${examples}${dropped.length > 4 ? ", ..." : ""})` : ""),
+        (examples ? ` (${examples}${dropped.length > 4 ? ', ...' : ''})` : ''),
     );
   }
   copy.tracks = kept;
@@ -1459,13 +1255,7 @@ function namedClip(scene, clip, name, spec, timing, sourceScene, options = {}) {
   return copy;
 }
 
-function canonicalizeDuplicateTracks(
-  tracks,
-  scene,
-  sourceTime,
-  spec,
-  clipName,
-) {
+function canonicalizeDuplicateTracks(tracks, scene, sourceTime, spec, clipName) {
   const groups = new Map();
   for (const track of tracks) {
     const group = groups.get(track.name) ?? [];
@@ -1484,8 +1274,7 @@ function canonicalizeDuplicateTracks(
     }
     const parsed = THREE.PropertyBinding.parseTrackName(trackName);
     const target =
-      weightedBones.get(parsed.nodeName) ??
-      THREE.PropertyBinding.findNode(scene, parsed.nodeName);
+      weightedBones.get(parsed.nodeName) ?? THREE.PropertyBinding.findNode(scene, parsed.nodeName);
     if (!target) {
       canonical.push(candidates[0]);
       resolved += candidates.length - 1;
@@ -1506,11 +1295,7 @@ function canonicalizeDuplicateTracks(
     let bestDistance = Infinity;
     for (const candidate of candidates) {
       const sampled = candidate.createInterpolant().evaluate(sourceTime);
-      const distance = transformDistance(
-        sampled,
-        restValue,
-        parsed.propertyName === "quaternion",
-      );
+      const distance = transformDistance(sampled, restValue, parsed.propertyName === 'quaternion');
       if (distance < bestDistance) {
         best = candidate;
         bestDistance = distance;
@@ -1521,10 +1306,8 @@ function canonicalizeDuplicateTracks(
   }
   if (resolved > 0 || droppedHelpers > 0) {
     console.warn(
-      `${spec.unit} ${clipName}: resolved ${resolved} duplicate animation track${resolved === 1 ? "" : "s"}` +
-        (droppedHelpers > 0
-          ? ` and dropped ${droppedHelpers} duplicate helper tracks`
-          : ""),
+      `${spec.unit} ${clipName}: resolved ${resolved} duplicate animation track${resolved === 1 ? '' : 's'}` +
+        (droppedHelpers > 0 ? ` and dropped ${droppedHelpers} duplicate helper tracks` : ''),
     );
   }
   return canonical;
@@ -1562,13 +1345,9 @@ function renameConflictingAnimationHelpers(scene, spec) {
     renamed++;
   });
   if (renamed === 0) {
-    throw new Error(
-      `${spec.unit}: expected conflicting helper and skin-joint names`,
-    );
+    throw new Error(`${spec.unit}: expected conflicting helper and skin-joint names`);
   }
-  console.warn(
-    `${spec.unit}: renamed ${renamed} helpers that shadow animated skin joints`,
-  );
+  console.warn(`${spec.unit}: renamed ${renamed} helpers that shadow animated skin joints`);
 }
 
 function affectsWeightedBones(target, weightedBones) {
@@ -1605,10 +1384,7 @@ function strictlyIncreasingTrack(track) {
   );
   const unique = [];
   for (const index of indices) {
-    if (
-      unique.length > 0 &&
-      track.times[unique[unique.length - 1]] === track.times[index]
-    ) {
+    if (unique.length > 0 && track.times[unique[unique.length - 1]] === track.times[index]) {
       unique[unique.length - 1] = index;
     } else {
       unique.push(index);
@@ -1621,19 +1397,11 @@ function strictlyIncreasingTrack(track) {
   unique.forEach((sourceIndex, outputIndex) => {
     times[outputIndex] = track.times[sourceIndex];
     values.set(
-      track.values.subarray(
-        sourceIndex * valueSize,
-        (sourceIndex + 1) * valueSize,
-      ),
+      track.values.subarray(sourceIndex * valueSize, (sourceIndex + 1) * valueSize),
       outputIndex * valueSize,
     );
   });
-  return new track.constructor(
-    track.name,
-    times,
-    values,
-    track.getInterpolation(),
-  );
+  return new track.constructor(track.name, times, values, track.getInterpolation());
 }
 
 function resampleTakeWindow(clip, timing, window) {
@@ -1652,17 +1420,9 @@ function resampleTakeWindow(clip, timing, window) {
     for (let frame = 0; frame < sampleCount; frame++) {
       const ratio = frame / timing.frames;
       times[frame] = ratio * timing.duration;
-      values.set(
-        interpolant.evaluate(window.start + ratio * sourceDuration),
-        frame * valueSize,
-      );
+      values.set(interpolant.evaluate(window.start + ratio * sourceDuration), frame * valueSize);
     }
-    return new track.constructor(
-      track.name,
-      times,
-      values,
-      track.getInterpolation(),
-    );
+    return new track.constructor(track.name, times, values, track.getInterpolation());
   });
   clip.duration = timing.duration;
 }
@@ -1685,9 +1445,9 @@ function applyClipGeometryCorrections(clip, corrections, spec, clipName) {
     const scale = new THREE.Vector3();
     matrix.decompose(position, quaternion, scale);
     clip.tracks.push(
-      constantTransformTrack(anchor, "position", position, duration),
-      constantTransformTrack(anchor, "quaternion", quaternion, duration),
-      constantTransformTrack(anchor, "scale", scale, duration),
+      constantTransformTrack(anchor, 'position', position, duration),
+      constantTransformTrack(anchor, 'quaternion', quaternion, duration),
+      constantTransformTrack(anchor, 'scale', scale, duration),
     );
   }
 }
@@ -1709,16 +1469,12 @@ function completeMissingJointTracks(scene, sourceScene, clip, spec, clipName) {
       );
     }
     if (!target?.isBone) {
-      throw new Error(
-        `${spec.unit} ${clipName}: geometry rig lacks source skin joint ${joint}`,
-      );
+      throw new Error(`${spec.unit} ${clipName}: geometry rig lacks source skin joint ${joint}`);
     }
-    for (const property of ["position", "quaternion", "scale"]) {
+    for (const property of ['position', 'quaternion', 'scale']) {
       const key = `${joint}|${property}`;
       if (tracked.has(key)) continue;
-      clip.tracks.push(
-        constantTransformTrack(joint, property, source[property], duration),
-      );
+      clip.tracks.push(constantTransformTrack(joint, property, source[property], duration));
       tracked.add(key);
     }
   }
@@ -1728,14 +1484,8 @@ function constantTransformTrack(node, property, value, duration) {
   const item = value.toArray();
   const values = new Float32Array([...item, ...item]);
   const Track =
-    property === "quaternion"
-      ? THREE.QuaternionKeyframeTrack
-      : THREE.VectorKeyframeTrack;
-  return new Track(
-    `${node}.${property}`,
-    new Float32Array([0, duration]),
-    values,
-  );
+    property === 'quaternion' ? THREE.QuaternionKeyframeTrack : THREE.VectorKeyframeTrack;
+  return new Track(`${node}.${property}`, new Float32Array([0, duration]), values);
 }
 
 function skinJointNames(scene) {
@@ -1775,8 +1525,7 @@ function retimeClip(clip, duration) {
     }
   }
   clip.resetDuration();
-  if (!(clip.duration > 0))
-    throw new Error(`${clip.name}: cannot retime an empty clip`);
+  if (!(clip.duration > 0)) throw new Error(`${clip.name}: cannot retime an empty clip`);
   const scale = duration / clip.duration;
   for (const track of clip.tracks) track.scale(scale);
   clip.duration = duration;
@@ -1810,7 +1559,7 @@ function removeUnsupportedSceneObjects(scene) {
       object.isLine = false;
       object.isLineSegments = false;
       object.isPoints = false;
-      object.type = "Group";
+      object.type = 'Group';
     }
   });
   for (const object of remove) object.removeFromParent();
@@ -1818,11 +1567,8 @@ function removeUnsupportedSceneObjects(scene) {
 
 async function validateAnimationInventory(root) {
   const actual = (await readdir(root, { withFileTypes: true }))
-    .filter(
-      (entry) =>
-        entry.isFile() && extname(entry.name).toLowerCase() === ".asset",
-    )
-    .map((entry) => entry.name.slice(0, -".asset".length))
+    .filter((entry) => entry.isFile() && extname(entry.name).toLowerCase() === '.asset')
+    .map((entry) => entry.name.slice(0, -'.asset'.length))
     .sort();
   const expected = ATHENA2_MODELS.map((spec) => spec.animationAsset).sort();
   const actualSet = new Set(actual);
@@ -1832,17 +1578,17 @@ async function validateAnimationInventory(root) {
   if (missing.length > 0 || unexpected.length > 0) {
     throw new Error(
       `Athena2 animation inventory does not match the ${ATHENA2_MODELS.length}-unit manifest.` +
-        (missing.length > 0 ? ` Missing: ${missing.join(", ")}.` : "") +
-        (unexpected.length > 0 ? ` Unexpected: ${unexpected.join(", ")}.` : ""),
+        (missing.length > 0 ? ` Missing: ${missing.join(', ')}.` : '') +
+        (unexpected.length > 0 ? ` Unexpected: ${unexpected.join(', ')}.` : ''),
     );
   }
 }
 
 async function readAuthoredAnimation(path, spec) {
   const wantedSlots = new Map([
-    [1, "run"],
-    [2, "attack"],
-    [4, "die"],
+    [1, 'run'],
+    [2, 'attack'],
+    [4, 'die'],
   ]);
   const records = new Map();
   let slot = -1;
@@ -1862,7 +1608,7 @@ async function readAuthoredAnimation(path, spec) {
     crlfDelay: Infinity,
   });
   for await (const line of lines) {
-    if (line.startsWith("  - Variants:")) {
+    if (line.startsWith('  - Variants:')) {
       finishSlot();
       slot++;
       variant = -1;
@@ -1881,20 +1627,16 @@ async function readAuthoredAnimation(path, spec) {
       continue;
     }
     if (variant !== 0 || !firstVariant) continue;
-    if (line.startsWith("      - Vertices:")) {
+    if (line.startsWith('      - Vertices:')) {
       firstVariant.frames++;
       // Frame zero is the stable same-pose scale reference. A union across the
       // full run can include authored root motion and would make movement
       // distance masquerade as body size in the gallery.
-      readingRunVertices =
-        slot === 1 && firstVariant.frames === 1 && !line.endsWith("[]");
+      readingRunVertices = slot === 1 && firstVariant.frames === 1 && !line.endsWith('[]');
       continue;
     }
     if (readingRunVertices) {
-      const vertex =
-        /^        - \{x:\s*([^,]+), y:\s*([^,]+), z:\s*([^}]+)\}\s*$/.exec(
-          line,
-        );
+      const vertex = /^        - \{x:\s*([^,]+), y:\s*([^,]+), z:\s*([^}]+)\}\s*$/.exec(line);
       if (vertex) {
         const values = vertex.slice(1).map(Number);
         if (!values.every(Number.isFinite)) {
@@ -1950,17 +1692,12 @@ async function writeCatalog(output, timings, runSizes, completeModels) {
     try {
       await access(modelPath);
     } catch (error) {
-      if (error.code === "ENOENT") continue;
+      if (error.code === 'ENOENT') continue;
       throw error;
     }
     const runSize = runSizes.get(spec.animationAsset);
     const runGroundY = spec.runGround
-      ? await deriveRunGroundY(
-          modelPath,
-          spec,
-          timings.get(spec.animationAsset).run,
-          runSize,
-        )
+      ? await deriveRunGroundY(modelPath, spec, timings.get(spec.animationAsset).run, runSize)
       : null;
     models.push({
       unit: spec.unit,
@@ -1977,17 +1714,12 @@ async function writeCatalog(output, timings, runSizes, completeModels) {
       .flat()
       .map((unit, index) => [unit, index]),
   );
-  models.sort(
-    (left, right) => catalogOrder.get(left.unit) - catalogOrder.get(right.unit),
-  );
+  models.sort((left, right) => catalogOrder.get(left.unit) - catalogOrder.get(right.unit));
   const catalog = {
     version: 2,
     models,
   };
-  await writeFile(
-    join(output, "all-units.json"),
-    `${JSON.stringify(catalog, null, 2)}\n`,
-  );
+  await writeFile(join(output, 'all-units.json'), `${JSON.stringify(catalog, null, 2)}\n`);
 }
 
 /**
@@ -1999,11 +1731,8 @@ async function writeCatalog(output, timings, runSizes, completeModels) {
  */
 async function deriveRunGroundY(path, spec, runTiming, runSize) {
   const bytes = await readFile(path);
-  const arrayBuffer = bytes.buffer.slice(
-    bytes.byteOffset,
-    bytes.byteOffset + bytes.byteLength,
-  );
-  const gltf = await new GLTFLoader().parseAsync(arrayBuffer, "");
+  const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  const gltf = await new GLTFLoader().parseAsync(arrayBuffer, '');
   const meshes = [];
   gltf.scene.traverse((object) => {
     if (object.isSkinnedMesh) meshes.push(object);
@@ -2014,9 +1743,9 @@ async function deriveRunGroundY(path, spec, runTiming, runSize) {
     );
   }
   const mesh = meshes[0];
-  const position = mesh.geometry.getAttribute("position");
-  const skinIndex = mesh.geometry.getAttribute("skinIndex");
-  const skinWeight = mesh.geometry.getAttribute("skinWeight");
+  const position = mesh.geometry.getAttribute('position');
+  const skinIndex = mesh.geometry.getAttribute('skinIndex');
+  const skinWeight = mesh.geometry.getAttribute('skinWeight');
   if (!position || !skinIndex || !skinWeight) {
     throw new Error(`${spec.unit}: runGround mesh has incomplete skin data`);
   }
@@ -2037,7 +1766,7 @@ async function deriveRunGroundY(path, spec, runTiming, runSize) {
   }
   if (groundBones.size === 0) {
     throw new Error(
-      `${spec.unit}: no bones match runGround tokens ${spec.runGround.bones.join(", ")}`,
+      `${spec.unit}: no bones match runGround tokens ${spec.runGround.bones.join(', ')}`,
     );
   }
   const groundVertices = [];
@@ -2056,7 +1785,7 @@ async function deriveRunGroundY(path, spec, runTiming, runSize) {
     throw new Error(`${spec.unit}: runGround matched no weighted vertices`);
   }
 
-  const clip = gltf.animations.find((animation) => animation.name === "run");
+  const clip = gltf.animations.find((animation) => animation.name === 'run');
   if (!clip) throw new Error(`${spec.unit}: final GLB has no run clip`);
   const mixer = new THREE.AnimationMixer(gltf.scene);
   const action = mixer.clipAction(clip);
@@ -2090,16 +1819,11 @@ async function deriveRunGroundY(path, spec, runTiming, runSize) {
   const modelSize = firstFrameBounds.getSize(new THREE.Vector3());
   const modelExtent = Math.max(modelSize.x, modelSize.y, modelSize.z);
   const authoredExtent = Math.max(...runSize);
-  if (
-    !(modelExtent > 0) ||
-    !(authoredExtent > 0) ||
-    !Number.isFinite(footMinY)
-  ) {
+  if (!(modelExtent > 0) || !(authoredExtent > 0) || !Number.isFinite(footMinY)) {
     throw new Error(`${spec.unit}: could not derive a finite run ground plane`);
   }
   const modelUnitsPerAthena2Unit = modelExtent / authoredExtent;
-  const runGroundY =
-    footMinY - spec.runGround.margin * modelUnitsPerAthena2Unit;
+  const runGroundY = footMinY - spec.runGround.margin * modelUnitsPerAthena2Unit;
   const rounded = Number(runGroundY.toFixed(9));
   console.log(
     `  ${spec.unit}: run ground ${rounded} from ${groundVertices.length} weighted vertices`,
@@ -2111,15 +1835,14 @@ function parseArgs(values) {
   const parsed = {};
   for (let i = 0; i < values.length; i++) {
     const arg = values[i];
-    if (!arg.startsWith("--")) throw new Error(`Unexpected argument: ${arg}`);
+    if (!arg.startsWith('--')) throw new Error(`Unexpected argument: ${arg}`);
     const key = arg.slice(2);
-    if (key === "include-existing") {
-      parsed[key] = "true";
+    if (key === 'include-existing') {
+      parsed[key] = 'true';
       continue;
     }
     const value = values[++i];
-    if (!value || value.startsWith("--"))
-      throw new Error(`Missing value for --${key}`);
+    if (!value || value.startsWith('--')) throw new Error(`Missing value for --${key}`);
     parsed[key] = value;
   }
   return parsed;
@@ -2150,9 +1873,9 @@ function installBrowserShims() {
           listeners.delete(type);
         },
       };
-      Object.defineProperty(image, "src", {
+      Object.defineProperty(image, 'src', {
         set() {
-          queueMicrotask(() => listeners.get("load")?.());
+          queueMicrotask(() => listeners.get('load')?.());
         },
       });
       return image;
@@ -2171,8 +1894,8 @@ function installBrowserShims() {
 
     readAsDataURL(blob) {
       void blob.arrayBuffer().then((result) => {
-        const type = blob.type || "application/octet-stream";
-        this.result = `data:${type};base64,${Buffer.from(result).toString("base64")}`;
+        const type = blob.type || 'application/octet-stream';
+        this.result = `data:${type};base64,${Buffer.from(result).toString('base64')}`;
         this.onloadend?.({ target: this });
       });
     }

@@ -16,13 +16,13 @@
  */
 
 import type { PlayerId } from '../sim/types.js';
-import { JOIN_ABANDONED, slotFromPeerIds } from './trysteroTransport.js';
+import { JOIN_ABANDONED, PROTOCOL_VERSION, slotFromPeerIds } from './trysteroTransport.js';
 import type { Packet, Transport } from './transport.js';
 
 const CHANNEL_PREFIX = 'experiment-rts:';
 
 type Envelope =
-  | { kind: 'hello'; from: string; seed: number; mode: string; reply: boolean }
+  | { kind: 'hello'; protocol: number; from: string; seed: number; mode: string; reply: boolean }
   | { kind: 'packet'; from: string; packet: Packet }
   | { kind: 'bye'; from: string };
 
@@ -103,11 +103,29 @@ export function joinLocalRoom(
       if (msg.reply) {
         channel.postMessage({
           kind: 'hello',
+          protocol: PROTOCOL_VERSION,
           from: selfId,
           seed: seedIfHost,
           mode,
           reply: false,
         } satisfies Envelope);
+      }
+
+      // Two tabs of the same origin are usually the same build, but a tab left
+      // open across a deploy is not, and it used to handshake on `mode` alone.
+      // The check Trystero performs is the check that matters here too.
+      if (msg.protocol !== PROTOCOL_VERSION) {
+        settled = true;
+        clearTimeout(timer);
+        channel.removeEventListener('message', onMessage);
+        channel.close();
+        reject(
+          new Error(
+            `The other tab is running a different version of the game ` +
+              `(protocol ${msg.protocol}, expected ${PROTOCOL_VERSION}). Reload both tabs.`,
+          ),
+        );
+        return;
       }
 
       if (msg.mode !== mode) {
@@ -130,6 +148,7 @@ export function joinLocalRoom(
     signal?.addEventListener('abort', abandon, { once: true });
     channel.postMessage({
       kind: 'hello',
+      protocol: PROTOCOL_VERSION,
       from: selfId,
       seed: seedIfHost,
       mode,
@@ -159,12 +178,17 @@ class BroadcastChannelTransport implements Transport {
     private readonly peerId: string,
     readonly localPlayer: PlayerId,
   ) {
+    // Only the paired tab is heard. A channel reaches every tab of the origin
+    // on the same room name — a third tab that joined late, or the abandoned
+    // attempt `joinLocalRoom` warns about — and the runner cannot tell a
+    // stranger's packet from the peer's by its contents, since the `player` a
+    // packet claims is whatever the sender wrote.
     channel.addEventListener('message', (event: MessageEvent<Envelope>) => {
       const msg = event.data;
-      if (!msg || msg.from === this.selfId) return;
+      if (!msg || msg.from !== this.peerId) return;
       if (msg.kind === 'packet') {
         this.packetHandler?.(msg.packet);
-      } else if (msg.kind === 'bye' && msg.from === this.peerId) {
+      } else if (msg.kind === 'bye') {
         this.lostHandler?.(this.localPlayer === 0 ? 1 : 0);
       }
     });

@@ -28,7 +28,7 @@ if (typeof ProgressEvent === 'undefined') {
   });
 }
 
-const MODEL_ROOT = fileURLToPath(new URL('../public/models/', import.meta.url));
+const MODEL_ROOT = fileURLToPath(new URL('../public/units/', import.meta.url));
 const GROUNDED_UNITS = new Map<string, readonly string[]>([
   ['FireDragon', ['foot', 'toe']],
   ['GriffinRider', ['foot', 'toe']],

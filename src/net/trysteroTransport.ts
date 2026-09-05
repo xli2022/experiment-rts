@@ -114,8 +114,12 @@ function unorderedPeerConnection(): typeof RTCPeerConnection | undefined {
  *    generation counters and the free list are all checksummed, so a v4 peer
  *    would leave a conceded army standing while a v5 peer razes it, and the two
  *    diverge on the first player to go out.
+ * 6: bots are players hosted by a peer, and their commands travel on the wire.
+ *    A v5 peer runs its bots inside the simulation and never sends for their
+ *    slots, so a v6 peer would wait forever on a turn that is never coming —
+ *    and the roster field the mode string compares was renamed besides.
  */
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 export interface HostConfig {
   roomCode: string;
@@ -147,6 +151,120 @@ export interface JoinResult {
   transport: Transport;
   seed: number;
   localPlayer: PlayerId;
+}
+
+/**
+ * The slice of a Trystero room this module uses, as a seam.
+ *
+ * Trystero needs a browser, WebRTC and a relay to reach anyone, none of which a
+ * test has. `joinOnlineRoom` therefore takes a `RoomProvider`, and the default
+ * one wraps Trystero; `tests/helpers/fakeRoom.ts` provides a switchboard on a
+ * virtual clock, so the handshake, the slot dealing, hosted bots and a room
+ * with a stranger in it can all be run in `npm test`. What the fake cannot
+ * model is the network itself — ICE, NAT, TURN, SCTP retransmission — which is
+ * why a real link still gets a manual soak before a release.
+ */
+export interface MessageContextLike {
+  readonly peerId: string;
+}
+
+export interface ActionLike {
+  send(data: unknown, options?: { target?: string }): Promise<void> | void;
+  onMessage: ((data: unknown, context: MessageContextLike) => void) | null;
+}
+
+export interface RoomLike {
+  makeAction(name: string): ActionLike;
+  onPeerJoin: ((peerId: string) => void) | null;
+  onPeerLeave: ((peerId: string) => void) | null;
+  leave(): Promise<void> | void;
+}
+
+export interface RoomJoinOptions {
+  turnConfig?: RTCIceServer[];
+  rtcPolyfill?: typeof RTCPeerConnection;
+}
+
+export interface RoomProvider {
+  /**
+   * This participant's id. Trystero's is one constant per page, which is all
+   * a browser needs; a fake supplies one per peer, since two peers sharing an
+   * id would both derive the same slot.
+   */
+  readonly selfId: string;
+  join(roomId: string, options: RoomJoinOptions): RoomLike;
+}
+
+/** Trystero itself, behind the seam. */
+export function trysteroRoomProvider(): RoomProvider {
+  return {
+    selfId,
+    join(roomId, options) {
+      const room: Room = joinRoom(
+        {
+          appId: APP_ID,
+          ...(options.turnConfig ? { turnConfig: options.turnConfig } : {}),
+          ...(options.rtcPolyfill ? { rtcPolyfill: options.rtcPolyfill } : {}),
+        },
+        roomId,
+      );
+      return adaptRoom(room);
+    },
+  };
+}
+
+/**
+ * Trystero types payloads as an index-signature JSON object. Our command and
+ * handshake types are perfectly good JSON but are declared as interfaces, and
+ * TypeScript will not structurally match those against an index signature —
+ * nor a typed handler property against the seam's `unknown` one — so the
+ * casts live here, at the one boundary, and nowhere else. Nothing is lost:
+ * Trystero serialises the value as JSON either way.
+ */
+function adaptRoom(room: Room): RoomLike {
+  return {
+    makeAction(name: string): ActionLike {
+      const action = room.makeAction(name) as MessageAction;
+      let handler: ActionLike['onMessage'] = null;
+      return {
+        send: (data, options) =>
+          action.send(
+            data as unknown as DataPayload,
+            options?.target === undefined ? undefined : { target: options.target },
+          ),
+        get onMessage() {
+          return handler;
+        },
+        set onMessage(next) {
+          handler = next;
+          action.onMessage =
+            next === null ? null : (data, context) => next(data, { peerId: context.peerId });
+        },
+      };
+    },
+    get onPeerJoin() {
+      return room.onPeerJoin;
+    },
+    set onPeerJoin(next) {
+      room.onPeerJoin = next;
+    },
+    get onPeerLeave() {
+      return room.onPeerLeave;
+    },
+    set onPeerLeave(next) {
+      room.onPeerLeave = next;
+    },
+    leave: () => room.leave(),
+  };
+}
+
+/**
+ * A send or a leave that fails has nothing to tell us: the peer is gone, and
+ * `onPeerLeave` is the report of that. Leaving the rejection unhandled would
+ * only surface as an unhandled-rejection error in the console.
+ */
+function swallow(result: Promise<void> | void): void {
+  void Promise.resolve(result).catch(() => undefined);
 }
 
 /**
@@ -189,31 +307,25 @@ export function slotFromPeerIds(localId: string, remoteId: string): PlayerId {
  * role it will play — the same code path serves "host" and "join", and the room
  * code is the only thing a player has to share.
  */
-export function joinOnlineRoom(config: HostConfig, timeoutMs = 90000): Promise<JoinResult> {
+export function joinOnlineRoom(
+  config: HostConfig,
+  timeoutMs = 90000,
+  provider: RoomProvider = trysteroRoomProvider(),
+): Promise<JoinResult> {
   const { roomCode, seed, mode, turnConfig, onStatus, signal } = config;
 
   if (signal?.aborted) return Promise.reject(new Error(JOIN_ABANDONED));
 
   const rtcPolyfill = unorderedPeerConnection();
-  const room: Room = joinRoom(
-    {
-      appId: APP_ID,
-      ...(turnConfig ? { turnConfig } : {}),
-      ...(rtcPolyfill ? { rtcPolyfill } : {}),
-    },
-    roomCode.trim().toLowerCase(),
-  );
+  const room = provider.join(roomCode.trim().toLowerCase(), {
+    ...(turnConfig ? { turnConfig } : {}),
+    ...(rtcPolyfill ? { rtcPolyfill } : {}),
+  });
 
-  // `makeAction` returns an object whose `onMessage` is assigned, and whose
-  // `send` takes an options object for targeting a specific peer.
-  //
-  // Trystero types payloads as an index-signature JSON object. Our command and
-  // handshake types are perfectly good JSON but are declared as interfaces, and
-  // TypeScript will not structurally match those against an index signature, so
-  // the payload is cast at this boundary. Nothing is lost: Trystero serialises
-  // the value as JSON either way.
-  const handshakeAction = room.makeAction('hello') as MessageAction;
-  const packetAction = room.makeAction('cmd') as MessageAction;
+  // Two actions: the one-shot greeting, and the packets. Both are addressed
+  // to a peer, never broadcast to the room.
+  const handshakeAction = room.makeAction('hello');
+  const packetAction = room.makeAction('cmd');
 
   onStatus?.('Waiting for the other player…');
 
@@ -223,12 +335,19 @@ export function joinOnlineRoom(config: HostConfig, timeoutMs = 90000): Promise<J
     const agreedSeed = seed;
     let peerId: string | null = null;
 
+    // Packets go to the settled peer and are taken only from it. A room can
+    // hold more than two (see the greeting below), and the runner's own guard
+    // trusts the `player` a packet claims — it can only check that the claimed
+    // player hosts the slots the packet fills — so a stranger in the room
+    // could otherwise fill a slot the other peer hosts, and the lockstep
+    // would apply it first-write-wins. The transport pins the sender instead:
+    // once the handshake has named the peer, that id is the wire.
     const transport = new TrysteroTransport(
       room,
-      (packet) => void packetAction.send(packet as unknown as DataPayload),
+      (packet, target) => swallow(packetAction.send(packet, { target })),
       () => localPlayer ?? 0,
     );
-    packetAction.onMessage = (data) => transport.receive(data as unknown as Packet);
+    packetAction.onMessage = (data, context) => transport.receive(data as Packet, context.peerId);
 
     /**
      * Settle on a slot once the other peer's handshake has arrived.
@@ -242,11 +361,11 @@ export function joinOnlineRoom(config: HostConfig, timeoutMs = 90000): Promise<J
     const resolveWith = (remoteId: string): void => {
       if (settled) return;
       peerId = remoteId;
-      const slot = slotFromPeerIds(selfId, remoteId);
+      const slot = slotFromPeerIds(provider.selfId, remoteId);
       settled = true;
       clearTimeout(timer);
       localPlayer = slot;
-      transport.markReady();
+      transport.markReady(remoteId);
       onStatus?.('Connected.');
       resolve({ transport, seed: agreedSeed, localPlayer: slot });
     };
@@ -255,7 +374,7 @@ export function joinOnlineRoom(config: HostConfig, timeoutMs = 90000): Promise<J
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      room.leave();
+      swallow(room.leave());
       reject(new Error(message));
     };
 
@@ -274,12 +393,17 @@ export function joinOnlineRoom(config: HostConfig, timeoutMs = 90000): Promise<J
     // peer has not been reaped yet, or two pairs that landed on the same code.
     // Greet whoever we meet; the extra message is a few dozen bytes and the
     // first handshake back is still what settles the slot.
+    //
+    // Until settled, that is. A greeting from a peer that already has its
+    // match is a promise it cannot keep: the newcomer would settle against
+    // it, start a match, and wait forever for packets that go only to the
+    // settled pair. Left ungreeted, it times out with an honest message.
     const greeted = new Set<string>();
     const greet = (id: string): void => {
-      if (greeted.has(id)) return;
+      if (settled || greeted.has(id)) return;
       greeted.add(id);
       const hello: Handshake = { protocol: PROTOCOL_VERSION, seed, mode };
-      void handshakeAction.send(hello as unknown as DataPayload, { target: id });
+      swallow(handshakeAction.send(hello, { target: id }));
     };
 
     room.onPeerJoin = (id: string) => {
@@ -289,7 +413,7 @@ export function joinOnlineRoom(config: HostConfig, timeoutMs = 90000): Promise<J
 
     handshakeAction.onMessage = (data, context) => {
       greet(context.peerId);
-      const msg = data as unknown as Handshake;
+      const msg = data as Handshake;
       if (msg.protocol !== PROTOCOL_VERSION) {
         refuse(
           `The other player is running a different version of the game ` +
@@ -314,7 +438,7 @@ export function joinOnlineRoom(config: HostConfig, timeoutMs = 90000): Promise<J
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      room.leave();
+      swallow(room.leave());
       reject(
         new Error(
           'Could not connect. Either nobody joined with that code, or both ' +
@@ -333,10 +457,12 @@ class TrysteroTransport implements Transport {
   private packetHandler: ((p: Packet) => void) | undefined;
   private lostHandler: ((p: PlayerId) => void) | undefined;
   private closed = false;
+  /** The peer this transport is paired with, once the handshake has named it. */
+  private peerId: string | null = null;
 
   constructor(
-    private readonly room: Room,
-    private readonly sendAction: (packet: Packet) => void,
+    private readonly room: RoomLike,
+    private readonly sendTo: (packet: Packet, target: string) => void,
     private readonly slot: () => PlayerId,
   ) {}
 
@@ -344,17 +470,24 @@ class TrysteroTransport implements Transport {
     return this.slot();
   }
 
-  markReady(): void {
+  /** The paired peer's id, for tests that check who a packet went to. */
+  get pairedPeerId(): string | null {
+    return this.peerId;
+  }
+
+  markReady(peerId: string): void {
+    this.peerId = peerId;
     this.ready = true;
   }
 
   send(packet: Packet): void {
-    if (this.closed || !this.ready) return;
-    this.sendAction(packet);
+    if (this.closed || this.peerId === null) return;
+    this.sendTo(packet, this.peerId);
   }
 
-  receive(packet: Packet): void {
-    if (this.closed) return;
+  /** A packet from anyone but the paired peer is dropped, whatever it claims. */
+  receive(packet: Packet, from: string): void {
+    if (this.closed || from !== this.peerId) return;
     this.packetHandler?.(packet);
   }
 
@@ -374,7 +507,7 @@ class TrysteroTransport implements Transport {
     if (this.closed) return;
     this.closed = true;
     try {
-      this.room.leave();
+      swallow(this.room.leave());
     } catch {
       // Leaving a room that is already torn down is not an error worth raising.
     }

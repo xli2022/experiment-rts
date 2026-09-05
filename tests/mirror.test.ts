@@ -14,7 +14,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { coopMatch, duelMatch } from '../src/sim/match.js';
-import { BotDifficulty, NO_ENTITY } from '../src/sim/types.js';
+import { NO_ENTITY } from '../src/sim/types.js';
+import { unequalAgents } from './helpers/agents.js';
 import {
   describeMismatch,
   fullScript,
@@ -38,34 +39,22 @@ describe('mirror symmetry', () => {
   });
 
   it('holds for a whole bot-driven mirror match, which can then only draw', () => {
-    const r = probeBots(
-      'Hard mirror',
-      duelMatch(SEED, { botPlayers: [0, 1], difficulty: BotDifficulty.Hard }),
-      20000,
-    );
+    const r = probeBots('scripted mirror', duelMatch(SEED, { botPlayers: [0, 1] }), 20000);
     expect(describeMismatch(r.first)).toBe('mirrored');
     expect(r.winner).toBe(NO_ENTITY);
   });
 
   it('gives the same match with the seats swapped, so the winner swaps too', () => {
-    const base = duelMatch(SEED, { botPlayers: [0, 1] });
+    // The same roster both times; what swaps is which seat holds the
+    // full-speed bot and which the one that thinks half as often.
+    const config = duelMatch(SEED, { botPlayers: [0, 1] });
     const r = probePair(
       'swapped',
-      {
-        ...base,
-        bots: [
-          { player: 0, difficulty: BotDifficulty.Hard },
-          { player: 1, difficulty: BotDifficulty.Normal },
-        ],
-      },
-      {
-        ...base,
-        bots: [
-          { player: 0, difficulty: BotDifficulty.Normal },
-          { player: 1, difficulty: BotDifficulty.Hard },
-        ],
-      },
+      config,
+      config,
       20000,
+      unequalAgents(config, 0),
+      unequalAgents(config, 1),
     );
     expect(describeMismatch(r.first)).toBe('mirrored');
     expect(r.matchOver).toBe(true);
@@ -74,11 +63,7 @@ describe('mirror symmetry', () => {
   });
 
   it('holds on the four-corner map with two bots a side', () => {
-    const r = probeBots(
-      'Quarters',
-      coopMatch(SEED, { botPlayers: [0, 1, 2, 3], difficulty: BotDifficulty.Hard }),
-      6000,
-    );
+    const r = probeBots('Quarters', coopMatch(SEED, { botPlayers: [0, 1, 2, 3] }), 6000);
     expect(describeMismatch(r.first)).toBe('mirrored');
   });
 });

@@ -10,8 +10,10 @@
 import { describe, expect, it } from 'vitest';
 import { DEFS, defOf } from '../src/config/rules.js';
 import { ENTITY_TYPE_COUNT, EntityType, type PlayerId } from '../src/sim/types.js';
+import { HeadlessMatch } from '../src/ai/headless.js';
 import { duelMatch } from '../src/sim/match.js';
 import { Simulation } from '../src/sim/tick.js';
+import { scriptedAgents } from './helpers/agents.js';
 
 describe('entity definitions', () => {
   it('has one def per type, in enum order', () => {
@@ -119,13 +121,14 @@ describe('damage is a single number', () => {
 
 describe('flying units in a real match', () => {
   it('get built and fly over terrain the ground army cannot cross', () => {
-    const sim = new Simulation(duelMatch(0x51ce7a11, { botPlayers: [0, 1] }));
+    const config = duelMatch(0x51ce7a11, { botPlayers: [0, 1] });
+    const sim = new HeadlessMatch(config, scriptedAgents(config));
 
     let sawBeamdrone = false;
     let beamdroneOverSolidGround = false;
 
     for (let t = 0; t < 20 * 60 * 12 && !beamdroneOverSolidGround; t++) {
-      sim.step([]);
+      sim.step();
       const pool = sim.world.pool;
       for (let i = 0; i < pool.count; i++) {
         if (pool.alive[i] !== 1) continue;

@@ -18,9 +18,11 @@ import { describe, expect, it } from 'vitest';
 import { defOf } from '../src/config/rules.js';
 import { CommandType, type Command } from '../src/sim/commands.js';
 import { fromInt, toFloat } from '../src/sim/fixed.js';
+import { HeadlessMatch } from '../src/ai/headless.js';
 import { duelMatch } from '../src/sim/match.js';
 import { Simulation } from '../src/sim/tick.js';
 import { BuildState, EntityType, Order, type PlayerId } from '../src/sim/types.js';
+import { scriptedAgents } from './helpers/agents.js';
 
 const FIX = 65536;
 
@@ -316,13 +318,15 @@ describe('nothing is ever pushed into a wall', () => {
 
 describe('pathing invariants over a whole match', () => {
   it('never leaves a unit standing on, or ordered onto, a solid tile', () => {
-    const sim = new Simulation(duelMatch(0x51ce7a11, { botPlayers: [0, 1] }));
+    const config = duelMatch(0x51ce7a11, { botPlayers: [0, 1] });
+    const match = new HeadlessMatch(config, scriptedAgents(config));
+    const sim = match.sim;
     const { pool, map } = sim.world;
 
     let onRock = 0;
     let badDest = 0;
     for (let t = 0; t < 3000; t++) {
-      sim.step([]);
+      match.step();
       for (let i = 0; i < pool.count; i++) {
         if (pool.alive[i] !== 1) continue;
         const def = defOf(pool.type[i]! as EntityType);
@@ -342,8 +346,9 @@ describe('pathing invariants over a whole match', () => {
   it('never leaves a unit holding one move order for a whole match', () => {
     // Crossing the entire map takes well under a thousand ticks, so an order
     // held longer than this is one that can never complete.
-    const sim = new Simulation(duelMatch(0x51ce7a11, { botPlayers: [0, 1] }));
-    const pool = sim.world.pool;
+    const config = duelMatch(0x51ce7a11, { botPlayers: [0, 1] });
+    const match = new HeadlessMatch(config, scriptedAgents(config));
+    const pool = match.world.pool;
 
     const held = new Int32Array(pool.posX.length);
     const key = new Float64Array(pool.posX.length);
@@ -351,7 +356,7 @@ describe('pathing invariants over a whole match', () => {
     let worst = 0;
 
     for (let t = 0; t < 3000; t++) {
-      sim.step([]);
+      match.step();
       for (let i = 0; i < pool.count; i++) {
         if (pool.alive[i] !== 1 || gen[i] !== pool.generation[i]!) {
           gen[i] = pool.generation[i]!;

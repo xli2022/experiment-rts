@@ -21,6 +21,17 @@
 import type { Fix } from './fixed.js';
 import type { EntityId, EntityType, PlayerId } from './types.js';
 
+/**
+ * The most units one command may name.
+ *
+ * This is the UI's selection cap and the size a hosted bot chunks its orders
+ * into, and both matter for the same reason: it bounds how large a packet can
+ * get, and `tests/wire.test.ts` checks that the worst case still fits in one
+ * transport chunk. The simulation itself accepts any length — the bound is a
+ * property of the producers, enforced where commands are made.
+ */
+export const MAX_COMMAND_UNITS = 24;
+
 export enum CommandType {
   Move = 0,
   AttackMove = 1,

@@ -16,7 +16,6 @@
  * should be a deliberate decision rather than a drive-by edit.
  */
 
-import { generateBotCommands } from '../ai/bot.js';
 import { sortCommands, type Command } from './commands.js';
 import { AStar } from './pathing/astar.js';
 import { FlowFieldCache } from './pathing/flowfield.js';
@@ -45,38 +44,22 @@ export class Simulation {
    */
   private readonly fields: FlowFieldCache;
 
-  /**
-   * Difficulty per player slot, or -1 for a slot no bot plays.
-   *
-   * The bot is deterministic, so it runs here — inside the simulation, on every
-   * peer — rather than on one machine that broadcasts its orders. That costs no
-   * bandwidth, needs no host, and makes single-player and multiplayer the same
-   * code path. Which slots it plays therefore has to be agreed before the match
-   * rather than set afterwards, which is why it arrives in the config and this
-   * array is built once and never written again.
-   */
-  private readonly botOf: Int8Array;
-
   constructor(config: MatchConfig | number) {
     this.world = new World(config);
     setupMatch(this.world);
     this.astar = new AStar(this.world.map);
     this.fields = new FlowFieldCache(this.world.map.width * this.world.map.height);
-
-    this.botOf = new Int8Array(this.world.players.length).fill(-1);
-    for (const bot of this.world.config.bots) {
-      if (bot.player >= 0 && bot.player < this.botOf.length) {
-        this.botOf[bot.player] = bot.difficulty;
-      }
-    }
   }
 
-  /** Does the AI play this slot? */
-  isBot(player: number): boolean {
-    return (this.botOf[player] ?? -1) >= 0;
-  }
-
-  /** Advance one tick, applying `commands` at the start of it. */
+  /**
+   * Advance one tick, applying `commands` at the start of it.
+   *
+   * Every command arrives from outside — a human's UI or a hosted bot, by way
+   * of the lockstep runner or a headless driver. The simulation used to run the
+   * scripted bot here itself; it runs nothing now, so the only thing that can
+   * make two peers diverge is a command one of them did not receive, and that
+   * is exactly what lockstep waits for.
+   */
   step(commands: Command[]): void {
     const world = this.world;
 
@@ -86,27 +69,10 @@ export class Simulation {
     world.events.deaths.length = 0;
     world.events.completed.length = 0;
 
-    // Bot commands are generated locally rather than received, but are
-    // otherwise indistinguishable from a human's — same type, same validation,
-    // same ordering.
-    let all = commands;
-    if (world.config.bots.length > 0) {
-      all = commands.slice();
-      // Ascending slot order, from a dense array rather than the config list —
-      // the order bots think in is part of the simulation, so it must not
-      // depend on how a caller happened to sort the roster.
-      for (let p = 0; p < this.botOf.length; p++) {
-        const difficulty = this.botOf[p]!;
-        if (difficulty < 0) continue;
-        const botCmds = generateBotCommands(world, p, difficulty);
-        for (let i = 0; i < botCmds.length; i++) all.push(botCmds[i]!);
-      }
-    }
-
     // Commands arrive from several sources and in arbitrary packet order, so
     // impose a canonical order before applying any of them.
-    if (all.length > 0) {
-      const ordered = sortCommands(all.slice());
+    if (commands.length > 0) {
+      const ordered = sortCommands(commands.slice());
       for (let i = 0; i < ordered.length; i++) {
         executeCommand(world, ordered[i]!);
       }

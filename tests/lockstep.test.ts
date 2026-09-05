@@ -8,9 +8,11 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { AgentDriver } from '../src/ai/driver.js';
+import { createHostedAgents } from '../src/ai/factory.js';
 import { CommandType, type Command } from '../src/sim/commands.js';
 import { fromInt } from '../src/sim/fixed.js';
-import { coopMatch } from '../src/sim/match.js';
+import { coopMatch, duelMatch, hostOf, isBotSlot } from '../src/sim/match.js';
 import { Simulation } from '../src/sim/tick.js';
 import { CHECKSUM_INTERVAL, MS_PER_TICK } from '../src/sim/types.js';
 import { LocalNetwork } from '../src/net/localTransport.js';
@@ -23,20 +25,29 @@ const SEED = 0xbeef01;
 interface Peer {
   sim: Simulation;
   runner: LockstepRunner;
+  /** The bots this peer hosts, when the roster has any. */
+  driver: AgentDriver;
   stalls: number;
   desyncs: number;
 }
 
-/** Build two peers wired together through one simulated network. */
+/**
+ * Build two peers wired together through one simulated network.
+ *
+ * Every bot slot in the roster is hosted by one of the peers, exactly as the
+ * browser does it: an `AgentDriver` acts after each tick and issues through
+ * the runner, and the runner puts those commands on the wire.
+ */
 function makeMatch(net: LocalNetwork, seed: number | MatchConfig = SEED): Peer[] {
   const peers: Peer[] = [];
   for (let p = 0; p < net.playerCount; p++) {
     const sim = new Simulation(seed);
-    const peer: Peer = { sim, runner: null as never, stalls: 0, desyncs: 0 };
+    const peer: Peer = { sim, runner: null as never, driver: null as never, stalls: 0, desyncs: 0 };
     peer.runner = new LockstepRunner(
       sim,
       net.createTransport(p),
       {
+        onStep: () => peer.driver.tick(sim.world),
         onStall: () => {
           peer.stalls++;
         },
@@ -45,6 +56,9 @@ function makeMatch(net: LocalNetwork, seed: number | MatchConfig = SEED): Peer[]
         },
       },
       () => net.nowMs,
+    );
+    peer.driver = new AgentDriver(createHostedAgents(sim.world.config, p), (command, player) =>
+      peer.runner.issue(command, player),
     );
     peers.push(peer);
   }
@@ -88,8 +102,10 @@ describe('lockstep scheduler', () => {
       }
     }
 
+    // One human and one bot: a one-peer transport carries exactly one human,
+    // and the runner refuses any other roster before a single tick runs.
     const net = new LocalNetwork(1);
-    const sim = new EventSimulation(SEED);
+    const sim = new EventSimulation(duelMatch(SEED, { botPlayers: [1] }));
     const seenStarts: number[] = [];
     const runner = new LockstepRunner(sim, net.createTransport(0), {
       onStep: () => seenStarts.push(sim.world.events.attackStarts[0]!),
@@ -115,10 +131,10 @@ describe('lockstep scheduler', () => {
   });
 
   it('runs a co-op match with the AI in the slots nobody is sitting in', () => {
-    // The whole reason co-op costs no bandwidth: the two humans are the only
-    // players on the wire, and the two bots are generated locally on both peers
-    // from state they already share. So the transport carries two slots while
-    // the simulation runs four, and the peers still have to agree exactly.
+    // The two humans are the only peers on the wire, and each hosts one of the
+    // two bots: the transport carries two peers while the simulation runs four
+    // slots, every slot is sent for by exactly one peer, and the peers still
+    // have to agree exactly.
     const config = coopMatch(SEED);
     const net = new LocalNetwork(2, 5);
     net.latencyMs = 60;
@@ -126,15 +142,24 @@ describe('lockstep scheduler', () => {
     const peers = makeMatch(net, config);
 
     expect(peers[0]!.sim.world.players.length).toBe(4);
-    expect(peers[0]!.sim.isBot(2)).toBe(true);
-    expect(peers[0]!.sim.isBot(0)).toBe(false);
+    expect(isBotSlot(config, 2)).toBe(true);
+    expect(isBotSlot(config, 0)).toBe(false);
+    expect(peers[0]!.runner.ownedPlayers).toEqual([0, 2]);
+    expect(peers[1]!.runner.ownedPlayers).toEqual([1, 3]);
 
-    // Watch what actually crosses the network rather than trusting the roster.
+    // Watch what actually crosses the network rather than trusting the roster:
+    // which slots' commands travel, and from which peer each slot's come.
     const onWire = new Set<number>();
+    const sentBy = new Map<number, Set<number>>();
     const originalSubmit = net.submit.bind(net);
     net.submit = (from, packet): void => {
       for (const turn of packet.turns) {
-        for (const command of turn.commands) onWire.add(command.player);
+        for (const command of turn.commands) {
+          onWire.add(command.player);
+          let senders = sentBy.get(command.player);
+          if (!senders) sentBy.set(command.player, (senders = new Set()));
+          senders.add(from);
+        }
       }
       originalSubmit(from, packet);
     };
@@ -170,14 +195,20 @@ describe('lockstep scheduler', () => {
     expect(peers[1]!.desyncs).toBe(0);
     expect(peers[0]!.runner.currentTick).toBeGreaterThan(300);
 
-    // Both humans, and only the humans. A bot's command appearing here would be
-    // applied twice on every peer that received it — once from the packet and
-    // once by the local bot.
-    expect([...onWire].sort()).toEqual([0, 1]);
+    // Every slot, humans and bots alike — a bot is a player now, and its
+    // commands reach the other peer the only way a command can. And each bot's
+    // commands come from exactly the peer that hosts it: a bot sent for by both
+    // peers would be applied from whichever copy arrived first, which is a
+    // desync without a bug.
+    expect([...onWire].sort()).toEqual([0, 1, 2, 3]);
+    for (const slot of [2, 3]) {
+      expect([...sentBy.get(slot)!]).toEqual([hostOf(config, slot)]);
+    }
 
     // And the bots were actually playing, or agreement is agreement about
     // nothing happening.
     expect(peers[0]!.sim.world.player(2).supplyUsed).toBeGreaterThan(0);
+    expect(peers[0]!.sim.world.player(3).supplyUsed).toBeGreaterThan(0);
   });
 
   it('stays in sync across realistic latency and jitter', () => {

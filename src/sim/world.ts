@@ -277,7 +277,7 @@ export class World {
     for (let b = 0; b < this.config.bots.length; b++) {
       const bot = this.config.bots[b]!;
       h = checksumU32(h, bot.player);
-      h = checksumU32(h, bot.difficulty);
+      h = checksumU32(h, bot.kind);
     }
     h = checksumU32(h, this.tick);
     h = checksumU32(h, this.rng.state);
@@ -495,7 +495,7 @@ export function setupMatch(world: World): void {
  *
  * The same formula as `mirrorTile`, over a span of `2 * centre` rather than the
  * map — reflecting `[t, t+f)` about `c` gives `[2c-t-f, 2c-t)` either way. Spelt
- * as a call rather than repeated, because CLAUDE.md records that a half-tile
+ * as a call rather than repeated, because the contributor notes in README.md record that a half-tile
  * error in exactly this reflection cost a whole tile of walking on every trip
  * and took three attempts to get right; two copies of it is two places to get
  * it wrong again.

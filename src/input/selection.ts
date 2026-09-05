@@ -15,13 +15,19 @@
 
 import * as THREE from 'three';
 import { defOf } from '../config/rules.js';
+import { MAX_COMMAND_UNITS } from '../sim/commands.js';
 import { toFloat } from '../sim/fixed.js';
 import { idIndex } from '../sim/entities.js';
 import { EntityType, NEUTRAL, NO_ENTITY, type EntityId, type PlayerId } from '../sim/types.js';
 import type { World } from '../sim/world.js';
 
-/** Selecting more than this is unwieldy and slows command packets down. */
-export const MAX_SELECTION = 24;
+/**
+ * Selecting more than this is unwieldy and slows command packets down.
+ *
+ * The same number bounds a hosted bot's commands — it lives in the simulation's
+ * command module because this file imports three.js and the bots cannot.
+ */
+export const MAX_SELECTION = MAX_COMMAND_UNITS;
 
 /**
  * Selection ring size relative to collision radius.

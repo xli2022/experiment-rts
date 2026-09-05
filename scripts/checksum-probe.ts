@@ -16,10 +16,11 @@
  * that is nearly impossible to reproduce once it reaches real users.
  */
 
+import { HeadlessMatch } from '../src/ai/headless.js';
 import { checksumToHex } from '../src/sim/checksum.js';
 import { CommandType } from '../src/sim/commands.js';
 import { coopMatch, duelMatch } from '../src/sim/match.js';
-import { Simulation } from '../src/sim/tick.js';
+import { scriptedAgents } from '../tests/helpers/agents.js';
 import { recordMatch } from '../tests/helpers/scripted.js';
 
 const SEED = 0x1234abcd;
@@ -50,17 +51,19 @@ for (const t of CHECKPOINTS) {
  * a crowd against a cliff. Fixes to all three landed without moving a single
  * checksum here, which means this check was blind to them. The bot builds,
  * expands and fights on its own, so it reaches states no fixed script will, and
- * it is deterministic — it is a simulation-side command source, so it costs
- * nothing to run under both engines.
+ * it is a pure function of the world — hosted through a headless match, the
+ * same driver and input delay the browser uses, it costs nothing to run under
+ * both engines.
  */
 const BOT_SEED = 0x51ce7a11;
 const BOT_TICKS = 6000;
 lines.push('', `bot-vs-bot  seed=${BOT_SEED.toString(16)} ticks=${BOT_TICKS}`);
-const bots = new Simulation(duelMatch(BOT_SEED, { botPlayers: [0, 1] }));
+const botConfig = duelMatch(BOT_SEED, { botPlayers: [0, 1] });
+const bots = new HeadlessMatch(botConfig, scriptedAgents(botConfig));
 for (let t = 1; t <= BOT_TICKS; t++) {
-  bots.step([]);
+  bots.step();
   if (t % 1000 === 0 || t === 1) {
-    lines.push(`  tick ${String(t).padStart(5)}  ${checksumToHex(bots.checksum())}`);
+    lines.push(`  tick ${String(t).padStart(5)}  ${checksumToHex(bots.sim.checksum())}`);
   }
 }
 
@@ -77,11 +80,12 @@ for (let t = 1; t <= BOT_TICKS; t++) {
 const COOP_SEED = 0x51ce7a11;
 const COOP_TICKS = 4000;
 lines.push('', `co-op 2v2  seed=${COOP_SEED.toString(16)} ticks=${COOP_TICKS}`);
-const coop = new Simulation(coopMatch(COOP_SEED, { botPlayers: [0, 1, 2, 3] }));
+const coopConfig = coopMatch(COOP_SEED, { botPlayers: [0, 1, 2, 3] });
+const coop = new HeadlessMatch(coopConfig, scriptedAgents(coopConfig));
 for (let t = 1; t <= COOP_TICKS; t++) {
-  coop.step([]);
+  coop.step();
   if (t % 1000 === 0 || t === 1) {
-    lines.push(`  tick ${String(t).padStart(5)}  ${checksumToHex(coop.checksum())}`);
+    lines.push(`  tick ${String(t).padStart(5)}  ${checksumToHex(coop.sim.checksum())}`);
   }
 }
 
@@ -103,11 +107,15 @@ const OUT_SEED = 0x51ce7a11;
 const OUT_AT = 600;
 const OUT_TICKS = 2400;
 lines.push('', `elimination  seed=${OUT_SEED.toString(16)} ticks=${OUT_TICKS}`);
-const out = new Simulation(coopMatch(OUT_SEED, { botPlayers: [0, 1, 2, 3] }));
+const outConfig = coopMatch(OUT_SEED, { botPlayers: [0, 1, 2, 3] });
+const out = new HeadlessMatch(outConfig, scriptedAgents(outConfig));
 for (let t = 1; t <= OUT_TICKS; t++) {
-  out.step(t === OUT_AT ? [{ type: CommandType.Surrender, player: 0 }] : []);
+  // The concession is issued through the driver's own sink, so it lands on the
+  // schedule a real command would rather than on the tick it was decided.
+  if (t === OUT_AT) out.issue({ type: CommandType.Surrender, player: 0 }, 0);
+  out.step();
   if (t === OUT_AT || t % 600 === 0) {
-    lines.push(`  tick ${String(t).padStart(5)}  ${checksumToHex(out.checksum())}`);
+    lines.push(`  tick ${String(t).padStart(5)}  ${checksumToHex(out.sim.checksum())}`);
   }
 }
 

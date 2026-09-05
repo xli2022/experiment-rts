@@ -16,10 +16,18 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { AgentDriver } from '../src/ai/driver.js';
+import { createHostedAgents } from '../src/ai/factory.js';
 import { CommandType, type Command } from '../src/sim/commands.js';
 import { fromInt } from '../src/sim/fixed.js';
+import { coopMatch, hostOf } from '../src/sim/match.js';
 import { Simulation } from '../src/sim/tick.js';
-import { CHECKSUM_INTERVAL, MS_PER_TICK, type PlayerId } from '../src/sim/types.js';
+import {
+  CHECKSUM_INTERVAL,
+  MS_PER_TICK,
+  type MatchConfig,
+  type PlayerId,
+} from '../src/sim/types.js';
 import { LocalNetwork } from '../src/net/localTransport.js';
 import {
   INPUT_DELAY_TURNS,
@@ -35,26 +43,42 @@ const SEED = 0xbeef01;
 interface Peer {
   sim: Simulation;
   runner: LockstepRunner;
+  /** Present when the roster deals this peer a bot to host. */
+  driver: AgentDriver | null;
   desyncs: number;
 }
 
-function makeMatch(net: LocalNetwork): Peer[] {
-  const peers: Peer[] = [];
-  for (let p = 0; p < net.playerCount; p++) {
-    const sim = new Simulation(SEED);
-    const peer: Peer = { sim, runner: null as never, desyncs: 0 };
-    peer.runner = new LockstepRunner(
-      sim,
-      net.createTransport(p),
-      {
-        onDesync: () => {
-          peer.desyncs++;
-        },
+/**
+ * A peer on `transport`. With a `config`, the roster's bots are hosted the way
+ * `Game` hosts them, so every packet carries more than one slot.
+ */
+function makePeer(net: LocalNetwork, transport: Transport, config: MatchConfig | undefined): Peer {
+  const sim = config ? new Simulation(config) : new Simulation(SEED);
+  const peer: Peer = { sim, runner: null as never, driver: null, desyncs: 0 };
+  peer.runner = new LockstepRunner(
+    sim,
+    transport,
+    {
+      onStep: () => peer.driver?.tick(sim.world),
+      onDesync: () => {
+        peer.desyncs++;
       },
-      () => net.nowMs,
+    },
+    () => net.nowMs,
+  );
+  if (config) {
+    peer.driver = new AgentDriver(
+      createHostedAgents(config, transport.localPlayer, {}),
+      (command, player) => peer.runner.issue(command, player),
     );
-    peers.push(peer);
   }
+  return peer;
+}
+
+function makeMatch(net: LocalNetwork, config?: MatchConfig): Peer[] {
+  const peers: Peer[] = [];
+  for (let p = 0; p < net.playerCount; p++)
+    peers.push(makePeer(net, net.createTransport(p), config));
   return peers;
 }
 
@@ -104,24 +128,6 @@ class OneWayDelay implements Transport {
   close(): void {
     this.inner.close();
   }
-}
-
-function makeRunner(
-  sim: Simulation,
-  transport: Transport,
-  peer: Peer,
-  net: LocalNetwork,
-): LockstepRunner {
-  return new LockstepRunner(
-    sim,
-    transport,
-    {
-      onDesync: () => {
-        peer.desyncs++;
-      },
-    },
-    () => net.nowMs,
-  );
 }
 
 function run(net: LocalNetwork, peers: Peer[], frames: number): void {
@@ -240,16 +246,13 @@ describe('adapting the input delay', () => {
     const peers: Peer[] = [];
     let holdback: OneWayDelay | null = null;
     for (let p = 0; p < 2; p++) {
-      const sim = new Simulation(SEED);
-      const peer: Peer = { sim, runner: null as never, desyncs: 0 };
       let transport: Transport = net.createTransport(p);
       // Only what peer 0 receives is held up, so only peer 1 is genuinely late.
       if (p === 0) {
         holdback = new OneWayDelay(transport, 4);
         transport = holdback;
       }
-      peer.runner = makeRunner(sim, transport, peer, net);
-      peers.push(peer);
+      peers.push(makePeer(net, transport, undefined));
     }
 
     for (let f = 0; f < 1800; f++) {
@@ -286,6 +289,59 @@ describe('adapting the input delay', () => {
     expect(peers[0]!.runner.currentTick).toBeGreaterThan(800);
     expect(peers[1]!.runner.currentTick).toBeGreaterThan(800);
     expectAgreement(peers);
+  });
+});
+
+describe('adapting the input delay with hosted bots in the packets', () => {
+  // Every test above sends one slot per peer. A co-op peer sends for its own
+  // slot and a bot's, so each packet carries two entries per turn and the
+  // history is twice as long — the shape an online match actually has.
+  const config = coopMatch(SEED);
+
+  function expectBotsPlayed(peers: Peer[]): void {
+    for (const slot of [2, 3] as PlayerId[]) {
+      expect(peers[hostOf(config, slot)]!.driver!.statsFor(slot)!.issued).toBeGreaterThan(0);
+    }
+    for (const peer of peers) expect(peer.runner.droppedByBudget).toBe(0);
+  }
+
+  it('speeds up on a fast link', () => {
+    const net = new LocalNetwork(2, 0x5a17);
+    net.latencyMs = 5;
+    const peers = makeMatch(net, config);
+    run(net, peers, 900);
+    expect(peers.map((p) => p.runner.inputDelayTurns)).toEqual([
+      MIN_INPUT_DELAY_TURNS,
+      MIN_INPUT_DELAY_TURNS,
+    ]);
+    expectAgreement(peers);
+    expect(peers[0]!.desyncs + peers[1]!.desyncs).toBe(0);
+    expectBotsPlayed(peers);
+  });
+
+  it('backs off the late host, not the prompt one', () => {
+    const net = new LocalNetwork(2, 0x9f1);
+    net.latencyMs = 15;
+    const peers: Peer[] = [];
+    let holdback: OneWayDelay | null = null;
+    for (let p = 0; p < 2; p++) {
+      let transport: Transport = net.createTransport(p);
+      if (p === 0) {
+        holdback = new OneWayDelay(transport, 4);
+        transport = holdback;
+      }
+      peers.push(makePeer(net, transport, config));
+    }
+    for (let f = 0; f < 1800; f++) {
+      for (const peer of peers) peer.runner.update(MS_PER_TICK);
+      holdback!.pump();
+      net.advance(MS_PER_TICK);
+    }
+    expect(peers[1]!.runner.inputDelayTurns).toBeGreaterThan(peers[0]!.runner.inputDelayTurns);
+    expectAgreement(peers);
+    expect(peers[0]!.desyncs + peers[1]!.desyncs).toBe(0);
+    expect(peers[0]!.runner.currentTick).toBeGreaterThan(600);
+    expectBotsPlayed(peers);
   });
 });
 

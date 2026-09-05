@@ -10,14 +10,20 @@
 
 import * as THREE from 'three';
 import { defOf } from './config/rules.js';
-import { LockstepRunner } from './net/lockstep.js';
+import { AgentDriver } from './ai/driver.js';
+import { createHostedAgents, type AgentDeps } from './ai/factory.js';
+import { NeuralAgent, type NeuralRuntimeStats, type NeuralStats } from './ai/neural/agent.js';
+import { loadNeuralRuntime } from './ai/neural/browser.js';
+import { RandomAgent } from './ai/neural/random.js';
+import { ScriptedAgent } from './ai/scripted.js';
+import { hostingProblem, LockstepRunner } from './net/lockstep.js';
 import { SoloTransport } from './net/localTransport.js';
 import { CommandType, type Command } from './sim/commands.js';
 import { fromFloat, toFloat } from './sim/fixed.js';
-import { coopMatch, duelMatch, humanCount, withSeed } from './sim/match.js';
+import { coopMatch, duelMatch, humanCount, withSeed, hostedBy } from './sim/match.js';
 import { Simulation } from './sim/tick.js';
 import {
-  BotDifficulty,
+  BotKind,
   BuildState,
   EntityType,
   NO_ENTITY,
@@ -62,6 +68,23 @@ function trainHotkey(type: EntityType): string {
   throw new Error(`No production hotkey for entity type ${type}`);
 }
 
+/** Failed decisions in a row before the HUD says the neural bot is not answering. */
+const NEURAL_FAILURES_TO_WARN = 3;
+
+export interface HostedSlotReport {
+  readonly player: number;
+  readonly kind: 'neural' | 'random' | 'scripted' | 'other';
+  /** The simulation tick the report was taken at. */
+  readonly tick: number;
+  readonly issued: number;
+  readonly rejected: number;
+  readonly queued: number;
+  /** Hosted-slot commands the runner refused for the wire budget, for this peer as a whole. */
+  readonly droppedByBudget: number;
+  readonly neural: NeuralStats | null;
+  readonly runtime: NeuralRuntimeStats | null;
+}
+
 class Game {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
@@ -75,6 +98,8 @@ class Game {
   private readonly hud: Hud;
   private readonly gallery: UnitGallery;
   private readonly runner: LockstepRunner;
+  /** The bots this peer hosts. Every one of them is a player, issuing through the runner like the human. */
+  private readonly agents: AgentDriver;
   private readonly sim: Simulation;
   private readonly localPlayer: PlayerId;
   /** The side the local player is on. Fog, hostility and victory all go by it. */
@@ -101,6 +126,7 @@ class Game {
   private pointerNdc = new THREE.Vector2();
   private lastFrameMs = 0;
   private finished = false;
+  private neuralWarned = false;
   /** True once the local player has been told they are out of a running match. */
   private knockedOut = false;
   /** Wall-clock seconds since start, for purely cosmetic animation. */
@@ -119,28 +145,13 @@ class Game {
     // arrives as one agreed value. Nothing here chooses any of it: a peer that
     // decided locally would be playing a different game from the one across the
     // wire, which is a desync rather than a difference of opinion.
-    // The one place a config meets a transport, and the only place the roster
-    // and the wire can be checked against each other. Lockstep sizes its
-    // per-turn buffer by `playerCount` and indexes it by player id, so a roster
-    // whose humans are not the low slots leaves a slot nobody ever sends for
-    // and stalls every peer forever, behind a "waiting for player" banner
-    // naming someone who is not playing. Failing here says what is wrong.
-    //
-    // Both halves are checked, because the count alone does not imply the
-    // shape: `botPlayers: [0, 1]` on the four-corner map leaves two humans
-    // against a two-player transport and passes a count test, while seating
-    // them in slots 2 and 3 — which is precisely the stall this guard exists
-    // to refuse.
-    const humans = humanCount(setup.config);
-    const botsAreHigh = setup.config.bots.every((bot) => bot.player >= humans);
-    if (humans !== transport.playerCount || !botsAreHigh) {
-      throw new Error(
-        `roster has ${humans} human slots but the transport carries ` +
-          `${transport.playerCount}, and the AI holds slots ` +
-          `[${setup.config.bots.map((b) => b.player).join(', ')}]; the humans ` +
-          `must be the low slots and the AI the high ones`,
-      );
-    }
+    // Where a config meets a transport, and so where the roster and the wire
+    // are checked against each other — the same check the runner makes
+    // (`hostingProblem`), made here first so it fails with the lobby's overlay
+    // gone and a message saying what is wrong, rather than deep in a
+    // constructor.
+    const problem = hostingProblem(setup.config, transport.playerCount);
+    if (problem !== null) throw new Error(problem);
     this.sim = new Simulation(setup.config);
     this.localTeam = this.sim.world.teamOf(this.localPlayer);
     this.mapSize = this.sim.world.map.width;
@@ -202,6 +213,7 @@ class Game {
       onPeerTimeout: (player) => {
         if (this.finished) return;
         this.finished = true;
+        this.stopAgents();
         this.hud.setSurrenderAvailable(false);
         this.gallery.close();
         this.hud.showDialog(
@@ -224,6 +236,14 @@ class Game {
         );
       },
     });
+
+    // The bots dealt to this peer. They act after every tick, from the same
+    // hook the renderer reads events from, and issue through the runner like
+    // the human does — one command source, whatever is behind it.
+    this.agents = new AgentDriver(
+      createHostedAgents(setup.config, this.localPlayer, setup.agentDeps ?? {}),
+      (command, player) => this.runner.issue(command, player),
+    );
 
     // Open on the player's own base, which is where they will look first.
     const start = this.sim.world.map.starts[this.localPlayer]!;
@@ -752,6 +772,54 @@ class Game {
     this.runner.issue(command);
   }
 
+  /** Stop the hosted bots once the match is settled; the runner keeps stepping regardless. */
+  private stopAgents(): void {
+    this.agents.dispose();
+  }
+
+  /** What each bot this peer hosts has done, for the smoke test and the console. */
+  hostedStats(): HostedSlotReport[] {
+    const config = this.sim.world.config;
+    return hostedBy(config, this.localPlayer).map((player) => {
+      const agent = this.agents.agentFor(player);
+      const stats = this.agents.statsFor(player)!;
+      const kind =
+        agent instanceof NeuralAgent
+          ? 'neural'
+          : agent instanceof RandomAgent
+            ? 'random'
+            : agent instanceof ScriptedAgent
+              ? 'scripted'
+              : 'other';
+      return {
+        player,
+        kind,
+        tick: this.sim.world.tick,
+        ...stats,
+        droppedByBudget: this.runner.droppedByBudget,
+        neural: agent instanceof NeuralAgent ? { ...agent.stats } : null,
+        runtime: agent instanceof NeuralAgent ? agent.runtimeStats() : null,
+      };
+    });
+  }
+
+  /**
+   * A neural bot whose model keeps failing to answer plays nothing, which
+   * looks like a bot standing idle for no reason. Say so once. The match is
+   * unaffected either way: the runner keeps sending empty turns for the slot.
+   */
+  private watchNeural(): void {
+    if (this.neuralWarned) return;
+    for (const player of hostedBy(this.sim.world.config, this.localPlayer)) {
+      const agent = this.agents.agentFor(player);
+      if (agent instanceof NeuralAgent && agent.stats.failed >= NEURAL_FAILURES_TO_WARN) {
+        this.neuralWarned = true;
+        this.hud.showBanner('The neural bot is not answering; its slot may stand idle.', 'warn');
+        return;
+      }
+    }
+  }
+
   /**
    * Concede.
    *
@@ -835,6 +903,12 @@ class Game {
     this.entities.noteEvents(this.sim.world, this.elapsedS);
     this.playTickSounds();
     this.fog.update(this.sim.world, this.localPlayer);
+    // After the presentation has read the tick, so a bot's commands for the
+    // next turn are queued from the same state the player is looking at.
+    if (!this.finished) {
+      this.agents.tick(this.sim.world);
+      this.watchNeural();
+    }
   }
 
   /**
@@ -1001,6 +1075,7 @@ class Game {
       // from a button whose confirmation says the match is over for you.
       if (humanCount(world.config) <= 1) {
         this.finished = true;
+        this.stopAgents();
         this.hud.setSurrenderAvailable(false);
         this.gallery.close();
         this.hud.showDialog('Defeat', 'You conceded the match.', [
@@ -1024,6 +1099,7 @@ class Game {
     }
 
     this.finished = true;
+    this.stopAgents();
     this.hud.setSurrenderAvailable(false);
     this.gallery.close();
     const winner = world.winner;
@@ -1130,22 +1206,41 @@ async function boot(): Promise<void> {
 
   // `?skip=ai` boots straight into a skirmish and `?skip=coop` into a co-op
   // match with AI on the other three slots, which is what the end-to-end tests
-  // and screenshot tooling use. A seed in the URL makes any match reproducible,
+  // and screenshot tooling use; `?skip=neural` is the skirmish with the neural
+  // slot played by the model this build ships — or, with `&agent=random` or
+  // when there is no model, by the random stand-in, which exercises the whole
+  // hosted path without one. A seed in the URL makes any match reproducible,
   // which is how a desync report becomes debuggable.
   const skip = params.get('skip');
   const seedParam = Number(params.get('seed') ?? 0) || 0x51ce7a11;
   let setup: MatchSetup;
-  if (skip === 'ai' || skip === 'coop') {
+  if (skip === 'ai' || skip === 'coop' || skip === 'neural') {
     renderer.setSize(window.innerWidth, window.innerHeight, false);
+    let agentDeps: AgentDeps = {};
+    if (skip === 'neural') {
+      const random = (): AgentDeps => ({ neural: () => new RandomAgent(seedParam) });
+      if (params.get('agent') === 'random') {
+        agentDeps = random();
+      } else {
+        try {
+          const runtime = await loadNeuralRuntime();
+          agentDeps = { neural: () => new NeuralAgent(runtime) };
+        } catch (error) {
+          console.warn('neural model unavailable, using the random stand-in:', error);
+          agentDeps = random();
+        }
+      }
+    }
     setup = {
       transport: new SoloTransport(),
       config:
         skip === 'coop'
-          ? coopMatch(seedParam, {
-              botPlayers: [1, 2, 3],
-              difficulty: BotDifficulty.Normal,
-            })
-          : duelMatch(seedParam, { botPlayers: [1] }),
+          ? coopMatch(seedParam, { botPlayers: [1, 2, 3] })
+          : duelMatch(seedParam, {
+              botPlayers: [1],
+              kind: skip === 'neural' ? BotKind.Neural : BotKind.Scripted,
+            }),
+      agentDeps,
     };
   } else {
     setup = await showHome(uiRoot, renderer, gallery);

@@ -643,7 +643,7 @@ function disposeModel(model: AnimatedModel): void {
 }
 
 function modelAssetUrl(file: string): string {
-  return `${import.meta.env.BASE_URL}models/${file}`;
+  return `${import.meta.env.BASE_URL}units/${file}`;
 }
 
 function parseCatalog(value: unknown): CatalogModel[] {

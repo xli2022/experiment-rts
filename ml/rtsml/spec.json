@@ -1,0 +1,222 @@
+{
+  "version": 1,
+  "decisionTicks": 4,
+  "unitMemoryTicks": 300,
+  "entities": {
+    "rows": 160,
+    "features": [
+      "type:Worker",
+      "type:Burstbot",
+      "type:Slicebot",
+      "type:CommandPost",
+      "type:Depot",
+      "type:Barracks",
+      "type:Turret",
+      "type:MineralPatch",
+      "type:Beamdrone",
+      "rel:own",
+      "rel:ally",
+      "rel:enemy",
+      "rel:neutral",
+      "x",
+      "y",
+      "dxFromStart",
+      "dyFromStart",
+      "hp",
+      "build:Site",
+      "build:UnderConstruction",
+      "build:Complete",
+      "buildProgress",
+      "order:None",
+      "order:Move",
+      "order:AttackMove",
+      "order:Attack",
+      "order:Harvest",
+      "order:Build",
+      "order:Hold",
+      "carrying",
+      "prodCount",
+      "prodProgress",
+      "hasRally",
+      "rallyDx",
+      "rallyDy",
+      "cooldown",
+      "visibleNow",
+      "memoryAge",
+      "resourceAmount",
+      "inLastCommand",
+      "supplyCost",
+      "flying",
+      "canHitAir",
+      "distToOwnPost"
+    ]
+  },
+  "grid": {
+    "size": 40,
+    "cellTiles": 4,
+    "channels": [
+      "walkable",
+      "buildable",
+      "explored",
+      "visible",
+      "ownBuildings",
+      "ownUnits",
+      "allyEntities",
+      "enemyBuildings",
+      "enemyUnitsVisible",
+      "minerals",
+      "friendlyStarts",
+      "enemyStarts",
+      "expansions"
+    ]
+  },
+  "scalars": [
+    "minerals",
+    "supplyUsed",
+    "supplyMax",
+    "supplyFree",
+    "tick",
+    "layout:Lanes",
+    "layout:Quarters",
+    "seatInHalf",
+    "allies",
+    "own:Worker",
+    "own:Burstbot",
+    "own:Slicebot",
+    "own:CommandPost",
+    "own:Depot",
+    "own:Barracks",
+    "own:Turret",
+    "own:MineralPatch",
+    "own:Beamdrone",
+    "enemy:Worker",
+    "enemy:Burstbot",
+    "enemy:Slicebot",
+    "enemy:CommandPost",
+    "enemy:Depot",
+    "enemy:Barracks",
+    "enemy:Turret",
+    "enemy:MineralPatch",
+    "enemy:Beamdrone",
+    "prev:Noop",
+    "prev:Move",
+    "prev:AttackMove",
+    "prev:Attack",
+    "prev:Harvest",
+    "prev:Build",
+    "prev:Stop",
+    "prev:Hold",
+    "prev:Train",
+    "prev:CancelTrain",
+    "prev:SetRally",
+    "decisionsSinceNonNoop",
+    "recentCommands"
+  ],
+  "critic": {
+    "perPlayer": [
+      "minerals",
+      "supplyUsed",
+      "supplyMax",
+      "workers",
+      "army",
+      "buildings",
+      "armyValue",
+      "buildingValue",
+      "armyX",
+      "armyY",
+      "defeated"
+    ],
+    "players": 4,
+    "length": 46
+  },
+  "actions": {
+    "types": [
+      "Noop",
+      "Move",
+      "AttackMove",
+      "Attack",
+      "Harvest",
+      "Build",
+      "Stop",
+      "Hold",
+      "Train",
+      "CancelTrain",
+      "SetRally"
+    ],
+    "selectionMax": 24,
+    "entityTypes": 9,
+    "sub": 16,
+    "ints": 29,
+    "heads": [
+      "type",
+      "selection",
+      "entityType",
+      "target",
+      "cell",
+      "sub"
+    ]
+  },
+  "masks": {
+    "type": [
+      11
+    ],
+    "selection": [
+      11,
+      160
+    ],
+    "target": [
+      11,
+      160
+    ],
+    "cell": [
+      11,
+      1600
+    ],
+    "buildCell": [
+      9,
+      1600
+    ],
+    "rowEntityType": [
+      160,
+      9
+    ],
+    "buildType": [
+      9
+    ]
+  },
+  "noise": {
+    "segments": [
+      {
+        "name": "type",
+        "size": 11,
+        "distribution": "gumbel"
+      },
+      {
+        "name": "selection",
+        "size": 320,
+        "distribution": "gumbel"
+      },
+      {
+        "name": "entityType",
+        "size": 9,
+        "distribution": "gumbel"
+      },
+      {
+        "name": "target",
+        "size": 160,
+        "distribution": "gumbel"
+      },
+      {
+        "name": "cell",
+        "size": 1600,
+        "distribution": "gumbel"
+      },
+      {
+        "name": "sub",
+        "size": 16,
+        "distribution": "gumbel"
+      }
+    ],
+    "length": 2116
+  }
+}

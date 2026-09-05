@@ -4,25 +4,17 @@
  * Animator semantics, while Three only serializes already-resolved glTF data.
  */
 
-import { spawn } from "node:child_process";
-import {
-  access,
-  copyFile,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import * as THREE from "three";
-import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
+import { spawn } from 'node:child_process';
+import { access, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import * as THREE from 'three';
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 
-const UNITY_VERSION = "2022.3.62f3";
+const UNITY_VERSION = '2022.3.62f3';
 const DEFAULT_UNITY = `C:\\Program Files\\Unity\\Hub\\Editor\\${UNITY_VERSION}\\Editor\\Unity.exe`;
-const CLIP_NAMES = ["run", "attack", "die"];
+const CLIP_NAMES = ['run', 'attack', 'die'];
 const POSITION_EPSILON = 1e-5;
 const SCALE_EPSILON = 1e-7;
 const QUATERNION_EPSILON = 1e-12;
@@ -30,17 +22,10 @@ const QUATERNION_EPSILON = 1e-12;
 installBrowserShims();
 
 /** Run Unity in an isolated copy of the source assets, then serialize its data. */
-export async function buildUnitySampledSkeletonModel(
-  sourceRoot,
-  spec,
-  timings,
-  unityOverride,
-) {
+export async function buildUnitySampledSkeletonModel(sourceRoot, spec, timings, unityOverride) {
   const configuration = spec.unitySampledSkeleton;
   if (!configuration?.controller) {
-    throw new Error(
-      `${spec.unit}: Unity sampled-skeleton controller is absent`,
-    );
+    throw new Error(`${spec.unit}: Unity sampled-skeleton controller is absent`);
   }
   const unity = await firstAvailablePath([
     unityOverride ? resolve(unityOverride) : null,
@@ -52,43 +37,34 @@ export async function buildUnitySampledSkeletonModel(
     );
   }
 
-  const geometrySlot = configuration.geometry ?? spec.geometry ?? "run";
+  const geometrySlot = configuration.geometry ?? spec.geometry ?? 'run';
   const geometryFile =
-    spec.geometryFile ??
-    (geometrySlot in spec.files ? spec.files[geometrySlot] : null);
+    spec.geometryFile ?? (geometrySlot in spec.files ? spec.files[geometrySlot] : null);
   if (!geometryFile) {
-    throw new Error(
-      `${spec.unit}: sampled-skeleton geometry ${geometrySlot} is absent`,
-    );
+    throw new Error(`${spec.unit}: sampled-skeleton geometry ${geometrySlot} is absent`);
   }
   validateTimings(timings, spec.unit);
 
-  const tempRoot = await mkdtemp(join(tmpdir(), "rts-athena2-unity-skeleton-"));
+  const tempRoot = await mkdtemp(join(tmpdir(), 'rts-athena2-unity-skeleton-'));
   try {
-    const assetRoot = join(tempRoot, "Assets", "Source");
-    const editorRoot = join(tempRoot, "Assets", "Editor");
-    const packagesRoot = join(tempRoot, "Packages");
-    const settingsRoot = join(tempRoot, "ProjectSettings");
-    const outputRoot = join(tempRoot, "Output");
+    const assetRoot = join(tempRoot, 'Assets', 'Source');
+    const editorRoot = join(tempRoot, 'Assets', 'Editor');
+    const packagesRoot = join(tempRoot, 'Packages');
+    const settingsRoot = join(tempRoot, 'ProjectSettings');
+    const outputRoot = join(tempRoot, 'Output');
     await Promise.all(
-      [assetRoot, editorRoot, packagesRoot, settingsRoot, outputRoot].map(
-        (path) => mkdir(path, { recursive: true }),
+      [assetRoot, editorRoot, packagesRoot, settingsRoot, outputRoot].map((path) =>
+        mkdir(path, { recursive: true }),
       ),
     );
 
     const sourceNames = [
       ...new Set(
-        [
-          ...Object.values(spec.files),
-          spec.geometryFile,
-          configuration.controller,
-        ].filter(Boolean),
+        [...Object.values(spec.files), spec.geometryFile, configuration.controller].filter(Boolean),
       ),
     ];
     const sourceFiles = sourceNames.map((name) => join(sourceRoot, name));
-    await Promise.all(
-      sourceFiles.flatMap((path) => [access(path), access(`${path}.meta`)]),
-    );
+    await Promise.all(sourceFiles.flatMap((path) => [access(path), access(`${path}.meta`)]));
     await Promise.all(
       sourceFiles.flatMap((path) => [
         copyFile(path, join(assetRoot, basename(path))),
@@ -96,11 +72,9 @@ export async function buildUnitySampledSkeletonModel(
       ]),
     );
 
-    const sourceScript = fileURLToPath(
-      new URL("./unity-sampled-skeleton.cs", import.meta.url),
-    );
-    const samplePath = join(outputRoot, "unity-samples.json");
-    const manifestPath = join(tempRoot, "sample-job.json");
+    const sourceScript = fileURLToPath(new URL('./unity-sampled-skeleton.cs', import.meta.url));
+    const samplePath = join(outputRoot, 'unity-samples.json');
+    const manifestPath = join(tempRoot, 'sample-job.json');
     const manifest = {
       prefabPath: unityAssetPath(geometryFile),
       controllerPath: unityAssetPath(configuration.controller),
@@ -113,62 +87,59 @@ export async function buildUnitySampledSkeletonModel(
       })),
     };
     await Promise.all([
-      copyFile(sourceScript, join(editorRoot, "RtsUnitySampledSkeleton.cs")),
+      copyFile(sourceScript, join(editorRoot, 'RtsUnitySampledSkeleton.cs')),
       writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`),
       writeFile(
-        join(packagesRoot, "manifest.json"),
+        join(packagesRoot, 'manifest.json'),
         `${JSON.stringify({ dependencies: {} }, null, 2)}\n`,
       ),
       writeFile(
-        join(settingsRoot, "ProjectVersion.txt"),
-        `m_EditorVersion: ${UNITY_VERSION}\n` +
-          `m_EditorVersionWithRevision: ${UNITY_VERSION}\n`,
+        join(settingsRoot, 'ProjectVersion.txt'),
+        `m_EditorVersion: ${UNITY_VERSION}\n` + `m_EditorVersionWithRevision: ${UNITY_VERSION}\n`,
       ),
     ]);
 
     console.log(
       `Sampling ${spec.unit} mesh and animation transforms with Unity ${UNITY_VERSION}...`,
     );
-    const unityLog = join(tempRoot, "unity.log");
+    const unityLog = join(tempRoot, 'unity.log');
     try {
       await runProcess(unity, [
-        "-batchmode",
-        "-nographics",
-        "-quit",
-        "-projectPath",
+        '-batchmode',
+        '-nographics',
+        '-quit',
+        '-projectPath',
         tempRoot,
-        "-executeMethod",
-        "RtsUnitySampledSkeleton.Run",
-        "-rtsSampleManifest",
+        '-executeMethod',
+        'RtsUnitySampledSkeleton.Run',
+        '-rtsSampleManifest',
         manifestPath,
-        "-logFile",
+        '-logFile',
         unityLog,
       ]);
     } catch (error) {
-      let tail = "";
+      let tail = '';
       try {
-        const log = await readFile(unityLog, "utf8");
+        const log = await readFile(unityLog, 'utf8');
         const lines = log.split(/\r?\n/);
         const highlights = lines.filter((line) =>
           /exception|error|sampled-skeleton|animator has no|executeMethod|aborting batchmode/i.test(
             line,
           ),
         );
-        tail = [
-          ...highlights.slice(-40),
-          "--- final Unity lines ---",
-          ...lines.slice(-30),
-        ].join("\n");
+        tail = [...highlights.slice(-40), '--- final Unity lines ---', ...lines.slice(-30)].join(
+          '\n',
+        );
       } catch {
         // The process error is still useful if Unity failed before opening a log.
       }
       throw new Error(
         `${spec.unit}: Unity sampled-skeleton export failed` +
-          (tail ? `\n--- Unity log tail ---\n${tail}` : ""),
+          (tail ? `\n--- Unity log tail ---\n${tail}` : ''),
         { cause: error },
       );
     }
-    const samples = JSON.parse(await readFile(samplePath, "utf8"));
+    const samples = JSON.parse(await readFile(samplePath, 'utf8'));
     validateSamples(samples, timings, spec.unit);
     const result = await samplesToGlb(samples, spec, timings);
     console.log(
@@ -193,23 +164,18 @@ async function samplesToGlb(data, spec, timings) {
   const meshData = data.mesh;
   const boneNodeSet = new Set(meshData.boneNodes);
   const objects = data.nodes.map((record, index) => {
-    const object = boneNodeSet.has(index)
-      ? new THREE.Bone()
-      : new THREE.Group();
-    const safeName =
-      THREE.PropertyBinding.sanitizeNodeName(record.name) || "node";
+    const object = boneNodeSet.has(index) ? new THREE.Bone() : new THREE.Group();
+    const safeName = THREE.PropertyBinding.sanitizeNodeName(record.name) || 'node';
     object.name = `n${index}_${safeName}`;
     return object;
   });
-  const pathToIndex = new Map(
-    data.nodes.map((record, index) => [record.path, index]),
-  );
+  const pathToIndex = new Map(data.nodes.map((record, index) => [record.path, index]));
   const parentIndices = new Array(objects.length).fill(-1);
   for (let index = 0; index < objects.length; index++) {
     const path = data.nodes[index].path;
-    const slash = path.lastIndexOf("/");
+    const slash = path.lastIndexOf('/');
     if (index > 0) {
-      const parentPath = slash < 0 ? "" : path.slice(0, slash);
+      const parentPath = slash < 0 ? '' : path.slice(0, slash);
       const parent = pathToIndex.get(parentPath);
       if (parent === undefined) {
         throw new Error(`${spec.unit}: Unity node ${path} has no parent`);
@@ -241,18 +207,15 @@ async function samplesToGlb(data, spec, timings) {
     indices[index + 1] = meshData.triangles[index + 2];
     indices[index + 2] = meshData.triangles[index + 1];
   }
-  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  geometry.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(meshData.uv), 2));
   geometry.setAttribute(
-    "uv",
-    new THREE.BufferAttribute(new Float32Array(meshData.uv), 2),
-  );
-  geometry.setAttribute(
-    "skinIndex",
+    'skinIndex',
     new THREE.BufferAttribute(new Uint16Array(meshData.boneIndices), 4),
   );
   geometry.setAttribute(
-    "skinWeight",
+    'skinWeight',
     new THREE.BufferAttribute(new Float32Array(meshData.boneWeights), 4),
   );
   geometry.setIndex(new THREE.BufferAttribute(indices, 1));
@@ -269,11 +232,9 @@ async function samplesToGlb(data, spec, timings) {
   );
   mesh.name = `${spec.unit}Mesh`;
   mesh.userData = {
-    animationFormat: "athena2-unity-sampled-skeleton-v1",
+    animationFormat: 'athena2-unity-sampled-skeleton-v1',
     sourceVertexCount: vertexCount,
-    clipFrames: Object.fromEntries(
-      CLIP_NAMES.map((name) => [name, timings[name].frames]),
-    ),
+    clipFrames: Object.fromEntries(CLIP_NAMES.map((name) => [name, timings[name].frames])),
   };
   const exportRoot = new THREE.Group();
   exportRoot.name = `${spec.unit}UnitySampled`;
@@ -285,18 +246,12 @@ async function samplesToGlb(data, spec, timings) {
   // parent transform.
   if (spec.rotateX !== 0) {
     exportRoot.quaternion.premultiply(
-      new THREE.Quaternion().setFromAxisAngle(
-        new THREE.Vector3(1, 0, 0),
-        spec.rotateX,
-      ),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), spec.rotateX),
     );
   }
   if (spec.rotateY !== 0) {
     exportRoot.quaternion.premultiply(
-      new THREE.Quaternion().setFromAxisAngle(
-        new THREE.Vector3(0, 1, 0),
-        spec.rotateY,
-      ),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), spec.rotateY),
     );
   }
   exportRoot.updateMatrixWorld(true);
@@ -324,9 +279,7 @@ async function samplesToGlb(data, spec, timings) {
       parent = parentIndices[parent];
     }
   }
-  const clips = data.clips.map((sampleClip) =>
-    sampledClip(sampleClip, objects, animatedNodes),
-  );
+  const clips = data.clips.map((sampleClip) => sampledClip(sampleClip, objects, animatedNodes));
   exportRoot.animations = clips;
   const glb = await new GLTFExporter().parseAsync(exportRoot, {
     animations: clips,
@@ -334,9 +287,7 @@ async function samplesToGlb(data, spec, timings) {
     onlyVisible: false,
   });
   if (!(glb instanceof ArrayBuffer)) {
-    throw new Error(
-      `${spec.unit}: Unity sampled-skeleton exporter returned no GLB`,
-    );
+    throw new Error(`${spec.unit}: Unity sampled-skeleton exporter returned no GLB`);
   }
   return glb;
 }
@@ -366,23 +317,9 @@ function sampledClip(sampleClip, objects, animatedNodes) {
       scales[frame * 3 + 1] = sampleClip.transforms[offset + 8];
       scales[frame * 3 + 2] = sampleClip.transforms[offset + 9];
     }
-    addCompactVectorTrack(
-      tracks,
-      objects[node],
-      "position",
-      times,
-      positions,
-      POSITION_EPSILON,
-    );
+    addCompactVectorTrack(tracks, objects[node], 'position', times, positions, POSITION_EPSILON);
     addCompactQuaternionTrack(tracks, objects[node], times, quaternions);
-    addCompactVectorTrack(
-      tracks,
-      objects[node],
-      "scale",
-      times,
-      scales,
-      SCALE_EPSILON,
-    );
+    addCompactVectorTrack(tracks, objects[node], 'scale', times, scales, SCALE_EPSILON);
   }
   return new THREE.AnimationClip(
     sampleClip.name,
@@ -391,14 +328,7 @@ function sampledClip(sampleClip, objects, animatedNodes) {
   );
 }
 
-function addCompactVectorTrack(
-  tracks,
-  object,
-  property,
-  times,
-  values,
-  epsilon,
-) {
+function addCompactVectorTrack(tracks, object, property, times, values, epsilon) {
   const rest = object[property];
   let maxRest = 0;
   let maxFirst = 0;
@@ -408,28 +338,15 @@ function addCompactVectorTrack(
         maxRest,
         Math.abs(values[frame * 3 + component] - rest.getComponent(component)),
       );
-      maxFirst = Math.max(
-        maxFirst,
-        Math.abs(values[frame * 3 + component] - values[component]),
-      );
+      maxFirst = Math.max(maxFirst, Math.abs(values[frame * 3 + component] - values[component]));
     }
   }
   if (maxRest <= epsilon) return;
   const trackTimes =
-    maxFirst <= epsilon
-      ? new Float32Array([times[0], times[times.length - 1]])
-      : times;
+    maxFirst <= epsilon ? new Float32Array([times[0], times[times.length - 1]]) : times;
   const trackValues =
-    maxFirst <= epsilon
-      ? new Float32Array([...values.slice(0, 3), ...values.slice(0, 3)])
-      : values;
-  tracks.push(
-    new THREE.VectorKeyframeTrack(
-      `${object.name}.${property}`,
-      trackTimes,
-      trackValues,
-    ),
-  );
+    maxFirst <= epsilon ? new Float32Array([...values.slice(0, 3), ...values.slice(0, 3)]) : values;
+  tracks.push(new THREE.VectorKeyframeTrack(`${object.name}.${property}`, trackTimes, trackValues));
 }
 
 function addCompactQuaternionTrack(tracks, object, times, values) {
@@ -453,28 +370,18 @@ function addCompactQuaternionTrack(tracks, object, times, values) {
   }
   if (maxRest <= QUATERNION_EPSILON) return;
   const trackTimes =
-    maxFirst <= QUATERNION_EPSILON
-      ? new Float32Array([times[0], times[times.length - 1]])
-      : times;
+    maxFirst <= QUATERNION_EPSILON ? new Float32Array([times[0], times[times.length - 1]]) : times;
   const trackValues =
     maxFirst <= QUATERNION_EPSILON
       ? new Float32Array([...values.slice(0, 4), ...values.slice(0, 4)])
       : values;
   tracks.push(
-    new THREE.QuaternionKeyframeTrack(
-      `${object.name}.quaternion`,
-      trackTimes,
-      trackValues,
-    ),
+    new THREE.QuaternionKeyframeTrack(`${object.name}.quaternion`, trackTimes, trackValues),
   );
 }
 
 function applyUnityLocal(values, offset, object) {
-  object.position.set(
-    -values[offset] * 100,
-    values[offset + 1] * 100,
-    values[offset + 2] * 100,
-  );
+  object.position.set(-values[offset] * 100, values[offset + 1] * 100, values[offset + 2] * 100);
   object.quaternion.set(
     values[offset + 3],
     -values[offset + 4],
@@ -521,8 +428,7 @@ function validateSamples(samples, timings, unit) {
     if (
       clip?.authoredFrames !== timing.frames ||
       clip?.frameRate !== timing.frameRate ||
-      clip?.transforms?.length !==
-        (timing.frames + 1) * samples.nodes.length * 10
+      clip?.transforms?.length !== (timing.frames + 1) * samples.nodes.length * 10
     ) {
       throw new Error(`${unit}: Unity returned malformed ${name} samples`);
     }
@@ -530,7 +436,7 @@ function validateSamples(samples, timings, unit) {
 }
 
 function unityAssetPath(name) {
-  return `Assets/Source/${basename(name)}`.replaceAll("\\", "/");
+  return `Assets/Source/${basename(name)}`.replaceAll('\\', '/');
 }
 
 async function firstAvailablePath(candidates) {
@@ -540,7 +446,7 @@ async function firstAvailablePath(candidates) {
       await access(candidate);
       return candidate;
     } catch (error) {
-      if (error.code !== "ENOENT") throw error;
+      if (error.code !== 'ENOENT') throw error;
     }
   }
   return null;
@@ -549,18 +455,14 @@ async function firstAvailablePath(candidates) {
 async function runProcess(command, args) {
   await new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, {
-      stdio: ["ignore", "inherit", "inherit"],
+      stdio: ['ignore', 'inherit', 'inherit'],
       windowsHide: true,
     });
-    child.on("error", reject);
-    child.on("exit", (code, signal) => {
+    child.on('error', reject);
+    child.on('exit', (code, signal) => {
       if (code === 0) resolvePromise();
       else {
-        reject(
-          new Error(
-            `${command} exited with ${code ?? `signal ${signal ?? "unknown"}`}`,
-          ),
-        );
+        reject(new Error(`${command} exited with ${code ?? `signal ${signal ?? 'unknown'}`}`));
       }
     });
   });
@@ -579,9 +481,9 @@ function installBrowserShims() {
           listeners.delete(type);
         },
       };
-      Object.defineProperty(image, "src", {
+      Object.defineProperty(image, 'src', {
         set() {
-          queueMicrotask(() => listeners.get("load")?.());
+          queueMicrotask(() => listeners.get('load')?.());
         },
       });
       return image;
@@ -600,7 +502,7 @@ function installBrowserShims() {
 
     readAsDataURL(blob) {
       void blob.arrayBuffer().then((result) => {
-        this.result = `data:${blob.type || "application/octet-stream"};base64,${Buffer.from(result).toString("base64")}`;
+        this.result = `data:${blob.type || 'application/octet-stream'};base64,${Buffer.from(result).toString('base64')}`;
         this.onloadend?.({ target: this });
       });
     }

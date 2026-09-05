@@ -25,6 +25,15 @@ fi
 echo "running under Bun (JavaScriptCore)..."
 bun run scripts/checksum-probe.ts > "$out_dir/bun.txt"
 
+# The neural bot's observation encoder is trained under Bun and run in the
+# browser, so it gets the same treatment: the same matches, hashed, under both.
+echo "hashing the observation stream under Node..."
+npx vite-node tools/ml/bench.ts --envs 2 --ticks 800 --hash | grep '^observation hash' > "$out_dir/node-obs.txt"
+echo "hashing the observation stream under Bun..."
+bun run tools/ml/bench.ts --envs 2 --ticks 800 --hash | grep '^observation hash' > "$out_dir/bun-obs.txt"
+cat "$out_dir/node-obs.txt" >> "$out_dir/node.txt"
+cat "$out_dir/bun-obs.txt" >> "$out_dir/bun.txt"
+
 echo
 if diff -u "$out_dir/node.txt" "$out_dir/bun.txt"; then
   cat "$out_dir/node.txt"

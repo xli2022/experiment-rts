@@ -18,7 +18,7 @@
 
 import { layoutStarts, layoutSize } from './mapgen.js';
 import {
-  BotDifficulty,
+  BotKind,
   MapLayout,
   MAX_PLAYERS,
   type BotSlot,
@@ -30,10 +30,15 @@ import {
 export interface MatchOptions {
   /** Override the layout's own size, for a caller that wants a smaller map. */
   readonly mapSize?: number;
-  /** Slots the AI plays. Sorted and de-duplicated. */
+  /** Slots the AI plays, all of `kind`. Sorted and de-duplicated. */
   readonly botPlayers?: readonly PlayerId[];
-  /** How hard those bots play. */
-  readonly difficulty?: BotDifficulty;
+  /** Which brain plays them. */
+  readonly kind?: BotKind;
+  /**
+   * Per-slot brains, for a roster that mixes them — a scripted partner beside
+   * neural opponents. Wins over `botPlayers` for any slot both name.
+   */
+  readonly botSlots?: readonly BotSlot[];
 }
 
 /**
@@ -66,20 +71,22 @@ export function matchConfig(
   options: MatchOptions = {},
 ): MatchConfig {
   const teams = teamsFor(layout);
-  const difficulty = options.difficulty ?? BotDifficulty.Normal;
+  const kind = options.kind ?? BotKind.Scripted;
 
   // Ascending, unique, and inside the roster. The bot roster is checksummed
-  // input in every practical sense — two peers holding different lists would
-  // simulate different games — so it is normalised here rather than trusted in
-  // whatever order a caller happened to build it.
-  const bots: BotSlot[] = [];
-  const seen = new Set<PlayerId>();
-  const requested = [...(options.botPlayers ?? [])].sort((a, b) => a - b);
-  for (const player of requested) {
-    if (player < 0 || player >= teams.length || seen.has(player)) continue;
-    seen.add(player);
-    bots.push({ player, difficulty });
+  // input in every practical sense — the peers deal these slots out among
+  // themselves by their position in this list — so it is normalised here rather
+  // than trusted in whatever order a caller happened to build it.
+  const requested: BotSlot[] = [
+    ...(options.botSlots ?? []),
+    ...(options.botPlayers ?? []).map((player) => ({ player, kind })),
+  ];
+  const byPlayer = new Map<PlayerId, BotSlot>();
+  for (const slot of requested) {
+    if (slot.player < 0 || slot.player >= teams.length || byPlayer.has(slot.player)) continue;
+    byPlayer.set(slot.player, { player: slot.player, kind: slot.kind });
   }
+  const bots = [...byPlayer.values()].sort((a, b) => a.player - b.player);
 
   return {
     seed: seed >>> 0,
@@ -100,9 +107,8 @@ export function duelMatch(seed: number, options: MatchOptions = {}): MatchConfig
  *
  * Slots 0 and 1 are team 0 and slots 2 and 3 are team 1, so the humans take the
  * low slots and the AI the high ones by default. That is not arbitrary: the
- * lockstep scheduler indexes its per-turn buffer by player id and only the
- * human slots ever appear on the wire, so the humans must occupy a contiguous
- * prefix of the roster.
+ * humans must occupy a contiguous prefix of the roster, because a bot is dealt
+ * to a human peer by `hostOf` and the transports number their peers from zero.
  */
 export function coopMatch(seed: number, options: MatchOptions = {}): MatchConfig {
   // Spread first, then re-apply the default for anything the caller left out.
@@ -111,10 +117,11 @@ export function coopMatch(seed: number, options: MatchOptions = {}): MatchConfig
   // programmatically will produce sooner or later — overwrites the default, and
   // `matchConfig` then reads it as "no bots at all". That is a four-human
   // roster on a transport carrying two, which stalls forever on slots nobody
-  // is sending for.
+  // is sending for. A caller naming slots either way gets exactly what it named.
+  const named = options.botPlayers !== undefined || options.botSlots !== undefined;
   return matchConfig(MapLayout.Quarters, seed, {
     ...options,
-    botPlayers: options.botPlayers ?? [2, 3],
+    botPlayers: named ? options.botPlayers : [2, 3],
   });
 }
 
@@ -128,7 +135,68 @@ export function withSeed(config: MatchConfig, seed: number): MatchConfig {
   return { ...config, seed: seed >>> 0 };
 }
 
-/** How many human slots a config expects on the wire. */
+/** How many slots a person sits in — the peers a transport must carry. */
 export function humanCount(config: MatchConfig): number {
   return config.teams.length - config.bots.length;
+}
+
+/**
+ * Why `config` cannot be played on a transport carrying `playerCount` peers,
+ * or null when it can.
+ *
+ * The transports number their peers from zero and every bot slot is dealt to
+ * one of those peers by `hostOf`, so the humans must be exactly the low slots:
+ * one per peer, with no bot below them. The count alone does not imply the
+ * shape — `botPlayers: [0, 1]` on the four-corner map leaves two humans against
+ * a two-peer transport and passes a count test while seating them in slots 2
+ * and 3, which is a slot nobody sends for and a stall forever, behind a
+ * "waiting for player" banner naming someone who is not playing.
+ */
+export function rosterProblem(config: MatchConfig, playerCount: number): string | null {
+  const humans = humanCount(config);
+  const botsAreHigh = config.bots.every((bot) => bot.player >= humans);
+  if (humans === playerCount && botsAreHigh) return null;
+  return (
+    `roster has ${humans} human slots but the transport carries ${playerCount}, and ` +
+    `the AI holds slots [${config.bots.map((b) => b.player).join(', ')}]; the humans ` +
+    `must be the low slots and the AI the high ones`
+  );
+}
+
+/** Does the AI play this slot? */
+export function isBotSlot(config: MatchConfig, player: PlayerId): boolean {
+  return config.bots.some((bot) => bot.player === player);
+}
+
+/** Which brain plays a bot slot, or undefined for a human's. */
+export function botKindOf(config: MatchConfig, player: PlayerId): BotKind | undefined {
+  return config.bots.find((bot) => bot.player === player)?.kind;
+}
+
+/**
+ * The peer that sends for a slot.
+ *
+ * A human sends for their own slot. A bot is hosted by a human peer, and the
+ * bots are dealt to the peers round-robin in roster order — so single-player
+ * hosts every bot on peer 0 and two-tab co-op gives each tab one. Derived from
+ * the agreed config rather than negotiated, for the same reason slot assignment
+ * is (`slotFromPeerIds`): two peers that both believed they hosted a slot would
+ * each apply whichever copy arrived first, which is a desync without a bug.
+ *
+ * A match with no humans has no wire, so its bots all answer 0; a headless
+ * driver then owns them all.
+ */
+export function hostOf(config: MatchConfig, slot: PlayerId): PlayerId {
+  const index = config.bots.findIndex((bot) => bot.player === slot);
+  if (index < 0) return slot;
+  return index % Math.max(humanCount(config), 1);
+}
+
+/** The bot slots `localPlayer` sends for, ascending. */
+export function hostedBy(config: MatchConfig, localPlayer: PlayerId): PlayerId[] {
+  const out: PlayerId[] = [];
+  for (const bot of config.bots) {
+    if (hostOf(config, bot.player) === localPlayer) out.push(bot.player);
+  }
+  return out;
 }

@@ -18,11 +18,14 @@
  * first death. Neutral entities never move, so they are matched by position.
  */
 
+import type { Agent } from '../../src/ai/agent.js';
+import { HeadlessMatch } from '../../src/ai/headless.js';
 import { defOf } from '../../src/config/rules.js';
 import { CommandType, type Command } from '../../src/sim/commands.js';
 import { idIndex } from '../../src/sim/entities.js';
 import { FIX_HALF, fromInt, vecLenSqRaw } from '../../src/sim/fixed.js';
 import { mirrorTile } from '../../src/sim/map.js';
+import { mirrorPlayer, mirrorTileIndex, mirrorX, mirrorY } from '../../src/sim/mirror.js';
 import { Simulation } from '../../src/sim/tick.js';
 import {
   BuildState,
@@ -35,26 +38,9 @@ import {
   type PlayerId,
 } from '../../src/sim/types.js';
 import type { World } from '../../src/sim/world.js';
+import { scriptedAgents } from './agents.js';
 
-/** The player whose opening is the rotation of `player`'s. */
-export function mirrorPlayer(world: World, player: PlayerId): PlayerId {
-  const n = world.players.length;
-  return (player + (n >> 1)) % n;
-}
-
-/** A world coordinate rotated 180 degrees about the map centre. */
-export function mirrorX(world: World, x: number): number {
-  return fromInt(world.map.width) - x;
-}
-
-export function mirrorY(world: World, y: number): number {
-  return fromInt(world.map.height) - y;
-}
-
-/** A tile index rotated 180 degrees; -1 stays -1. */
-export function mirrorTileIndex(world: World, tile: number): number {
-  return tile < 0 ? tile : world.map.width * world.map.height - 1 - tile;
-}
+export { mirrorPlayer, mirrorTileIndex, mirrorX, mirrorY };
 
 /**
  * The twin in `b` of every living entity in `a`, by slot index, or -1.
@@ -365,14 +351,25 @@ export function probeScript(
   };
 }
 
-/** Run a bot-driven match and check the world against its own rotation. */
-export function probeBots(name: string, config: MatchConfig, ticks: number): MirrorReport {
-  const sim = new Simulation(config);
-  const world = sim.world;
+/**
+ * Run a bot-driven match and check the world against its own rotation.
+ *
+ * The bots are hosted, as they are in play: a headless match runs them through
+ * the same driver and the same input delay the browser does, so what is
+ * checked here is the whole path a bot's decision takes, not only the bot.
+ */
+export function probeBots(
+  name: string,
+  config: MatchConfig,
+  ticks: number,
+  agents: ReadonlyMap<PlayerId, Agent> = scriptedAgents(config),
+): MirrorReport {
+  const match = new HeadlessMatch(config, agents);
+  const world = match.world;
   let first: MirrorMismatch | null = null;
   let brokenTicks = 0;
   for (let t = 0; t < ticks && !world.matchOver; t++) {
-    sim.step([]);
+    match.step();
     const m = mirrorMismatch(world, world);
     if (m) {
       brokenTicks++;
@@ -390,7 +387,7 @@ export function probeBots(name: string, config: MatchConfig, ticks: number): Mir
 }
 
 /**
- * Run two bot-driven matches whose rosters are each other's rotation and check
+ * Run two bot-driven matches whose seatings are each other's rotation and check
  * that the second is the rotation of the first, tick for tick.
  */
 export function probePair(
@@ -398,15 +395,17 @@ export function probePair(
   configA: MatchConfig,
   configB: MatchConfig,
   ticks: number,
+  agentsA: ReadonlyMap<PlayerId, Agent> = scriptedAgents(configA),
+  agentsB: ReadonlyMap<PlayerId, Agent> = scriptedAgents(configB),
 ): MirrorReport & { winnerB: number } {
-  const simA = new Simulation(configA);
-  const simB = new Simulation(configB);
+  const simA = new HeadlessMatch(configA, agentsA);
+  const simB = new HeadlessMatch(configB, agentsB);
   let first: MirrorMismatch | null = null;
   let brokenTicks = 0;
   let t = 0;
   for (; t < ticks && !(simA.world.matchOver && simB.world.matchOver); t++) {
-    if (!simA.world.matchOver) simA.step([]);
-    if (!simB.world.matchOver) simB.step([]);
+    if (!simA.world.matchOver) simA.step();
+    if (!simB.world.matchOver) simB.step();
     const m = mirrorMismatch(simA.world, simB.world);
     if (m) {
       brokenTicks++;

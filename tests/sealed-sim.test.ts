@@ -18,6 +18,25 @@ import { describe, expect, it } from 'vitest';
 
 const SIM_ROOT = fileURLToPath(new URL('../src/sim', import.meta.url));
 const CONFIG_ROOT = fileURLToPath(new URL('../src/config', import.meta.url));
+const AI_ROOT = fileURLToPath(new URL('../src/ai', import.meta.url));
+
+/**
+ * The scripted bot and everything that hosts it in a headless match.
+ *
+ * None of this runs inside the simulation any more — a bot is a player, hosted
+ * by one peer — so nothing structural needs it to be reproducible. The
+ * determinism and mirror probes do: they drive whole matches with the scripted
+ * bot and expect the same answer on every run and every engine, and that is
+ * only true while these files obey the same rules as the simulation.
+ */
+const REPRODUCIBLE_AI = [
+  'agent.ts',
+  'bot.ts',
+  'cadence.ts',
+  'driver.ts',
+  'headless.ts',
+  'scripted.ts',
+];
 
 /**
  * Constructs that make a simulation non-reproducible.
@@ -64,7 +83,11 @@ function stripComments(src: string): string {
 }
 
 describe('simulation determinism boundary', () => {
-  const files = [...sourceFiles(SIM_ROOT), ...sourceFiles(CONFIG_ROOT)];
+  const files = [
+    ...sourceFiles(SIM_ROOT),
+    ...sourceFiles(CONFIG_ROOT),
+    ...REPRODUCIBLE_AI.map((name) => join(AI_ROOT, name)),
+  ];
 
   it('finds the simulation sources', () => {
     expect(files.length).toBeGreaterThan(8);
@@ -90,22 +113,47 @@ describe('simulation determinism boundary', () => {
     expect(violations).toEqual([]);
   });
 
-  it('never imports rendering or DOM code', () => {
+  it('never imports rendering, DOM, networking or bot code', () => {
     const violations: string[] = [];
     for (const file of sourceFiles(SIM_ROOT)) {
       const code = readFileSync(file, 'utf8');
       const imports = [...code.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1]!);
       for (const spec of imports) {
         // The simulation may import itself and the balance tables, nothing else.
+        // Not even the bots: they are players now, and a simulation that ran one
+        // would be applying commands a peer never received.
         const ok = spec.startsWith('./') || spec.startsWith('../') || spec === 'node:fs';
         const reachesOutside =
           spec.includes('../render') ||
           spec.includes('../ui') ||
           spec.includes('../input') ||
-          spec.includes('../net');
+          spec.includes('../net') ||
+          spec.includes('../ai');
         if (!ok || reachesOutside) {
           violations.push(`${file.replace(/^.*\/src\//, 'src/')} imports ${spec}`);
         }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it('keeps the reproducible bot code away from the browser and the neural bot', () => {
+    // The neural bot samples; the renderer and the UI hold per-peer state. A
+    // scripted-bot file that reached either would stop being a pure function
+    // of the world, and the probes would start disagreeing with themselves.
+    const violations: string[] = [];
+    for (const name of REPRODUCIBLE_AI) {
+      const file = join(AI_ROOT, name);
+      const code = readFileSync(file, 'utf8');
+      const imports = [...code.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1]!);
+      for (const spec of imports) {
+        const forbidden =
+          spec.includes('neural') ||
+          spec.includes('../vision') ||
+          spec.includes('../render') ||
+          spec.includes('../ui') ||
+          spec.includes('../input');
+        if (forbidden) violations.push(`src/ai/${name} imports ${spec}`);
       }
     }
     expect(violations).toEqual([]);

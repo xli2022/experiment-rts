@@ -83,7 +83,7 @@ export class EntityPool {
    * recycle each other's slots after the first death. Anything that has to
    * choose between two otherwise-equal entities — a target, a formation slot, a
    * builder — breaks the tie on this, and two mirrored units then make the
-   * mirrored choice. See "The simulation is rotation-equivariant" in CLAUDE.md.
+   * mirrored choice. See "The simulation is rotation-equivariant" in README.md.
    */
   readonly serial = new Int32Array(ENTITY_CAPACITY);
   /** Next serial per owner; slot 0 is NEUTRAL, then the players in order. */

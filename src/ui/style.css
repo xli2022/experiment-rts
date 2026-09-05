@@ -133,7 +133,7 @@ body {
   text-transform: uppercase;
 }
 
-/* Difficulty picker on any mode screen with an AI in it: one row of small
+/* AI picker on any mode screen with an AI in it: one row of small
    toggles rather than a select, so the choice is visible without being
    opened. */
 #difficulty-row {
