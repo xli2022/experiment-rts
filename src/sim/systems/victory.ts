@@ -6,6 +6,14 @@
  * win it for both of them — which is the whole appeal of playing together, and
  * is why the surviving-side count below is over teams rather than slots.
  *
+ * **Being out takes everything with it.** An eliminated player's remaining
+ * units are destroyed on the tick they go out, which is what the genre does and
+ * what closes an otherwise nasty seam: elimination is per player and the match
+ * is per team, so without this a co-op player who lost their last building — or
+ * who surrendered — left an army on the field that fought on but could take no
+ * orders, because `executeCommand` drops commands from a defeated player. One
+ * rule instead: out is out, and what you owned goes with you.
+ *
  * A player is eliminated when every structure they own is destroyed — the rule
  * the genre has used since Dune II, and it stops matches dragging on while a
  * lone worker hides in a corner.
@@ -22,6 +30,7 @@
 import { defOf } from '../../config/rules.js';
 import { EntityType, NEUTRAL, NO_ENTITY, type PlayerId, type TeamId } from '../types.js';
 import type { World } from '../world.js';
+import { reapDead } from './combat.js';
 
 export function victorySystem(world: World): void {
   if (world.matchOver) return;
@@ -54,42 +63,51 @@ export function victorySystem(world: World): void {
     }
   }
 
+  let eliminatedAny = false;
   for (let p = 0; p < playerCount; p++) {
     const ps = world.players[p]!;
-    if (ps.defeated) continue;
-
-    if (buildings[p] === 0) {
+    if (!ps.defeated) {
+      // Stalemate guard, second clause: no units, nothing affordable to train,
+      // and — since gathering needs a worker — no prospect of ever affording
+      // one. Minerals left in the ground are irrelevant with nobody alive to
+      // mine them.
+      const out = buildings[p] === 0 || (units[p] === 0 && !canProduce[p]);
+      if (!out) continue;
       ps.defeated = true;
-      continue;
     }
 
-    // Stalemate guard: no units, nothing affordable to train, and — since
-    // gathering needs a worker — no prospect of ever affording one. Minerals
-    // left in the ground are irrelevant with nobody alive to mine them.
-    if (units[p] === 0 && !canProduce[p]) {
-      ps.defeated = true;
+    // Defeated, however they got there. `Surrender` sets the flag itself, from
+    // a command that has already executed by the time this runs, so keying the
+    // sweep on "newly defeated here" would empty a razed player's base and
+    // leave a conceding player's standing — the one case the button exists for.
+    // Asking what they still own instead covers both, and does nothing on
+    // every tick after the first because by then they own nothing.
+    if (buildings[p]! > 0 || units[p]! > 0) {
+      strip(world, p as PlayerId);
+      eliminatedAny = true;
     }
   }
+
+  // One reap for however many players went out this tick. The deaths are queued
+  // rather than applied directly so the presentation layer sees them like any
+  // other: a surrendering player's base blows up rather than blinking away.
+  if (eliminatedAny) reapDead(world);
 
   // Count surviving *teams*, not players. A side with one partner left standing
   // has not lost, and in a 1v1 — where every team has exactly one member — this
   // is the same count it always was.
+  //
+  // Marked rather than rescanned: asking "did an earlier surviving slot already
+  // claim this team" is a second encoding of the split `config.teams` already
+  // holds, and it made the count quadratic on every tick of every match.
+  const seen = new Uint8Array(playerCount);
   let survivingTeams = 0;
   let lastAlive: TeamId = NO_ENTITY;
   for (let p = 0; p < playerCount; p++) {
     if (world.players[p]!.defeated) continue;
     const team = world.teamOf(p);
-    // Players are walked in ascending slot order and a team's members are
-    // contiguous in nothing in particular, so count a team once by checking
-    // whether an earlier surviving slot already claimed it.
-    let counted = false;
-    for (let q = 0; q < p; q++) {
-      if (!world.players[q]!.defeated && world.teamOf(q) === team) {
-        counted = true;
-        break;
-      }
-    }
-    if (counted) continue;
+    if (seen[team] === 1) continue;
+    seen[team] = 1;
     survivingTeams++;
     lastAlive = team;
   }
@@ -100,6 +118,22 @@ export function victorySystem(world: World): void {
     // genuine draw, which needs to end the match rather than leave it running
     // with nobody able to win it.
     world.winner = lastAlive;
+  }
+}
+
+/**
+ * Queue everything a player still owns for destruction.
+ *
+ * Ascending slot order, like every other pass over the pool, because the order
+ * deaths are queued in decides the order slots return to the free list and
+ * therefore every entity id issued afterwards.
+ */
+function strip(world: World, player: PlayerId): void {
+  const pool = world.pool;
+  for (let i = 0; i < pool.count; i++) {
+    if (pool.alive[i] !== 1) continue;
+    if (pool.owner[i] !== player) continue;
+    world.events.deaths.push(i);
   }
 }
 

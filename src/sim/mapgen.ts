@@ -95,7 +95,12 @@ export interface Layout {
  */
 export function mirroredHalf(index: number, count: number): { canonical: number; flip: boolean } {
   const half = count >> 1;
-  return { canonical: half === 0 ? index : index % half, flip: index >= half };
+  // A list with no second half has no rotated copies in it, so every entry is
+  // its own canonical site. Without this an odd-length list reports its sole
+  // entry as the 180-degree rotation of itself, which would lay a base's
+  // mineral line out on the wrong side of the map.
+  if (half === 0) return { canonical: index, flip: false };
+  return { canonical: index % half, flip: index >= half };
 }
 
 /** Where the bases sit, as a fraction in from the corner. */
@@ -214,7 +219,14 @@ export function layoutSize(layout: MapLayout): number {
   return layout === MapLayout.Quarters ? QUARTERS_SIZE : LANES_SIZE;
 }
 
-/** Side length of the 1v1 map. Mirrors `MAP_SIZE` in `map.ts`. */
+/**
+ * Side length of the 1v1 map.
+ *
+ * Defined here rather than in `map.ts` so there is one of it: `MAP_SIZE` is
+ * this value, re-exported. Two constants would be two answers to what the duel
+ * map's side length is, and a peer that generated terrain at one while its
+ * config said the other is a tick-zero desync.
+ */
 const LANES_SIZE = 128;
 /**
  * Side length of the 2v2 map.

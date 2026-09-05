@@ -21,10 +21,11 @@
 
 import { checksumArray, checksumInit, checksumU32 } from './checksum.js';
 import { toInt, type Fix } from './fixed.js';
-import { carveLayout } from './mapgen.js';
+import { carveLayout, layoutSize } from './mapgen.js';
 import { MapLayout, Tile } from './types.js';
 
-export const MAP_SIZE = 128;
+/** Side length of the duel map. The layout owns the number; this names it. */
+export const MAP_SIZE = layoutSize(MapLayout.Lanes);
 
 /** Nothing stands here. */
 export const UNOCCUPIED = 0;

@@ -14,7 +14,7 @@ import { LockstepRunner } from './net/lockstep.js';
 import { SoloTransport } from './net/localTransport.js';
 import { CommandType, type Command } from './sim/commands.js';
 import { fromFloat, toFloat } from './sim/fixed.js';
-import { coopMatch, duelMatch, withSeed } from './sim/match.js';
+import { coopMatch, duelMatch, humanCount, withSeed } from './sim/match.js';
 import { Simulation } from './sim/tick.js';
 import {
   BotDifficulty,
@@ -101,6 +101,8 @@ class Game {
   private pointerNdc = new THREE.Vector2();
   private lastFrameMs = 0;
   private finished = false;
+  /** True once the local player has been told they are out of a running match. */
+  private knockedOut = false;
   /** Wall-clock seconds since start, for purely cosmetic animation. */
   private elapsedS = 0;
 
@@ -117,6 +119,18 @@ class Game {
     // arrives as one agreed value. Nothing here chooses any of it: a peer that
     // decided locally would be playing a different game from the one across the
     // wire, which is a desync rather than a difference of opinion.
+    // The one place a config meets a transport, and the only place the roster
+    // and the wire can be checked against each other. Lockstep sizes its
+    // per-turn buffer by `playerCount` and indexes it by player id, so a roster
+    // whose humans are not the low slots leaves a slot nobody ever sends for
+    // and stalls every peer forever, behind a "waiting for player" banner
+    // naming someone who is not playing. Failing here says what is wrong.
+    if (humanCount(setup.config) !== transport.playerCount) {
+      throw new Error(
+        `roster has ${humanCount(setup.config)} human slots but the transport ` +
+          `carries ${transport.playerCount}; the AI must hold the high slots`,
+      );
+    }
     this.sim = new Simulation(setup.config);
     this.localTeam = this.sim.world.teamOf(this.localPlayer);
     this.mapSize = this.sim.world.map.width;
@@ -161,6 +175,7 @@ class Game {
       },
       this.allies(),
       this.sim.world.players.length,
+      () => this.surrender(),
     );
 
     this.runner = new LockstepRunner(this.sim, transport, {
@@ -702,6 +717,20 @@ class Game {
     this.runner.issue(command);
   }
 
+  /**
+   * Concede.
+   *
+   * An ordinary command, executed on its turn like any other — which is what
+   * makes it work in every mode without a special case. In a 1v1 it ends the
+   * match on the tick it lands; in co-op the player is out and their partner
+   * plays on, so `checkResult` has something to say that is neither victory nor
+   * defeat.
+   */
+  private surrender(): void {
+    if (this.finished) return;
+    this.issue({ type: CommandType.Surrender, player: this.localPlayer });
+  }
+
   // -------------------------------------------------------------------------
   // Frame loop
   // -------------------------------------------------------------------------
@@ -922,11 +951,31 @@ class Game {
 
   private checkResult(): void {
     if (this.finished) return;
-    if (!this.sim.world.matchOver) return;
+    const world = this.sim.world;
+
+    // Out, but the match is not over: the local player conceded or was wiped
+    // out while a partner fought on. Neither victory nor defeat has happened
+    // yet, and saying nothing would leave a player staring at a HUD whose
+    // buttons have quietly stopped working.
+    if (!world.matchOver) {
+      if (this.knockedOut || !world.player(this.localPlayer).defeated) return;
+      this.knockedOut = true;
+      this.hud.setSurrenderAvailable(false);
+      this.hud.showDialog(
+        'You are out',
+        'Everything you owned is gone. Your side is still fighting, and if they ' +
+          'win, you win with them.',
+        [
+          { label: 'Keep watching', primary: true, onClick: () => this.hud.hideDialog() },
+          { label: 'Leave', onClick: () => location.reload() },
+        ],
+      );
+      return;
+    }
 
     this.finished = true;
+    this.hud.setSurrenderAvailable(false);
     this.gallery.close();
-    const world = this.sim.world;
     const winner = world.winner;
     const replay = [{ label: 'Play again', primary: true, onClick: () => location.reload() }];
 

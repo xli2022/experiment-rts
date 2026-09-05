@@ -153,15 +153,20 @@ partner it can never damage, an attack order that can never resolve, fog that
 stops at your own units, a match that ends when one of two allies loses their
 last building.
 
-**Elimination stayed per player while the match became per team, and the seam
-shows.** A co-op player who loses their last building is eliminated, so
-`executeCommand` drops their orders — while their surviving army stays on the
-field fighting for itself. The side can still win, and does; but those units
-answer to nobody. Whether losing a base with an army still alive should
-eliminate a player at all is a design question rather than an oversight, and it
-wants answering before the seam is papered over: the buildings-only rule is what
-stops a 1v1 dragging on while a lone worker hides in a corner, so relaxing it
-cannot be done for co-op alone without saying what happens to the duel.
+**Elimination is per player, the match is per team, and being out takes
+everything with it.** Those first two together left a seam: `executeCommand`
+drops commands from a defeated player, so a co-op player who lost their last
+building kept an army that fought on and could take no orders. The rule that
+closes it is the genre's — an eliminated player's remaining units and buildings
+are destroyed on the tick they go out — and it is what makes the surrender
+button mean something in a team game rather than only in a 1v1.
+
+`victorySystem` keys that sweep on *what a defeated player still owns*, not on
+"newly defeated here". `Surrender` sets the flag itself, from a command that has
+already executed by the time victory runs, so the obvious version emptied a
+razed player's base and left a conceding player's standing — the one case the
+button exists for. The deaths are queued into `world.events.deaths` and reaped
+like any other, so a conceded base blows up instead of blinking away.
 
 **Humans must occupy a contiguous prefix of the roster.** Lockstep indexes its
 per-turn buffer by player id and only human slots ever appear on the wire, so a

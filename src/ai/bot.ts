@@ -33,7 +33,7 @@
 
 import { defOf, MAX_PRODUCTION_QUEUE, SUPPLY_MAX } from '../config/rules.js';
 import { CommandType, type Command } from '../sim/commands.js';
-import { fromInt } from '../sim/fixed.js';
+import { fromInt, sqRange, vecLenSqRaw } from '../sim/fixed.js';
 import {
   BotDifficulty,
   BuildState,
@@ -282,10 +282,7 @@ function survey(world: World, player: PlayerId): Survey {
     const owner = pool.owner[i]!;
 
     if (type === EntityType.MineralPatch) {
-      if (pool.resourceAmount[i]! > 0) {
-        allPatches.push(i);
-        s.livePatches++;
-      }
+      if (pool.resourceAmount[i]! > 0) allPatches.push(i);
       continue;
     }
     if (owner === NEUTRAL) continue;
@@ -347,10 +344,17 @@ function survey(world: World, player: PlayerId): Survey {
     }
   }
 
+  // Maintained beside the push it always equalled, this was a second copy of
+  // one fact that an edit could put out of step. It is the list's length.
+  s.livePatches = allPatches.length;
+
   // Patches worth walking to: near a base of ours. Ascending, like everything
   // else, so ties in `keepWorkersBusy` break the same way on every peer.
   for (const p of allPatches) {
-    if (nearestOf(world, p, s.commandPosts).distSq <= sq(HOME_PATCH_RANGE)) s.patches.push(p);
+    const home = nearestOf(world, p, s.commandPosts);
+    if (home >= 0 && distSqBetween(world, p, home) <= sqRange(HOME_PATCH_RANGE)) {
+      s.patches.push(p);
+    }
   }
   // Nothing near home is worth walking to, but something somewhere is: take it.
   //
@@ -370,25 +374,31 @@ function survey(world: World, player: PlayerId): Survey {
   return s;
 }
 
-/** Squared distance from entity `i` to the nearest of `others`, plus which. */
-function nearestOf(
-  world: World,
-  i: number,
-  others: readonly number[],
-): { index: number; distSq: number } {
+/**
+ * The nearest of `others` to entity `i`, or -1 when the list is empty.
+ *
+ * Ties break by position in `others`, which every caller builds by an ascending
+ * pass over the pool — a strict total order, and the reason this is one helper
+ * rather than the four hand-rolled copies of the same loop it replaced.
+ */
+function nearestOf(world: World, i: number, others: readonly number[]): number {
   const pool = world.pool;
   let best = -1;
   let bestDist = Number.POSITIVE_INFINITY;
   for (const j of others) {
-    const dx = pool.posX[j]! - pool.posX[i]!;
-    const dy = pool.posY[j]! - pool.posY[i]!;
-    const d = dx * dx + dy * dy;
+    const d = vecLenSqRaw(pool.posX[j]! - pool.posX[i]!, pool.posY[j]! - pool.posY[i]!);
     if (d < bestDist) {
       bestDist = d;
       best = j;
     }
   }
-  return { index: best, distSq: bestDist };
+  return best;
+}
+
+/** Squared distance between two entities, in the raw space `sqRange` compares. */
+function distSqBetween(world: World, a: number, b: number): number {
+  const pool = world.pool;
+  return vecLenSqRaw(pool.posX[b]! - pool.posX[a]!, pool.posY[b]! - pool.posY[a]!);
 }
 
 /**
@@ -422,12 +432,13 @@ function nearestThreat(
   let bestDist = Number.POSITIVE_INFINITY;
   for (const h of hostileUnits) {
     if (pool.type[h] === EntityType.Worker) continue;
-    const { index, distSq } = nearestOf(world, h, ownBuildings);
-    if (index < 0) continue;
-    if (distSq > sq(DEFEND_RANGE)) continue;
+    const building = nearestOf(world, h, ownBuildings);
+    if (building < 0) continue;
+    const distSq = distSqBetween(world, h, building);
+    if (distSq > sqRange(DEFEND_RANGE)) continue;
     if (distSq < bestDist) {
       bestDist = distSq;
-      best = index;
+      best = building;
     }
   }
   return best;
@@ -444,17 +455,7 @@ function keepWorkersBusy(
   const pool = world.pool;
 
   for (const w of s.idleWorkers) {
-    let best = -1;
-    let bestDist = Number.POSITIVE_INFINITY;
-    for (const p of s.patches) {
-      const dx = pool.posX[p]! - pool.posX[w]!;
-      const dy = pool.posY[p]! - pool.posY[w]!;
-      const d = dx * dx + dy * dy;
-      if (d < bestDist) {
-        bestDist = d;
-        best = p;
-      }
-    }
+    const best = nearestOf(world, w, s.patches);
     if (best < 0) continue;
     cmds.push({
       type: CommandType.Harvest,
@@ -681,6 +682,14 @@ function expansionSite(
   return best;
 }
 
+/**
+ * Squared, in *tile* space.
+ *
+ * Distances in Q16.16 go through `vecLenSqRaw` and `sqRange` instead, which is
+ * the pair the rest of the simulation uses and what keeps a reader from having
+ * to work out which coordinate system a comparison is in. This one is left for
+ * `expansionSite`, which reasons about whole tiles.
+ */
 function sq(v: number): number {
   return v * v;
 }

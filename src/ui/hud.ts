@@ -49,6 +49,7 @@ export class Hud {
 
   private readonly fullscreenBtn: HTMLButtonElement;
   private readonly muteBtn: HTMLButtonElement;
+  private readonly surrenderBtn: HTMLButtonElement;
 
   /** True while the pointer is over a HUD panel, to suppress world clicks. */
   pointerOverUi = false;
@@ -71,6 +72,15 @@ export class Hud {
      * slot, so a colour cannot be looked up without it — see `colourSlotFor`.
      */
     private readonly playerCount: number = 2,
+    /**
+     * Called when the player confirms they are giving up.
+     *
+     * A callback rather than a command built here: the HUD does not know the
+     * lockstep runner, and conceding is an ordinary command that executes on
+     * its turn like any other — every peer applies it in the same order, so
+     * there is nothing special about it but the button.
+     */
+    private readonly onSurrender: () => void = () => {},
   ) {
     const colour = (p: PlayerId): number =>
       PLAYER_COLOURS[colourSlotFor(p, playerCount)] ?? 0x888888;
@@ -120,6 +130,8 @@ export class Hud {
         <div id="command-grid"></div>
       </div>
 
+      <button class="panel" id="surrender-btn" type="button"
+              title="Surrender" aria-label="Surrender">🏳</button>
       <button class="panel" id="mute-btn" type="button"
               title="Mute (M)" aria-label="Toggle sound"></button>
       <button class="panel" id="fullscreen-btn" type="button"
@@ -166,6 +178,30 @@ export class Hud {
     this.muteBtn.addEventListener('click', () => this.toggleMute());
     this.syncMuteLabel();
 
+    // Confirmed, and deliberately given no hotkey. It is the one irreversible
+    // thing on screen, and a stray keypress during a fight should not be able
+    // to end a match.
+    this.surrenderBtn = must(root, '#surrender-btn') as HTMLButtonElement;
+    this.surrenderBtn.addEventListener('click', () => {
+      this.showDialog(
+        'Surrender?',
+        'Everything you still own is lost and you are out of the match. ' +
+          'This cannot be undone.',
+        // The safe option is the primary one. Making the destructive button the
+        // loud one is how a confirmation turns into a rubber stamp.
+        [
+          { label: 'Keep playing', primary: true, onClick: () => this.hideDialog() },
+          {
+            label: 'Surrender',
+            onClick: () => {
+              this.hideDialog();
+              this.onSurrender();
+            },
+          },
+        ],
+      );
+    });
+
     this.fullscreenBtn = must(root, '#fullscreen-btn') as HTMLButtonElement;
     if (fullscreenSupported()) {
       this.fullscreenBtn.addEventListener('click', () => void this.toggleFullscreen());
@@ -180,7 +216,8 @@ export class Hud {
     // Panels swallow pointer events so a click on the command card never also
     // issues a world order behind it.
     for (const sel of [
-      '#resources', '#allies', '#minimap-panel', '#command-panel', '#fullscreen-btn', '#mute-btn',
+      '#resources', '#allies', '#minimap-panel', '#command-panel',
+      '#fullscreen-btn', '#mute-btn', '#surrender-btn',
     ]) {
       const panel = must(root, sel);
       panel.classList.add('interactive');
@@ -424,6 +461,11 @@ export class Hud {
   hideDialog(): void {
     this.overlay.classList.add('hidden');
     this.overlay.innerHTML = '';
+  }
+
+  /** Hide the surrender button — there is nothing left to give up. */
+  setSurrenderAvailable(available: boolean): void {
+    this.surrenderBtn.hidden = !available;
   }
 
   /**

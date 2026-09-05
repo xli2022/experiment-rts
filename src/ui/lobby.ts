@@ -4,8 +4,17 @@
  * Every mode produces the same pair — a `Transport` and a `MatchConfig` — and
  * the game itself cannot tell them apart. That is the payoff of routing single
  * player through the lockstep scheduler too: there is no separate "offline" code
- * path that can rot, and co-op is not a separate mode of the *game*, only a
- * different roster handed to the same one.
+ * path that can rot, and neither co-op nor versus is a separate mode of the
+ * *game*, only a different roster handed to the same one.
+ *
+ * ## One shape per screen
+ *
+ * The menu offers three modes and each opens the same kind of screen: what it
+ * is, how hard the AI plays if there is any AI in it, and the ways to start it.
+ * Grouping them that way is not only tidiness — the two versus modes are the
+ * same match over two different transports, and listing them at the top level
+ * beside the modes made "who am I playing" and "how do we connect" look like
+ * one question when they are two.
  *
  * ## Both peers must choose the same thing
  *
@@ -39,7 +48,7 @@ type LobbyMode =
   /** One human against one AI, on the duel map. */
   | { kind: 'skirmish'; difficulty: BotDifficulty }
   /** Two humans on the duel map. */
-  | { kind: 'duel' }
+  | { kind: 'versus' }
   /** Two players a side on the four-corner map, against the AI. */
   | { kind: 'coop'; difficulty: BotDifficulty; withAiPartner: boolean };
 
@@ -49,22 +58,11 @@ const DIFFICULTY_LABELS: Readonly<Record<BotDifficulty, string>> = {
   [BotDifficulty.Hard]: 'Hard',
 };
 
-/**
- * The string two peers compare to check they picked the same thing.
- *
- * Everything that feeds `configFor` has to appear in it, or a difference that
- * changes the simulation could slip past the handshake — which is precisely the
- * class of bug the handshake exists to catch.
- */
-function modeId(mode: LobbyMode): string {
-  if (mode.kind === 'duel') return 'duel';
-  if (mode.kind === 'skirmish') return `skirmish:${mode.difficulty}`;
-  return `coop:${mode.difficulty}:${mode.withAiPartner ? 'trio' : 'pair'}`;
-}
+const DIFFICULTIES = [BotDifficulty.Easy, BotDifficulty.Normal, BotDifficulty.Hard];
 
 /** Turn a choice plus an agreed seed into the match every peer will run. */
 function configFor(mode: LobbyMode, seed: number): MatchConfig {
-  if (mode.kind === 'duel') return duelMatch(seed, { botPlayers: [] });
+  if (mode.kind === 'versus') return duelMatch(seed, { botPlayers: [] });
   if (mode.kind === 'skirmish') {
     return duelMatch(seed, { botPlayers: [1], difficulty: mode.difficulty });
   }
@@ -76,14 +74,54 @@ function configFor(mode: LobbyMode, seed: number): MatchConfig {
   });
 }
 
+/**
+ * The string two peers compare to check they picked the same thing.
+ *
+ * Derived from the config rather than from the choice that produced it, and
+ * that is the whole point: a hand-written summary of `LobbyMode` is a second
+ * list of everything that matters, and the day someone adds a field to one and
+ * not the other, two peers pass the handshake and desync on the first tick —
+ * exactly the failure the handshake exists to prevent. Serialising the artefact
+ * cannot drift from the artefact.
+ *
+ * The seed is zeroed because it is agreed separately, from the room code. Key
+ * order is stable because both peers run the same build — the protocol version
+ * check guarantees it — and the string is only ever compared for equality,
+ * never parsed.
+ */
+function modeId(mode: LobbyMode): string {
+  return JSON.stringify(configFor(mode, 0));
+}
+
+/**
+ * One action button on a mode screen.
+ *
+ * `run` takes no argument and builds its own mode when clicked, rather than
+ * being handed one when the screen is drawn: the difficulty chips can change
+ * the answer after that, so a mode captured up front would start the match on
+ * whatever was selected when the screen opened.
+ */
+interface ModeAction {
+  label: string;
+  primary?: boolean;
+  run: () => void;
+}
+
 export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promise<MatchSetup> {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
     overlay.id = 'overlay';
     root.append(overlay);
 
-    /** Difficulty the co-op screen currently has selected. */
-    let coopDifficulty = BotDifficulty.Normal;
+    /**
+     * How hard the AI plays, shared by every screen that offers the choice.
+     *
+     * One value rather than one per screen, so a player who sets Hard for a
+     * skirmish and then opens co-op finds Hard still selected. It also survives
+     * the Back button out of the connect screens, which route back to the mode
+     * they came from.
+     */
+    let difficulty = BotDifficulty.Normal;
 
     const render = (html: string): HTMLElement => {
       overlay.innerHTML = `<div class="dialog">${html}</div>`;
@@ -108,6 +146,10 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
       resolve({ transport, config: configFor(mode, seed) });
     };
 
+    // ---------------------------------------------------------------------
+    // Screens
+    // ---------------------------------------------------------------------
+
     const menu = (): void => {
       // Every route out of this menu is a click, which is exactly the user
       // gesture browsers require before an AudioContext may start.
@@ -116,81 +158,147 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
       const dialog = render(`
         <h1>Experiment RTS</h1>
         <p>Gather minerals, build a base, and destroy every enemy structure.</p>
-        <button class="primary" data-act="ai">Skirmish vs AI</button>
+        <button class="primary" data-act="skirmish">Skirmish vs AI</button>
         <button data-act="coop">Co-op vs AI</button>
-        <button data-act="online">Play online</button>
-        <button data-act="local">Two tabs on this computer</button>
+        <button data-act="versus">Versus another player</button>
         <button data-act="units" aria-haspopup="dialog"
                 aria-controls="unit-gallery-dialog">All units</button>
       `);
 
-      dialog.querySelector('[data-act="ai"]')!.addEventListener('click', () => {
-        start(new SoloTransport(), { kind: 'skirmish', difficulty: BotDifficulty.Normal }, randomSeed());
-      });
-
+      dialog.querySelector('[data-act="skirmish"]')!.addEventListener('click', skirmish);
       dialog.querySelector('[data-act="coop"]')!.addEventListener('click', coop);
-      dialog.querySelector('[data-act="online"]')!.addEventListener('click', () =>
-        online({ kind: 'duel' }),
-      );
-      dialog.querySelector('[data-act="local"]')!.addEventListener('click', () =>
-        local({ kind: 'duel' }),
-      );
+      dialog.querySelector('[data-act="versus"]')!.addEventListener('click', versus);
       dialog.querySelector('[data-act="units"]')!.addEventListener('click', onShowAllUnits);
     };
 
-    const coop = (): void => {
+    /** Render a mode: what it is, how hard the AI plays, and how to start it. */
+    const modeScreen = (spec: {
+      title: string;
+      blurb: string;
+      /** Show the difficulty picker. True exactly when the mode has an AI in it. */
+      hasBots: boolean;
+      actions: ModeAction[];
+      back: () => void;
+    }): void => {
+      const chips = spec.hasBots
+        ? `<div id="difficulty-row" role="group" aria-label="AI difficulty">
+             ${DIFFICULTIES.map(
+               (d) =>
+                 `<button class="chip" data-difficulty="${d}">${DIFFICULTY_LABELS[d]}</button>`,
+             ).join('')}
+           </div>`
+        : '';
+
       const dialog = render(`
-        <h1>Co-op vs AI</h1>
-        <p>You and a partner share one side of a four-corner map against two AI
-           opponents. Allies never damage each other, see through each other's
-           scouting, and win or lose together — a side is only beaten once every
-           structure on it is gone.</p>
-        <div id="difficulty-row">
-          ${[BotDifficulty.Easy, BotDifficulty.Normal, BotDifficulty.Hard]
-            .map(
-              (d) =>
-                `<button data-difficulty="${d}" class="chip">${DIFFICULTY_LABELS[d]}</button>`,
-            )
-            .join('')}
-        </div>
-        <button class="primary" data-act="online">Play online with a friend</button>
-        <button data-act="local">Two tabs on this computer</button>
-        <button data-act="solo">Play solo with an AI partner</button>
+        <h1>${spec.title}</h1>
+        <p>${spec.blurb}</p>
+        ${chips}
+        ${spec.actions
+          .map(
+            (a, i) =>
+              `<button data-run="${i}"${a.primary ? ' class="primary"' : ''}>${a.label}</button>`,
+          )
+          .join('')}
         <button data-act="back">Back</button>
       `);
 
-      const syncChips = (): void => {
+      if (spec.hasBots) {
+        const syncChips = (): void => {
+          for (const chip of dialog.querySelectorAll<HTMLElement>('[data-difficulty]')) {
+            const value = Number(chip.dataset.difficulty);
+            chip.classList.toggle('active', value === difficulty);
+            chip.setAttribute('aria-pressed', String(value === difficulty));
+          }
+        };
         for (const chip of dialog.querySelectorAll<HTMLElement>('[data-difficulty]')) {
-          chip.classList.toggle('active', Number(chip.dataset.difficulty) === coopDifficulty);
+          chip.addEventListener('click', () => {
+            difficulty = Number(chip.dataset.difficulty) as BotDifficulty;
+            syncChips();
+          });
         }
-      };
-      for (const chip of dialog.querySelectorAll<HTMLElement>('[data-difficulty]')) {
-        chip.addEventListener('click', () => {
-          coopDifficulty = Number(chip.dataset.difficulty) as BotDifficulty;
-          syncChips();
-        });
+        syncChips();
       }
-      syncChips();
 
-      const modeWith = (withAiPartner: boolean): LobbyMode => ({
-        kind: 'coop',
-        difficulty: coopDifficulty,
-        withAiPartner,
+      spec.actions.forEach((action, i) => {
+        dialog.querySelector(`[data-run="${i}"]`)!.addEventListener('click', action.run);
       });
-
-      dialog.querySelector('[data-act="online"]')!.addEventListener('click', () =>
-        online(modeWith(false)),
-      );
-      dialog.querySelector('[data-act="local"]')!.addEventListener('click', () =>
-        local(modeWith(false)),
-      );
-      dialog.querySelector('[data-act="solo"]')!.addEventListener('click', () => {
-        start(new SoloTransport(), modeWith(true), randomSeed());
-      });
-      dialog.querySelector('[data-act="back"]')!.addEventListener('click', menu);
+      dialog.querySelector('[data-act="back"]')!.addEventListener('click', spec.back);
     };
 
-    const online = (mode: LobbyMode): void => {
+    const skirmish = (): void => {
+      modeScreen({
+        title: 'Skirmish vs AI',
+        blurb: `One base each, on the three-lane map, against a single AI opponent.
+                Difficulty changes only what it does — how hard it works its
+                economy, how soon it commits, whether it comes home when its base
+                is attacked. It gets no bonus income and no extra units.`,
+        hasBots: true,
+        actions: [
+          {
+            label: 'Start match',
+            primary: true,
+            run: () =>
+              start(new SoloTransport(), { kind: 'skirmish', difficulty }, randomSeed()),
+          },
+        ],
+        back: menu,
+      });
+    };
+
+    const coop = (): void => {
+      const withPartner = (withAiPartner: boolean): LobbyMode => ({
+        kind: 'coop',
+        difficulty,
+        withAiPartner,
+      });
+      modeScreen({
+        title: 'Co-op vs AI',
+        blurb: `You and a partner share one side of a four-corner map against two
+                AI opponents. Allies never damage each other, see through each
+                other's scouting, and win or lose together — a side is only
+                beaten once every structure on it is gone.`,
+        hasBots: true,
+        actions: [
+          {
+            label: 'Play online with a friend',
+            primary: true,
+            run: () => online(withPartner(false), coop),
+          },
+          { label: 'Two tabs on this computer', run: () => local(withPartner(false), coop) },
+          {
+            // The only route that fills the second human seat with an AI.
+            label: 'Play solo with an AI partner',
+            run: () => start(new SoloTransport(), withPartner(true), randomSeed()),
+          },
+        ],
+        back: menu,
+      });
+    };
+
+    const versus = (): void => {
+      modeScreen({
+        title: 'Versus another player',
+        blurb: `One base each on the three-lane map, no AI involved — the same
+                match either way, over whichever connection suits you. Play
+                online with a room code, or against a second tab on this
+                computer with no network at all.`,
+        hasBots: false,
+        actions: [
+          { label: 'Play online', primary: true, run: () => online({ kind: 'versus' }, versus) },
+          {
+            label: 'Two tabs on this computer',
+            run: () => local({ kind: 'versus' }, versus),
+          },
+        ],
+        back: menu,
+      });
+    };
+
+    // ---------------------------------------------------------------------
+    // Connecting
+    // ---------------------------------------------------------------------
+
+    const online = (mode: LobbyMode, back: () => void): void => {
       const suggested = generateRoomCode();
       const dialog = render(`
         <h1>Play online</h1>
@@ -199,10 +307,7 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
            involved: once connected, the game runs directly between the two
            browsers.</p>
         <input class="interactive" id="room-code" value="${suggested}"
-               maxlength="8" autocomplete="off" spellcheck="false"
-               style="width:100%;padding:11px;border-radius:9px;border:1px solid var(--panel-edge);
-                      background:rgba(10,14,20,0.7);color:var(--text);font:inherit;
-                      font-size:20px;text-align:center;letter-spacing:0.22em;text-transform:uppercase" />
+               maxlength="8" autocomplete="off" spellcheck="false" />
         <button class="primary" data-act="go">Connect</button>
         <button data-act="back">Back</button>
       `);
@@ -211,29 +316,25 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
       input.focus();
       input.select();
 
-      const back = mode.kind === 'coop' ? coop : menu;
-      dialog.querySelector('[data-act="back"]')!.addEventListener('click', back);
-      dialog.querySelector('[data-act="go"]')!.addEventListener('click', () => {
+      const go = (): void => {
         const code = input.value.trim().toUpperCase();
-        if (code.length < 3) return;
-        connect(code, mode);
-      });
+        if (code.length >= 3) connect(code, mode, back);
+      };
+      dialog.querySelector('[data-act="back"]')!.addEventListener('click', back);
+      dialog.querySelector('[data-act="go"]')!.addEventListener('click', go);
       input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          const code = input.value.trim().toUpperCase();
-          if (code.length >= 3) connect(code, mode);
-        }
+        if (e.key === 'Enter') go();
       });
     };
 
-    const connect = (code: string, mode: LobbyMode): void => {
+    const connect = (code: string, mode: LobbyMode, back: () => void): void => {
       const dialog = render(`
         <h1>Connecting…</h1>
         <p id="status">Looking for the other player.</p>
         <button data-act="cancel">Cancel</button>
       `);
       const status = dialog.querySelector('#status') as HTMLElement;
-      dialog.querySelector('[data-act="cancel"]')!.addEventListener('click', menu);
+      dialog.querySelector('[data-act="cancel"]')!.addEventListener('click', back);
 
       // Both peers derive the same seed from the room code, so the map is
       // agreed before either side sends anything.
@@ -247,11 +348,11 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
       })
         .then(({ transport, seed }) => start(transport, mode, seed))
         .catch((error: unknown) => {
-          showError(error instanceof Error ? error.message : String(error), menu);
+          showError(error instanceof Error ? error.message : String(error), back);
         });
     };
 
-    const local = (mode: LobbyMode): void => {
+    const local = (mode: LobbyMode, back: () => void): void => {
       const dialog = render(`
         <h1>Two tabs</h1>
         <p>Open this page in a second tab and choose the same option there.
@@ -260,12 +361,12 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
         <p id="status" style="color:var(--warn)">Waiting for the second tab…</p>
         <button data-act="cancel">Cancel</button>
       `);
-      dialog.querySelector('[data-act="cancel"]')!.addEventListener('click', menu);
+      dialog.querySelector('[data-act="cancel"]')!.addEventListener('click', back);
 
       joinLocalRoom('lan', randomSeed(), modeId(mode))
         .then(({ transport, seed }) => start(transport, mode, seed))
         .catch((error: unknown) => {
-          showError(error instanceof Error ? error.message : String(error), menu);
+          showError(error instanceof Error ? error.message : String(error), back);
         });
     };
 

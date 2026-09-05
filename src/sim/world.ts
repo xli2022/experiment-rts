@@ -465,11 +465,16 @@ function mirrorTile(size: number, tile: number, footprint: number): number {
 /**
  * Top-left tile of a footprint reflected about a base's centre on one axis.
  *
+ * The same formula as `mirrorTile`, over a span of `2 * centre` rather than the
+ * map — reflecting `[t, t+f)` about `c` gives `[2c-t-f, 2c-t)` either way. Spelt
+ * as a call rather than repeated, because CLAUDE.md records that a half-tile
+ * error in exactly this reflection cost a whole tile of walking on every trip
+ * and took three attempts to get right; two copies of it is two places to get
+ * it wrong again.
+ *
  * `centre` is a base's centre tile, which for an even footprint is also its
- * exact geometric centre — a Command Post spans `[c-2, c+2)`. Reflecting the
- * span `[t, t+f)` about `c` gives `[2c-t-f, 2c-t)`, which is the same shape
- * `mirrorTile` uses for the map as a whole.
+ * exact geometric centre — a Command Post spans `[c-2, c+2)`.
  */
 function reflectTile(centre: number, tile: number, footprint: number): number {
-  return 2 * centre - tile - footprint;
+  return mirrorTile(2 * centre, tile, footprint);
 }

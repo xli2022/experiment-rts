@@ -32,6 +32,7 @@ suite — see [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml).
 | Control groups   | `Ctrl`+`1`–`9` to assign, `1`–`9` to recall                        |
 | Build / train    | the letter shown on each command-card button                       |
 | Repair           | right-click your own damaged or half-built structure with a worker |
+| Surrender        | the flag button top-right — confirmed, and it cannot be undone     |
 | Fullscreen       | `F`, or the button top-right                                       |
 | Mute             | `M`                                                                |
 | Model gallery    | `All units` button on the home screen                              |
@@ -70,12 +71,14 @@ corner and a team to each side of it. Allies:
 - **share vision** — whatever your partner scouts, you can see;
 - win and lose together — a side is beaten only when every structure on it is
   gone, so a player whose own base is razed is on the winning side if their
-  partner finishes the job. (Their surviving units fight on by themselves, but
-  stop taking orders: losing your last building still eliminates *you*.)
+  partner finishes the job. Being knocked out, or surrendering, does take
+  everything you still own with it: you are out, and you watch.
 
-Pick a difficulty in the lobby. It changes only what the AI *does* — how hard it
-works its economy, how soon it commits, whether it comes home when its base is
-attacked — never what it is given. And the two AI opponents play as one side:
+Pick a difficulty in the lobby — every mode with an AI in it offers the same
+three, and the choice follows you between them. It changes only what the AI
+*does*: how hard it works its economy, how soon it commits, whether it comes
+home when its base is attacked. Never what it is given — no bonus income, no
+extra units, no seeing through fog. And the two AI opponents play as one side:
 they count their armies together before committing and push the same target, so
 they arrive together rather than one at a time.
 
@@ -112,7 +115,9 @@ flank. Same generator and the same mirrored brush, so the two sides are exact
 
 ## Multiplayer without a server
 
-Every mode shares one code path:
+Three modes, one code path. The menu asks *who* you are playing first and *how
+you connect* second, because those are two questions and the versus modes are
+the same match over two different transports:
 
 - **Skirmish vs AI** — the bot is a deterministic function of game state, so it
   runs inside the simulation on every machine. It costs no bandwidth and needs
@@ -120,6 +125,11 @@ Every mode shares one code path:
 - **Co-op vs AI** — the same thing with four slots instead of two: two humans on
   the wire, two bots generated locally on both machines. A 2v2 therefore costs
   exactly what a 1v1 does.
+- **Versus another player** — 1v1, either over a shared room code or against a
+  second tab on this computer.
+
+The two ways to connect:
+
 - **Two tabs** — a second tab on the same computer, over `BroadcastChannel`. No
   network at all.
 - **Online** — share a room code. Peers find each other through the public

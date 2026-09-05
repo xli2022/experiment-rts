@@ -143,25 +143,27 @@ export class EntityRenderer {
   private readonly colour = new THREE.Color();
 
   /**
-   * Player slots this match actually has, ascending.
+   * Team of each player slot, indexed by slot; its length is the roster size.
    *
    * Instanced pools are per (type, owner), so this decides how many exist. Built
    * from the world rather than from a constant: a two-player duel should not
    * carry four sets of empty meshes around, and a four-player match must not
    * silently drop two of them.
    */
-  private readonly owners: number[] = [];
-  /** Team of each slot, for picking which skin a unit wears. */
   private readonly teamOf: number[] = [];
   /** Palette entry of each slot. Not the slot itself — see `colourSlotFor`. */
   private readonly colourOf: number[] = [];
+
+  /** Every player slot in the match, ascending. */
+  private get owners(): number[] {
+    return this.teamOf.map((_, p) => p);
+  }
 
   constructor(
     private readonly provider: ModelProvider,
     world: World,
   ) {
     for (let p = 0; p < world.players.length; p++) {
-      this.owners.push(p);
       this.teamOf.push(world.teamOf(p));
       this.colourOf.push(colourSlotFor(p, world.players.length));
     }

@@ -105,8 +105,25 @@ body {
   letter-spacing: 0.07em;
 }
 
-/* Difficulty picker in the co-op lobby: one row of small toggles rather than a
-   select, so the choice is visible without being opened. */
+/* The room code: the one text field in the game, so it is styled here rather
+   than inline at the single site that renders it. */
+#room-code {
+  width: 100%;
+  padding: 11px;
+  border-radius: 9px;
+  border: 1px solid var(--panel-edge);
+  background: rgba(10, 14, 20, 0.7);
+  color: var(--text);
+  font: inherit;
+  font-size: 20px;
+  text-align: center;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+/* Difficulty picker on any mode screen with an AI in it: one row of small
+   toggles rather than a select, so the choice is visible without being
+   opened. */
 #difficulty-row {
   display: flex;
   gap: 8px;
@@ -323,7 +340,8 @@ body {
 
 /* ---- fullscreen toggle ---- */
 #fullscreen-btn,
-#mute-btn {
+#mute-btn,
+#surrender-btn {
   top: 12px;
   right: 12px;
   width: 38px;
@@ -346,10 +364,27 @@ body {
   right: 58px;
 }
 
+#surrender-btn {
+  right: 104px;
+}
+
+/* An author `display` beats `[hidden] { display: none }`, and the shared rule
+   above sets one — so the button that can be hidden has to say so itself. */
+#surrender-btn[hidden] {
+  display: none;
+}
+
 #fullscreen-btn:hover,
 #mute-btn:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* Giving up is destructive, so it warns on hover rather than inviting a click
+   the way the two toggles beside it do. */
+#surrender-btn:hover {
+  border-color: var(--enemy, #ff5a4a);
+  color: var(--enemy, #ff5a4a);
 }
 
 /* ---- marquee ---- */

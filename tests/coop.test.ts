@@ -56,47 +56,21 @@ function owned(world: World, player: PlayerId): number[] {
   return out;
 }
 
-/** Reachability between two tiles, with some regions optionally sealed. */
+/**
+ * Reachability between two tiles, with some regions optionally sealed.
+ *
+ * Expressed over `walkingDistance` rather than as a second flood fill: the two
+ * ran the same block-stamping and the same queue walk, and the same test called
+ * both on the same arguments — so a fix to one would have left "is connected"
+ * and "how far" answering about different maps, with nothing failing.
+ */
 function connected(
   map: GameMap,
   a: { tileX: number; tileY: number },
   b: { tileX: number; tileY: number },
   blocks: { x: number; y: number; r: number }[],
 ): boolean {
-  const size = map.width;
-  const blocked = Uint8Array.from(map.tiles);
-  for (const block of blocks) {
-    for (let y = block.y - block.r; y <= block.y + block.r; y++) {
-      for (let x = block.x - block.r; x <= block.x + block.r; x++) {
-        if (x < 0 || y < 0 || x >= size || y >= size) continue;
-        const dx = x - block.x;
-        const dy = y - block.y;
-        if (dx * dx + dy * dy > block.r * block.r) continue;
-        blocked[y * size + x] = Tile.Cliff;
-      }
-    }
-  }
-
-  const goal = map.index(b.tileX, b.tileY);
-  const seen = new Uint8Array(size * size);
-  const queue = [map.index(a.tileX, a.tileY)];
-  seen[queue[0]!] = 1;
-  for (let head = 0; head < queue.length; head++) {
-    const cur = queue[head]!;
-    if (cur === goal) return true;
-    const cx = cur % size;
-    const cy = (cur / size) | 0;
-    for (let d = 0; d < 4; d++) {
-      const nx = cx + (d === 0 ? 1 : d === 1 ? -1 : 0);
-      const ny = cy + (d === 2 ? 1 : d === 3 ? -1 : 0);
-      if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
-      const ni = ny * size + nx;
-      if (seen[ni] === 1 || blocked[ni] === Tile.Cliff) continue;
-      seen[ni] = 1;
-      queue.push(ni);
-    }
-  }
-  return false;
+  return walkingDistance(map, a, b, blocks) >= 0;
 }
 
 /** Four-directional walking distance between two tiles, or -1 if unreachable. */
@@ -555,6 +529,111 @@ describe('victory is decided per side', () => {
     sim.step([]);
     expect(world.matchOver).toBe(true);
     expect(world.winner).toBe(0);
+  });
+});
+
+describe('surrender', () => {
+  /** A live army for `player`, well away from anyone's base. */
+  function armFor(world: World, player: PlayerId, count = 4): number[] {
+    const centre = world.map.width >> 1;
+    const out: number[] = [];
+    for (let k = 0; k < count; k++) {
+      out.push(spawnAt(world, EntityType.Burstbot, player, centre + k, centre + player * 3));
+    }
+    world.recomputeSupply();
+    return out;
+  }
+
+  it('ends a duel on the tick it lands, and the other player wins', () => {
+    const sim = new Simulation(duelMatch(SEEDS[0]!));
+    const world = sim.world;
+    executeCommand(world, { type: CommandType.Surrender, player: 1 });
+    sim.step([]);
+
+    expect(world.player(1).defeated).toBe(true);
+    expect(world.matchOver).toBe(true);
+    expect(world.winner).toBe(0);
+  });
+
+  it('takes a co-op player out while their side plays on', () => {
+    const sim = new Simulation(coopMatch(SEEDS[0]!));
+    const world = sim.world;
+    executeCommand(world, { type: CommandType.Surrender, player: 0 });
+    sim.step([]);
+
+    expect(world.player(0).defeated).toBe(true);
+    expect(world.player(1).defeated).toBe(false);
+    expect(world.matchOver).toBe(false);
+    // And the side they left can still win it for them.
+    expect(world.teamOf(0)).toBe(world.teamOf(1));
+  });
+
+  it('takes everything the player still owned with it', () => {
+    // The seam this closes: elimination is per player and the match is per
+    // team, so a co-op player who conceded used to leave an army on the field
+    // that fought on and could take no orders — `executeCommand` drops commands
+    // from a defeated player. Out is out.
+    const sim = new Simulation(coopMatch(SEEDS[0]!));
+    const world = sim.world;
+    const army = armFor(world, 0);
+    expect(owned(world, 0).length).toBeGreaterThan(army.length);
+
+    executeCommand(world, { type: CommandType.Surrender, player: 0 });
+    sim.step([]);
+
+    expect(owned(world, 0)).toEqual([]);
+    // The partner is untouched — this is elimination, not a team wipe.
+    expect(owned(world, 1).length).toBeGreaterThan(0);
+  });
+
+  it('frees the ground a departing player left behind', () => {
+    // Destroyed buildings have to release their footprint or the map keeps a
+    // hole nobody can build on for the rest of the match.
+    const sim = new Simulation(coopMatch(SEEDS[0]!));
+    const world = sim.world;
+    const post = owned(world, 0).find((i) => world.pool.type[i] === EntityType.CommandPost)!;
+    const tileX = world.pool.tileX[post]!;
+    const tileY = world.pool.tileY[post]!;
+    const footprint = defOf(EntityType.CommandPost).footprint;
+    expect(world.map.canPlace(tileX, tileY, footprint)).toBe(false);
+
+    executeCommand(world, { type: CommandType.Surrender, player: 0 });
+    sim.step([]);
+
+    expect(world.map.canPlace(tileX, tileY, footprint)).toBe(true);
+  });
+
+  it('reports the deaths, so they are seen rather than blinked away', () => {
+    const sim = new Simulation(coopMatch(SEEDS[0]!));
+    const world = sim.world;
+    const before = owned(world, 0).length;
+    executeCommand(world, { type: CommandType.Surrender, player: 0 });
+    sim.step([]);
+    // The presentation layer reads `events.deaths` after the step, so queueing
+    // them is what makes a conceded base blow up instead of vanishing.
+    expect(world.events.deaths.length).toBeGreaterThanOrEqual(before);
+  });
+
+  it('leaves the partner able to win it for both of them', () => {
+    // The claim the co-op lobby makes on screen, and the reason conceding does
+    // not simply end the match for your side.
+    const sim = new Simulation(coopMatch(SEEDS[0]!));
+    const world = sim.world;
+    executeCommand(world, { type: CommandType.Surrender, player: 0 });
+    sim.step([]);
+    expect(world.matchOver).toBe(false);
+
+    for (const p of [2, 3] as PlayerId[]) {
+      for (const i of owned(world, p)) {
+        if (defOf(world.pool.type[i]! as EntityType).isBuilding) {
+          world.pool.destroy(world.pool.idAt(i));
+        }
+      }
+    }
+    sim.step([]);
+
+    expect(world.matchOver).toBe(true);
+    expect(world.winner).toBe(world.teamOf(1));
   });
 });
 
