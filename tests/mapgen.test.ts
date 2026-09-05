@@ -19,8 +19,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { PATCHES_PER_BASE, PATCHES_PER_EXPANSION, defOf } from '../src/config/rules.js';
-import { GameMap, MAP_SIZE, generateMap } from '../src/sim/map.js';
-import { buildLayout, mirror, nearestOn, pointAt } from '../src/sim/mapgen.js';
+import { GameMap, MAP_SIZE, generateMap, mirrorTile } from '../src/sim/map.js';
+import { buildLayout, mirror, mirroredHalf, nearestOn, pointAt } from '../src/sim/mapgen.js';
 import { Simulation } from '../src/sim/tick.js';
 import { EntityType, Tile } from '../src/sim/types.js';
 
@@ -216,9 +216,13 @@ describe('map generation', () => {
       expect(map.expansions.length).toBeGreaterThanOrEqual(2);
       expect(map.expansions.length % 2).toBe(0);
 
-      for (let e = 0; e < map.expansions.length; e += 2) {
+      // Stored in mirrored halves, like `starts`: site `e` and site `e + n/2`
+      // are each other's rotation. Pairing neighbours instead only agreed with
+      // this on the two-expansion map, where the halves are one site each.
+      const half = map.expansions.length >> 1;
+      for (let e = 0; e < half; e++) {
         const first = map.expansions[e]!;
-        const second = map.expansions[e + 1]!;
+        const second = map.expansions[e + half]!;
         expect(mirror({ x: first.tileX, y: first.tileY }, map.width)).toEqual({
           x: second.tileX,
           y: second.tileY,
@@ -248,12 +252,23 @@ describe('map generation', () => {
       const map = sim.world.map;
       const hqDef = defOf(EntityType.CommandPost);
 
-      for (const site of map.expansions) {
+      const half = hqDef.footprint >> 1;
+      for (let e = 0; e < map.expansions.length; e++) {
+        const site = map.expansions[e]!;
         expect(patchesAround(sim, site)).toBe(PATCHES_PER_EXPANSION);
         // A worker must actually be able to plant a Command Post here, centred
-        // the same way the starting ones are.
-        const tx = site.tileX - (hqDef.footprint >> 1);
-        const ty = site.tileY - (hqDef.footprint >> 1);
+        // the same way the starting ones are: a first-half site takes the
+        // canonical top-left, a second-half site the exact rotation of its
+        // canonical twin's — `site - 2` applied to a rotated point is a tile
+        // off, the footprint bug the opening was cured of.
+        const pair = mirroredHalf(e, map.expansions.length);
+        const canonical = map.expansions[pair.canonical]!;
+        const tx = pair.flip
+          ? mirrorTile(map.width, canonical.tileX - half, hqDef.footprint)
+          : canonical.tileX - half;
+        const ty = pair.flip
+          ? mirrorTile(map.height, canonical.tileY - half, hqDef.footprint)
+          : canonical.tileY - half;
         expect(map.canPlace(tx, ty, hqDef.footprint)).toBe(true);
       }
     }

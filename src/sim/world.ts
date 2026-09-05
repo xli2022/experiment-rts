@@ -12,8 +12,8 @@
 
 import { checksumInit, checksumU32 } from './checksum.js';
 import { EntityPool } from './entities.js';
-import { fromInt, type Fix } from './fixed.js';
-import { GameMap, generateMap, OCCUPIED_RESERVED, OCCUPIED_SOLID } from './map.js';
+import { FIX_HALF, fromInt, type Fix } from './fixed.js';
+import { GameMap, generateMap, mirrorTile, OCCUPIED_RESERVED, OCCUPIED_SOLID } from './map.js';
 import { duelMatch } from './match.js';
 import { mirroredHalf } from './mapgen.js';
 import { Rng } from './rng.js';
@@ -75,6 +75,18 @@ export class World {
   readonly rng: Rng;
   readonly players: PlayerState[] = [];
 
+  /**
+   * Which half of the map each player is on, and their seat within it.
+   *
+   * Player `p` and player `p + n/2` start on ground that is an exact rotation
+   * of each other's (see `mirroredHalf`), and every decision the simulation
+   * makes in tile space has to rotate with them: search orders, tie-breaks,
+   * which tile a boundary position falls in. `flipOf` is the one bit those
+   * decisions read. Cached because it is asked on every path request.
+   */
+  private readonly flips: boolean[] = [];
+  private readonly canonicals: number[] = [];
+
   /** Ticks elapsed since the match began. */
   tick = 0;
 
@@ -133,7 +145,29 @@ export class World {
         supplyMax: 0,
         defeated: false,
       });
+      const { canonical, flip } = mirroredHalf(p, cfg.teams.length);
+      this.flips.push(flip);
+      this.canonicals.push(canonical);
     }
+  }
+
+  /**
+   * Is this player's side the rotated half of the map?
+   *
+   * False for `NEUTRAL`: mineral patches belong to nobody and sit on both
+   * halves, so a decision made on their behalf has no frame to rotate into.
+   */
+  flipOf(player: PlayerId): boolean {
+    return player < 0 ? false : (this.flips[player] ?? false);
+  }
+
+  /**
+   * The player's seat within their half, the same number for a player and
+   * their opposite number. On the duel map every player is seat 0; on the
+   * four-corner map the two allies on a side are seats 0 and 1.
+   */
+  ownerCanonical(player: PlayerId): number {
+    return player < 0 ? -1 : (this.canonicals[player] ?? 0);
   }
 
   player(id: PlayerId): PlayerState {
@@ -423,11 +457,15 @@ export function setupMatch(world: World): void {
     // that is a rotation of it.
     placeMineralLine(world, homeX + half, homeY + half, PATCHES_PER_BASE, flip, faceOut);
 
-    // Starting workers, fanned out on the near side of the Command Post.
+    // Starting workers, fanned out on the near side of the Command Post, on
+    // tile centres. The half-tile is rotated with everything else: a worker at
+    // `centre + k + 0.5` mirrors to `centre' - k - 0.5`, not to `- k + 0.5`, and
+    // the fan is then symmetric about the Command Post on both sides.
     const facing = flip ? -1 : 1;
     for (let wIdx = 0; wIdx < STARTING_WORKERS; wIdx++) {
-      const ox = fromInt(centreX) + fromInt((wIdx - (STARTING_WORKERS >> 1)) * facing);
-      const oy = fromInt(centreY + 3 * facing);
+      const ox =
+        fromInt(centreX) + fromInt((wIdx - (STARTING_WORKERS >> 1)) * facing) + facing * FIX_HALF;
+      const oy = fromInt(centreY + 3 * facing) + facing * FIX_HALF;
       const id = pool.spawn(EntityType.Worker, p, ox, oy);
       // Units spawn facing +Y by default, which is one more thing that has to
       // rotate: otherwise one player's opening six all have to turn around
@@ -450,11 +488,6 @@ export function setupMatch(world: World): void {
 
   world.recomputeSupply();
   world.grid.rebuild(pool);
-}
-
-/** Top-left tile of a footprint rotated 180 degrees about the map centre. */
-function mirrorTile(size: number, tile: number, footprint: number): number {
-  return size - 1 - tile - (footprint - 1);
 }
 
 /**

@@ -14,7 +14,7 @@ import {
   HARVEST_TICKS,
   MINERALS_PER_TRIP,
 } from '../../config/rules.js';
-import { idIndex } from '../entities.js';
+import { ENTITY_CAPACITY, idIndex } from '../entities.js';
 import { FIX_HALF, fromInt, sqRange, vecLenSqRaw, type Fix } from '../fixed.js';
 import { nearestWalkable } from '../pathing/astar.js';
 import { standableTarget } from './orders.js';
@@ -31,8 +31,17 @@ export function economySystem(world: World): void {
 // Harvesting
 // ---------------------------------------------------------------------------
 
+/**
+ * Workers whose harvest completes this tick, and how many finish on each patch.
+ * Scratch for `harvestSystem`, refilled every tick.
+ */
+const claimants: number[] = [];
+const claimsOn = new Int32Array(ENTITY_CAPACITY);
+const shareOf = new Int32Array(ENTITY_CAPACITY);
+
 function harvestSystem(world: World): void {
   const pool = world.pool;
+  claimants.length = 0;
 
   for (let i = 0; i < pool.count; i++) {
     if (pool.alive[i] !== 1) continue;
@@ -44,6 +53,32 @@ function harvestSystem(world: World): void {
     } else {
       gatherFromPatch(world, i);
     }
+  }
+
+  // Loads are handed out after every worker has been looked at, so what a
+  // worker gets does not depend on which of the workers finishing this tick
+  // was visited first. Taken as it went, two workers finishing together on a
+  // patch with twelve minerals left got eight and four in slot order — and slot
+  // order is not the same on both halves of a mirrored match. A patch that
+  // cannot give every finisher a full load is shared evenly and exhausted; the
+  // few minerals that cannot be split are lost rather than handed to whoever
+  // happened to come first.
+  for (let k = 0; k < claimants.length; k++) {
+    const i = claimants[k]!;
+    const pi = idIndex(pool.harvestPatch[i]!);
+    const finishers = claimsOn[pi]!;
+    if (finishers > 0) {
+      // The first finisher on a patch settles it for all of them.
+      const available = pool.resourceAmount[pi]!;
+      const full = finishers * MINERALS_PER_TRIP <= available;
+      shareOf[pi] = full ? MINERALS_PER_TRIP : (available / finishers) | 0;
+      pool.resourceAmount[pi] = full ? available - finishers * MINERALS_PER_TRIP : 0;
+      // Exhausted patches vanish, freeing their tiles.
+      if (pool.resourceAmount[pi]! <= 0) world.events.deaths.push(pi);
+      claimsOn[pi] = 0;
+    }
+    pool.carrying[i] = shareOf[pi]!;
+    pool.harvestTimer[i] = 0;
   }
 }
 
@@ -76,16 +111,9 @@ function gatherFromPatch(world: World, i: number): void {
   pool.harvestTimer[i]! += 1;
   if (pool.harvestTimer[i]! < HARVEST_TICKS) return;
 
-  const available = pool.resourceAmount[pi]!;
-  const taken = available < MINERALS_PER_TRIP ? available : MINERALS_PER_TRIP;
-  pool.resourceAmount[pi] = available - taken;
-  pool.carrying[i] = taken;
-  pool.harvestTimer[i] = 0;
-
-  if (pool.resourceAmount[pi]! <= 0) {
-    // Exhausted patches vanish, freeing their tiles.
-    world.events.deaths.push(pi);
-  }
+  // Done: the load is handed out once every finisher this tick is known.
+  claimants.push(i);
+  claimsOn[pi] = claimsOn[pi]! + 1;
 }
 
 function deliverLoad(world: World, i: number): void {
@@ -108,7 +136,10 @@ function deliverLoad(world: World, i: number): void {
   pool.orderTarget[i] = pool.harvestPatch[i]!;
 }
 
-/** Nearest completed Command Post owned by `player`. Ties break by index. */
+/**
+ * Nearest completed Command Post owned by `player`. Ties break by serial, the
+ * creation order the two halves of a mirrored match share.
+ */
 function nearestDropoff(world: World, i: number, player: PlayerId): number {
   const pool = world.pool;
   let best = -1;
@@ -121,7 +152,7 @@ function nearestDropoff(world: World, i: number, player: PlayerId): number {
     const dx = pool.posX[j]! - pool.posX[i]!;
     const dy = pool.posY[j]! - pool.posY[i]!;
     const d = vecLenSqRaw(dx, dy);
-    if (d < bestDist) {
+    if (d < bestDist || (d === bestDist && pool.serial[j]! < pool.serial[best]!)) {
       bestDist = d;
       best = j;
     }
@@ -129,11 +160,17 @@ function nearestDropoff(world: World, i: number, player: PlayerId): number {
   return best;
 }
 
-/** Nearest mineral patch with minerals left. Ties break by index. */
+/**
+ * Nearest mineral patch with minerals left. Patches are neutral and have no
+ * creation order of their own, so ties break by tile index in the worker's
+ * canonical frame — the same patch, seen from either side.
+ */
 function nearestPatch(world: World, i: number): number {
   const pool = world.pool;
+  const flip = world.flipOf(pool.owner[i]!);
   let best = -1;
   let bestDist = Number.POSITIVE_INFINITY;
+  let bestKey = 0;
   for (let j = 0; j < pool.count; j++) {
     if (pool.alive[j] !== 1) continue;
     if (pool.type[j] !== EntityType.MineralPatch) continue;
@@ -141,9 +178,11 @@ function nearestPatch(world: World, i: number): number {
     const dx = pool.posX[j]! - pool.posX[i]!;
     const dy = pool.posY[j]! - pool.posY[i]!;
     const d = vecLenSqRaw(dx, dy);
-    if (d < bestDist) {
+    const key = world.map.canonicalIndex(world.map.index(pool.tileX[j]!, pool.tileY[j]!), flip);
+    if (d < bestDist || (d === bestDist && key < bestKey)) {
       bestDist = d;
       best = j;
+      bestKey = key;
     }
   }
   return best;
@@ -192,11 +231,11 @@ export function approachPoint(
   px: Fix,
   py: Fix,
   out: { x: Fix; y: Fix },
+  bx: Fix = world.pool.posX[b]!,
+  by: Fix = world.pool.posY[b]!,
 ): void {
   const pool = world.pool;
   const def = defOf(pool.type[b]! as EntityType);
-  const bx = pool.posX[b]!;
-  const by = pool.posY[b]!;
   if (def.footprint <= 0) {
     out.x = bx;
     out.y = by;
@@ -286,14 +325,33 @@ function constructionSystem(world: World): void {
 // Production
 // ---------------------------------------------------------------------------
 
+/** Buildings with something queued, in creation order. Scratch. */
+const producers: number[] = [];
+
 function productionSystem(world: World): void {
   const pool = world.pool;
 
+  // Visited in creation order rather than slot order. Two buildings finishing
+  // a unit on the same tick spawn them one after the other, and the order
+  // decides which unit is the owner's n-th — its serial, and with it every
+  // tie the unit will ever break. Slot order is not the same on both halves
+  // of a mirrored match; creation order is.
+  producers.length = 0;
   for (let i = 0; i < pool.count; i++) {
     if (pool.alive[i] !== 1) continue;
     if (pool.prodCount[i]! === 0) continue;
     if (pool.buildState[i] !== BuildState.Complete) continue;
+    producers.push(i);
+  }
+  producers.sort(
+    (a, b) =>
+      world.ownerCanonical(pool.owner[a]!) - world.ownerCanonical(pool.owner[b]!) ||
+      pool.serial[a]! - pool.serial[b]! ||
+      pool.owner[a]! - pool.owner[b]!,
+  );
 
+  for (let k = 0; k < producers.length; k++) {
+    const i = producers[k]!;
     const owner = pool.owner[i]! as PlayerId;
     const unitType = pool.prodAt(i, 0);
     const unitDef = defOf(unitType);
@@ -332,7 +390,7 @@ function productionSystem(world: World): void {
     // inherits a destination it can never reach.
     if (
       pool.hasRally[i] === 1 &&
-      standableTarget(world, pool.rallyX[i]!, pool.rallyY[i]!, rallyOut)
+      standableTarget(world, owner, pool.rallyX[i]!, pool.rallyY[i]!, rallyOut)
     ) {
       const ui = id & 0xffff;
       pool.order[ui] = Order.Move;
@@ -387,13 +445,22 @@ function spawnPointFor(world: World, buildingIndex: number): typeof spawnOut {
   const pool = world.pool;
   const map = world.map;
   const def = defOf(pool.type[buildingIndex]! as EntityType);
-  const spread = (world.tick + buildingIndex) % 5;
-  const towardCentre = pool.posY[buildingIndex]! < fromInt(map.height >> 1) ? 1 : -1;
-  const px = pool.posX[buildingIndex]! + fromInt((spread - 2) * towardCentre);
-  const py = pool.posY[buildingIndex]! + fromInt(def.footprint * towardCentre);
+  // Nudged by the building's serial, not its slot: twin buildings share a
+  // serial, so a mirrored pair emits units at mirrored points.
+  const spread = (world.tick + pool.serial[buildingIndex]!) % 5;
+  // Which side is "toward the middle" is a property of the half the owner
+  // plays from, read from the roster rather than from which side of the
+  // centre line the building happens to stand — a building exactly on that
+  // line would otherwise face the same way as its mirror.
+  const flip = world.flipOf(pool.owner[buildingIndex]!);
+  const towardCentre = flip ? -1 : 1;
+  // Half a tile in as well, so the unit appears on a tile centre rather than
+  // on the corner its building's integer-valued centre would put it on.
+  const px = pool.posX[buildingIndex]! + towardCentre * (fromInt(spread - 2) + FIX_HALF);
+  const py = pool.posY[buildingIndex]! + towardCentre * (fromInt(def.footprint) + FIX_HALF);
   spawnOut.faceY = towardCentre;
 
-  const preferred = map.tileOfPos(px, py);
+  const preferred = map.tileOfPosFor(px, py, flip);
   if (preferred >= 0 && map.isWalkable(map.tileXOf(preferred), map.tileYOf(preferred))) {
     spawnOut.x = px;
     spawnOut.y = py;
@@ -406,13 +473,13 @@ function spawnPointFor(world: World, buildingIndex: number): typeof spawnOut {
   const from =
     preferred >= 0
       ? preferred
-      : map.tileOfPos(pool.posX[buildingIndex]!, pool.posY[buildingIndex]!);
+      : map.tileOfPosFor(pool.posX[buildingIndex]!, pool.posY[buildingIndex]!, flip);
   if (from < 0) {
     spawnOut.ok = false;
     return spawnOut;
   }
 
-  const free = nearestWalkable(map, map.tileXOf(from), map.tileYOf(from), SPAWN_SEARCH_RINGS);
+  const free = nearestWalkable(map, map.tileXOf(from), map.tileYOf(from), SPAWN_SEARCH_RINGS, flip);
   if (free < 0) {
     spawnOut.ok = false;
     return spawnOut;

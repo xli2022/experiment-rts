@@ -24,13 +24,14 @@
  * Unlike A*, this needs no tie-breaking rule at all. Dijkstra assigns every tile
  * a *unique* shortest distance, so the finished `dist` array is identical no
  * matter what order equal-cost nodes were expanded in — which is why the bucket
- * queue below can pop LIFO without consequence. Steering then scans neighbours
- * in a fixed order and breaks ties by lower tile index, so two peers read the
- * same field and take the same step.
+ * queue below can pop LIFO without consequence. Steering then picks among
+ * equally good neighbours by a strict order that reads the same from both
+ * halves of the map (see `stepFrom`), so two peers read the same field and
+ * take the same step, and two mirrored units take mirrored steps.
  */
 
+import { FIX_HALF, fromInt, vecLenSqRaw, type Fix } from '../fixed.js';
 import type { GameMap } from '../map.js';
-import { nearestWalkable } from './astar.js';
 
 const COST_STRAIGHT = 10;
 const COST_DIAGONAL = 14;
@@ -57,6 +58,15 @@ const NEIGHBOURS: readonly (readonly [number, number, number])[] = [
  * are enough for those to occupy distinct slots modulo the bucket count.
  */
 const BUCKET_COUNT = COST_DIAGONAL + 1; // 15
+
+/**
+ * How far out to look for walkable ground around an unwalkable goal.
+ *
+ * A Command Post is the largest footprint and its centre is two tiles from its
+ * edge; anything further than this is a goal deep inside a cliff mass, which
+ * `standableTarget` has already refused.
+ */
+const SEED_RINGS = 12;
 
 export class FlowField {
   /** Cost-to-goal per tile, or UNREACHABLE. */
@@ -98,7 +108,7 @@ export class FlowField {
     const w = map.width;
     const h = map.height;
 
-    // Seed from a walkable tile, even when asked for an unwalkable one.
+    // Seed from walkable tiles, even when asked for an unwalkable one.
     //
     // Attack-move targets a building's *centre*, which is occupied — and for
     // anything bigger than 2x2 every neighbour of that centre is inside the
@@ -106,15 +116,36 @@ export class FlowField {
     // report the entire map unreachable, so every unit ordered to attack a
     // Command Post immediately cancelled and stood still. Armies grew to
     // hundreds without a single shot fired.
-    let seed = goalTile;
-    if (!map.isWalkable(goalTile % w, (goalTile / w) | 0)) {
-      seed = nearestWalkable(map, goalTile % w, (goalTile / w) | 0);
-      if (seed < 0) return;
+    //
+    // *Every* walkable tile on the nearest ring that has one, all at distance
+    // zero, rather than a single substitute. One tile has to be chosen by some
+    // rule, and any rule that reads absolute map directions sends the two
+    // halves' armies to different corners of a building; a whole ring is its
+    // own rotation, so the field for the mirrored building is the mirrored
+    // field. It also happens to be better behaviour: units approach the face
+    // nearest them instead of funnelling round to one corner.
+    let queued = 0;
+    const gx = goalTile % w;
+    const gy = (goalTile / w) | 0;
+    if (map.isWalkable(gx, gy)) {
+      this.dist[goalTile] = 0;
+      this.buckets[0]!.push(goalTile);
+      queued = 1;
+    } else {
+      for (let r = 1; r <= SEED_RINGS && queued === 0; r++) {
+        for (let dy = -r; dy <= r; dy++) {
+          for (let dx = -r; dx <= r; dx++) {
+            if (dx > -r && dx < r && dy > -r && dy < r) continue;
+            if (!map.isWalkable(gx + dx, gy + dy)) continue;
+            const tile = (gy + dy) * w + gx + dx;
+            this.dist[tile] = 0;
+            this.buckets[0]!.push(tile);
+            queued++;
+          }
+        }
+      }
+      if (queued === 0) return;
     }
-
-    this.dist[seed] = 0;
-    this.buckets[0]!.push(seed);
-    let queued = 1;
     let cost = 0;
 
     while (queued > 0) {
@@ -161,10 +192,16 @@ export class FlowField {
    * Best neighbouring tile to step to from `tile`, or -1 when already at the
    * goal or stranded.
    *
-   * Ties break by lower tile index, which is what keeps a wall of units moving
-   * as one body instead of two peers picking different equally-good routes.
+   * Among neighbours with the same remaining distance, the one whose centre is
+   * nearest the unit's own position `(px, py)` wins, and after that the lowest
+   * tile index in the unit's canonical frame (`flip`). Both are the same for a
+   * mirrored unit reading the mirrored field, which "lowest tile index" was
+   * not: index inverts under the map's rotation, so one half stepped to the
+   * top-left of two equal tiles and the other to what is, from its side, the
+   * bottom-right. Open ground offers such ties every tick, and the two armies
+   * traced visibly different lines to the same objective.
    */
-  stepFrom(map: GameMap, tile: number): number {
+  stepFrom(map: GameMap, tile: number, flip = false, px?: Fix, py?: Fix): number {
     const here = this.dist[tile];
     if (here === undefined || here === UNREACHABLE) return -1;
     if (here === 0) return -1;
@@ -173,9 +210,13 @@ export class FlowField {
     const h = map.height;
     const cx = tile % w;
     const cy = (tile / w) | 0;
+    const fromX = px ?? fromInt(cx) + FIX_HALF;
+    const fromY = py ?? fromInt(cy) + FIX_HALF;
 
     let bestTile = -1;
     let bestDist = here;
+    let bestNear = 0;
+    let bestKey = 0;
 
     for (let n = 0; n < NEIGHBOURS.length; n++) {
       const [dx, dy] = NEIGHBOURS[n]!;
@@ -189,10 +230,19 @@ export class FlowField {
       }
       const ni = ny * w + nx;
       const d = this.dist[ni]!;
-      if (d === UNREACHABLE) continue;
-      if (d < bestDist || (d === bestDist && bestTile !== -1 && ni < bestTile)) {
+      if (d === UNREACHABLE || d > bestDist) continue;
+      const near = vecLenSqRaw(fromInt(nx) + FIX_HALF - fromX, fromInt(ny) + FIX_HALF - fromY);
+      const key = map.canonicalIndex(ni, flip);
+      if (
+        d < bestDist ||
+        bestTile === -1 ||
+        near < bestNear ||
+        (near === bestNear && key < bestKey)
+      ) {
         bestDist = d;
         bestTile = ni;
+        bestNear = near;
+        bestKey = key;
       }
     }
 

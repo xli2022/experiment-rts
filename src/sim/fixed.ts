@@ -68,26 +68,35 @@ export function toFloat(a: Fix): number {
 }
 
 /**
- * Fixed-point multiply.
+ * Fixed-point multiply, truncating toward zero.
  *
  * The obvious `(a * b) >> 16` is wrong: `int32 * int32` reaches 2^62, far past
  * the 2^53 where float64 stops representing integers exactly, so it silently
- * returns the wrong answer for roughly 2.5% of operand pairs. Instead we split
- * both operands into 16-bit halves and recombine using `Math.imul`, which is
- * specified to perform exact 32-bit integer multiplication.
+ * returns the wrong answer for roughly 2.5% of operand pairs. Instead both
+ * magnitudes are split into 16-bit halves whose partial products are all exact
+ * integers below 2^47, and the sign is applied afterwards.
+ *
+ * Applied afterwards, deliberately. This used to floor, and a floor is not
+ * symmetric under negation: `fmul(-a, b)` came out one below `-fmul(a, b)`
+ * for every operand pair whose product was not a whole number, which is nearly
+ * all of them. Every unit's per-tick step goes through here with a signed
+ * direction, so the two halves of a mirrored match drifted apart by one unit
+ * per axis per tick from the first step. Truncation toward zero makes
+ * `fmul(-a, b) === -fmul(a, b)` exactly, and changes nothing for non-negative
+ * products. Overflow still wraps to int32, as before.
  */
 export function fmul(a: Fix, b: Fix): Fix {
-  const ah = a >> 16;
-  const al = a & 0xffff;
-  const bh = b >> 16;
-  const bl = b & 0xffff;
-  return (
-    ((Math.imul(ah, bh) << 16) +
-      Math.imul(ah, bl) +
-      Math.imul(al, bh) +
-      (Math.imul(al, bl) >>> 16)) |
-    0
-  );
+  const negative = a < 0 !== b < 0;
+  const x = a < 0 ? -a : a;
+  const y = b < 0 ? -b : b;
+  const xh = (x / FIX_ONE) | 0;
+  const xl = x - xh * FIX_ONE;
+  const yh = (y / FIX_ONE) | 0;
+  const yl = y - yh * FIX_ONE;
+  // xh, yh <= 2^15 and xl, yl < 2^16, so every term is exact and the sum stays
+  // under 2^47.
+  const magnitude = xh * yh * FIX_ONE + xh * yl + xl * yh + (((xl * yl) / FIX_ONE) | 0);
+  return (negative ? -magnitude : magnitude) | 0;
 }
 
 /**

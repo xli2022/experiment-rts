@@ -24,7 +24,15 @@
 import { checksumArray, checksumU32 } from './checksum.js';
 import { defOf, MAX_PRODUCTION_QUEUE } from '../config/rules.js';
 import type { Fix } from './fixed.js';
-import { BuildState, EntityType, NO_ENTITY, Order, type EntityId, type PlayerId } from './types.js';
+import {
+  BuildState,
+  EntityType,
+  MAX_PLAYERS,
+  NO_ENTITY,
+  Order,
+  type EntityId,
+  type PlayerId,
+} from './types.js';
 
 /**
  * Maximum simultaneous entities.
@@ -66,6 +74,20 @@ export class EntityPool {
   readonly type = new Uint8Array(ENTITY_CAPACITY);
   /** Player slot, or NEUTRAL for mineral patches. */
   readonly owner = new Int8Array(ENTITY_CAPACITY);
+  /**
+   * Creation ordinal within the owner: the n-th thing this player ever spawned.
+   *
+   * The identity that is the same on both halves of a mirrored match, which a
+   * slot index is not. Slots are handed out from one shared free list, so the
+   * first player's entities take the low numbers at setup and both halves'
+   * recycle each other's slots after the first death. Anything that has to
+   * choose between two otherwise-equal entities — a target, a formation slot, a
+   * builder — breaks the tie on this, and two mirrored units then make the
+   * mirrored choice. See "The simulation is rotation-equivariant" in CLAUDE.md.
+   */
+  readonly serial = new Int32Array(ENTITY_CAPACITY);
+  /** Next serial per owner; slot 0 is NEUTRAL, then the players in order. */
+  private readonly nextSerial = new Int32Array(MAX_PLAYERS + 1);
 
   // --- transform (Q16.16) ---
   readonly posX = new Int32Array(ENTITY_CAPACITY);
@@ -210,6 +232,9 @@ export class EntityPool {
     this.alive[index] = 1;
     this.type[index] = type;
     this.owner[index] = owner;
+    const serialSlot = owner + 1;
+    this.serial[index] = this.nextSerial[serialSlot]!;
+    this.nextSerial[serialSlot] = this.nextSerial[serialSlot]! + 1;
     this.posX[index] = x;
     this.posY[index] = y;
     this.faceX[index] = 0;
@@ -345,6 +370,8 @@ export class EntityPool {
     x = checksumArray(x, this.alive, this.count);
     x = checksumArray(x, this.generation, this.count);
     x = checksumArray(x, this.type, this.count);
+    x = checksumArray(x, this.serial, this.count);
+    x = checksumArray(x, this.nextSerial, this.nextSerial.length);
     x = checksumArray(x, this.posX, this.count);
     x = checksumArray(x, this.posY, this.count);
     x = checksumArray(x, this.faceX, this.count);

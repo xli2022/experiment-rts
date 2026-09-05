@@ -4,7 +4,8 @@
  * Target selection is the classic determinism trap. "Attack the nearest enemy"
  * is ambiguous whenever two enemies are equidistant, and on a grid that happens
  * constantly. The comparator below is a strict total order — distance first,
- * then entity slot index — so there is never a tie to break arbitrarily.
+ * then the target's seat and creation order — so there is never a tie to break
+ * arbitrarily, and two mirrored units break it the same way.
  */
 
 import { defOf } from '../../config/rules.js';
@@ -156,10 +157,13 @@ function resolveAttackImpact(world: World, attackerIndex: number, target: number
 /**
  * Find the best hostile target within `range`.
  *
- * Returns a slot index, or -1. The comparator is (distance, index): strictly
- * ordered, so two peers always choose the same unit even in a perfectly
- * symmetric engagement — which, on a mirror map, is exactly the situation that
- * arises constantly.
+ * Returns a slot index, or -1. The comparator is (distance, seat, serial):
+ * strictly ordered, so two peers always choose the same unit even in a
+ * perfectly symmetric engagement — which, on a mirror map, is exactly the
+ * situation that arises constantly. The second and third keys are the target
+ * owner's seat within its half and the target's creation ordinal, both of
+ * which a mirrored pair share; a slot index, which they do not, sent the two
+ * halves' units at different members of an equidistant pair.
  */
 function acquireTarget(world: World, index: number, range: number): number {
   const pool = world.pool;
@@ -170,6 +174,7 @@ function acquireTarget(world: World, index: number, range: number): number {
 
   let bestIndex = -1;
   let bestDistSq = Number.POSITIVE_INFINITY;
+  let bestKey = 0;
 
   world.grid.forEachNear(px, py, range, (j) => {
     if (j === index) return;
@@ -188,9 +193,11 @@ function acquireTarget(world: World, index: number, range: number): number {
     const distSq = vecLenSqRaw(dx, dy);
     if (distSq > sqRange(range)) return;
 
-    if (distSq < bestDistSq || (distSq === bestDistSq && j < bestIndex)) {
+    const key = world.ownerCanonical(pool.owner[j]!) * 1048576 + pool.serial[j]!;
+    if (distSq < bestDistSq || (distSq === bestDistSq && key < bestKey)) {
       bestDistSq = distSq;
       bestIndex = j;
+      bestKey = key;
     }
   });
 

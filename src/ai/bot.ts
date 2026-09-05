@@ -33,7 +33,9 @@
 
 import { defOf, MAX_PRODUCTION_QUEUE, SUPPLY_MAX } from '../config/rules.js';
 import { CommandType, type Command } from '../sim/commands.js';
-import { fromInt, sqRange, vecLenSqRaw } from '../sim/fixed.js';
+import { fromInt, toInt, sqRange, vecLenSqRaw } from '../sim/fixed.js';
+import { mirrorTile } from '../sim/map.js';
+import { mirroredHalf } from '../sim/mapgen.js';
 import {
   BotDifficulty,
   BuildState,
@@ -58,7 +60,7 @@ import type { World } from '../sim/world.js';
 const THINK_INTERVAL = 10;
 
 /** How near a Command Post has to be for an expansion to count as taken. */
-const CLAIMED_RANGE_SQ = 14 * 14;
+const CLAIMED_RANGE = fromInt(14);
 
 /**
  * How far from a base a hostile has to be before it stops being an emergency.
@@ -346,8 +348,33 @@ function survey(world: World, player: PlayerId): Survey {
   // one fact that an edit could put out of step. It is the list's length.
   s.livePatches = allPatches.length;
 
-  // Patches worth walking to: near a base of ours. Ascending, like everything
-  // else, so ties in `keepWorkersBusy` break the same way on every peer.
+  // Every list in creation order rather than slot order. Ties everywhere
+  // below break by position in a list, and slot order is not the same on both
+  // halves of a mirrored match — the first player's entities take the low
+  // slots at setup, and both halves recycle each other's slots after the
+  // first death. Creation order is what the two halves share, so it is the
+  // order a bot and its opposite number make the same choices in.
+  const byCreation = creationOrder(world);
+  s.workers.sort(byCreation);
+  s.idleWorkers.sort(byCreation);
+  s.army.sort(byCreation);
+  s.commandPosts.sort(byCreation);
+  s.barracks.sort(byCreation);
+  s.depots.sort(byCreation);
+  s.turrets.sort(byCreation);
+  s.sites.sort(byCreation);
+  s.enemyTargets.sort(byCreation);
+  s.teamArmy.sort(byCreation);
+  hostileUnits.sort(byCreation);
+  ownBuildings.sort(byCreation);
+  // Patches are neutral and have no creation order of their own: by tile, in
+  // this player's canonical frame, which is the same patch seen from either
+  // side.
+  allPatches.sort(canonicalTileOrder(world, player));
+
+  // Patches worth walking to: near a base of ours. In canonical order, like
+  // everything else, so ties in `keepWorkersBusy` break the same way on every
+  // peer and the mirrored way on the other half.
   for (const p of allPatches) {
     const home = nearestOf(world, p, s.commandPosts);
     if (home >= 0 && distSqBetween(world, p, home) <= sqRange(HOME_PATCH_RANGE)) {
@@ -373,11 +400,35 @@ function survey(world: World, player: PlayerId): Survey {
 }
 
 /**
+ * Creation order shared by both halves of a match: seat within the half, then
+ * the owner's creation ordinal, then the slot for the one case that agrees on
+ * both — an entity and its own mirror image.
+ */
+function creationOrder(world: World): (a: number, b: number) => number {
+  const pool = world.pool;
+  return (a, b) =>
+    world.ownerCanonical(pool.owner[a]!) - world.ownerCanonical(pool.owner[b]!) ||
+    pool.serial[a]! - pool.serial[b]! ||
+    pool.owner[a]! - pool.owner[b]! ||
+    a - b;
+}
+
+/** Tile order in `player`'s canonical frame, for entities nobody owns. */
+function canonicalTileOrder(world: World, player: PlayerId): (a: number, b: number) => number {
+  const { map, pool } = world;
+  const flip = world.flipOf(player);
+  const key = (i: number): number =>
+    map.canonicalIndex(map.index(pool.tileX[i]!, pool.tileY[i]!), flip);
+  return (a, b) => key(a) - key(b) || a - b;
+}
+
+/**
  * The nearest of `others` to entity `i`, or -1 when the list is empty.
  *
- * Ties break by position in `others`, which every caller builds by an ascending
- * pass over the pool — a strict total order, and the reason this is one helper
- * rather than the four hand-rolled copies of the same loop it replaced.
+ * Ties break by position in `others`, which every caller builds in creation
+ * order — a strict total order the two halves of a match share, and the reason
+ * this is one helper rather than the four hand-rolled copies of the same loop
+ * it replaced.
  */
 function nearestOf(world: World, i: number, others: readonly number[]): number {
   const pool = world.pool;
@@ -494,9 +545,10 @@ function manageProduction(
   // can still react to what gets scouted; full depth once minerals are piling
   // up faster than they can be spent.
   const depth = s.minerals >= DEEP_QUEUE_MINERALS ? MAX_PRODUCTION_QUEUE : 2;
-  for (const b of s.barracks) {
+  for (let k = 0; k < s.barracks.length; k++) {
+    const b = s.barracks[k]!;
     if (pool.prodCount[b]! >= depth) continue;
-    const unit = pickUnitToTrain(world, s, b);
+    const unit = pickUnitToTrain(world, s, k);
     const cost = defOf(unit).mineralCost;
     if (s.minerals < cost) break;
     cmds.push({ type: CommandType.Train, player, building: pool.idAt(b), unit });
@@ -516,9 +568,15 @@ function manageProduction(
  * flyer at all. So a scouted air force forces something that can shoot back,
  * and otherwise the bot keeps a mix, which is what stops one lucky read
  * deciding a match.
+ *
+ * The rotation is phased by the barracks' place in the bot's own list — its
+ * creation ordinal — not by its slot. Slots differ between a barracks and its
+ * mirror image, so two mirrored bots were training different units at the
+ * same moment, and with a bank too tight for every barracks to queue, a
+ * different number of them.
  */
-function pickUnitToTrain(world: World, s: Survey, building: number): EntityType {
-  const phase = (Math.floor(world.tick / THINK_INTERVAL) + building) % 4;
+function pickUnitToTrain(world: World, s: Survey, ordinal: number): EntityType {
+  const phase = (Math.floor(world.tick / THINK_INTERVAL) + ordinal) % 4;
 
   // Enough air out there to matter: only build what can answer it.
   if (s.enemyAir >= 2 && s.enemyAir * 2 >= s.enemyRanged + s.enemyMelee) {
@@ -592,7 +650,16 @@ function manageConstruction(
   // An expansion goes on its site; everything else goes next to the base it
   // supports.
   const site = want === EntityType.CommandPost ? expansionSite(world, player, s, tuning) : null;
-  const spot = site ?? findBuildSpot(world, pool.tileX[hq]!, pool.tileY[hq]!, def.footprint);
+  const spot =
+    site ??
+    findBuildSpot(
+      world,
+      pool.tileX[hq]!,
+      pool.tileY[hq]!,
+      defOf(EntityType.CommandPost).footprint,
+      def.footprint,
+      world.flipOf(player),
+    );
   if (!spot) return;
 
   cmds.push({
@@ -624,27 +691,44 @@ function expansionSite(
   if (s.commandPosts.length === 0 || s.commandPosts.length >= tuning.maxBases) return null;
 
   const home = s.commandPosts[0]!;
-  const homeX = pool.tileX[home]!;
-  const homeY = pool.tileY[home]!;
+  const homeX = pool.posX[home]!;
+  const homeY = pool.posY[home]!;
   const def = defOf(EntityType.CommandPost);
   const half = def.footprint >> 1;
+  const flip = world.flipOf(player);
 
   let best: { x: number; y: number } | null = null;
   let bestDist = Infinity;
+  let bestKey = 0;
 
   for (let e = 0; e < map.expansions.length; e++) {
-    const site = map.expansions[e]!;
-    const x = site.tileX - half;
-    const y = site.tileY - half;
+    // Sites are stored in mirrored halves, and a site's Command Post has to be
+    // the exact rotation of the canonical one's: `site - 2` applied to the
+    // rotated point is a tile off on both axes, the same footprint bug the
+    // opening was cured of, and it put every second-half expansion a tile
+    // further from its own minerals for the rest of the match.
+    const mirrored = mirroredHalf(e, map.expansions.length);
+    const canonical = map.expansions[mirrored.canonical]!;
+    const x = mirrored.flip
+      ? mirrorTile(map.width, canonical.tileX - half, def.footprint)
+      : canonical.tileX - half;
+    const y = mirrored.flip
+      ? mirrorTile(map.height, canonical.tileY - half, def.footprint)
+      : canonical.tileY - half;
     if (!map.canPlace(x, y, def.footprint)) continue;
 
-    // Distance is squared throughout; nothing here needs the actual length.
-    const dHome = sq(site.tileX - homeX) + sq(site.tileY - homeY);
+    // Everything in world units from the centres of things, as the rest of
+    // the simulation measures. Mixing a site's centre tile with a building's
+    // top-left tile gave the two halves different distances to identical
+    // sites, and the thresholds below went with them.
+    const siteX = fromInt(x + half);
+    const siteY = fromInt(y + half);
+    const dHome = vecLenSqRaw(siteX - homeX, siteY - homeY);
     let contested = false;
     for (let i = 0; i < pool.count; i++) {
       if (pool.alive[i] !== 1) continue;
       if (pool.type[i] !== EntityType.CommandPost) continue;
-      if (sq(pool.tileX[i]! - site.tileX) + sq(pool.tileY[i]! - site.tileY) < CLAIMED_RANGE_SQ) {
+      if (vecLenSqRaw(pool.posX[i]! - siteX, pool.posY[i]! - siteY) < sqRange(CLAIMED_RANGE)) {
         contested = true;
         break;
       }
@@ -659,31 +743,23 @@ function expansionSite(
       if (pool.alive[i] !== 1) continue;
       if (!world.isHostile(i, player)) continue;
       if (!defOf(pool.type[i]! as EntityType).isBuilding) continue;
-      if (sq(pool.tileX[i]! - site.tileX) + sq(pool.tileY[i]! - site.tileY) < dHome) {
+      if (vecLenSqRaw(pool.posX[i]! - siteX, pool.posY[i]! - siteY) < dHome) {
         enemyCloser = true;
         break;
       }
     }
     if (enemyCloser) continue;
 
-    if (dHome < bestDist) {
+    // Two sites the same distance from home — the contested pair on the
+    // four-corner map — are told apart in this player's canonical frame.
+    const key = map.canonicalIndex(map.index(x, y), flip);
+    if (dHome < bestDist || (dHome === bestDist && key < bestKey)) {
       bestDist = dHome;
+      bestKey = key;
       best = { x, y };
     }
   }
   return best;
-}
-
-/**
- * Squared, in *tile* space.
- *
- * Distances in Q16.16 go through `vecLenSqRaw` and `sqRange` instead, which is
- * the pair the rest of the simulation uses and what keeps a reader from having
- * to work out which coordinate system a comparison is in. This one is left for
- * `expansionSite`, which reasons about whole tiles.
- */
-function sq(v: number): number {
-  return v * v;
 }
 
 /** Send a worker to any construction site nobody is working on. */
@@ -739,6 +815,20 @@ function pickBuilder(world: World, s: Survey): number {
  *
  * A fixed spiral rather than random probing, so every peer picks the same tile.
  *
+ * The spiral is walked in the player's canonical frame and rotated for the
+ * second half, so a bot and its opposite number lay out mirror-image bases.
+ * Walked in absolute map directions — top edge first, from its left corner —
+ * it filled one seat's *rear* first and the other seat's *front*: over the
+ * first eight structures, the second seat put all eight, both turrets among
+ * them, on its enemy-facing side and the first seat put four, with both
+ * turrets behind. One side's defences fired on every attack and the other's
+ * never did, which decided fifteen of sixteen mirror matches.
+ *
+ * `originFootprint` is the footprint of the building the spiral starts from,
+ * because rotating a footprint about the origin's centre moves its top-left by
+ * the difference in size: the mirror of offset `dx` for a footprint `f` from a
+ * base of footprint `F` is `(F - f) - dx`.
+ *
  * Every candidate must also keep a clear one-tile moat (see `hasClearMoat`).
  * Without that rule the bot packs its structures into a solid ring and seals its
  * own army inside the base — measured: 106 of 106 combat units unable to reach
@@ -748,13 +838,14 @@ function findBuildSpot(
   world: World,
   originX: number,
   originY: number,
+  originFootprint: number,
   footprint: number,
+  flip: boolean,
 ): { x: number; y: number } | null {
   for (let ring = 4; ring <= 26; ring += 2) {
     for (let step = 0; step < ring * 8; step += 3) {
-      const angleIndex = step % (ring * 8);
-      const side = Math.floor(angleIndex / (ring * 2));
-      const along = angleIndex % (ring * 2);
+      const side = Math.floor(step / (ring * 2));
+      const along = step % (ring * 2);
       let dx = 0;
       let dy = 0;
       switch (side) {
@@ -775,14 +866,14 @@ function findBuildSpot(
           dy = ring - along;
           break;
       }
-      const x = originX + dx;
-      const y = originY + dy;
+      const x = originX + (flip ? originFootprint - footprint - dx : dx);
+      const y = originY + (flip ? originFootprint - footprint - dy : dy);
       if (!world.map.canPlace(x, y, footprint)) continue;
       if (!hasClearMoat(world, x, y, footprint)) continue;
       // The moat alone is not enough: enough moated buildings still ring the
       // base into a closed shell. Only commit to a spot that provably leaves the
       // base connected to the rest of the map.
-      if (!keepsBaseConnected(world, x, y, footprint, originX, originY)) continue;
+      if (!keepsBaseConnected(world, x, y, footprint, originX, originY, flip)) continue;
       return { x, y };
     }
   }
@@ -828,14 +919,20 @@ function keepsBaseConnected(
   footprint: number,
   originX: number,
   originY: number,
+  flip: boolean,
 ): boolean {
   const map = world.map;
   map.setOccupied(tileX, tileY, footprint, 1);
   try {
-    const start = findOpenTileNear(world, originX, originY);
+    const start = findOpenTileNear(world, originX, originY, flip);
     if (start < 0) return false;
 
-    const target = findOpenTileNear(world, map.width >> 1, map.height >> 1);
+    // The middle of the map, as seen from this half: on an even-sized map the
+    // centre tile has no mirror image of its own, so each half floods toward
+    // its own side of the centre and the two answers agree by symmetry.
+    const midX = flip ? map.width - 1 - (map.width >> 1) : map.width >> 1;
+    const midY = flip ? map.height - 1 - (map.height >> 1) : map.height >> 1;
+    const target = findOpenTileNear(world, midX, midY, flip);
     if (target < 0) return true; // nothing to connect to; do not block building
 
     const w = map.width;
@@ -868,15 +965,21 @@ function keepsBaseConnected(
   }
 }
 
-/** Nearest walkable tile to a point, searched in fixed ring order. */
-function findOpenTileNear(world: World, tx: number, ty: number): number {
+/**
+ * Nearest walkable tile to a point, searched in fixed ring order — in the
+ * player's canonical frame, so the two halves search mirrored rings.
+ */
+function findOpenTileNear(world: World, tx: number, ty: number, flip: boolean): number {
   const map = world.map;
   if (map.isWalkable(tx, ty)) return map.index(tx, ty);
+  const sign = flip ? -1 : 1;
   for (let r = 1; r <= 20; r++) {
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
         if (dx > -r && dx < r && dy > -r && dy < r) continue;
-        if (map.isWalkable(tx + dx, ty + dy)) return map.index(tx + dx, ty + dy);
+        const x = tx + sign * dx;
+        const y = ty + sign * dy;
+        if (map.isWalkable(x, y)) return map.index(x, y);
       }
     }
   }
@@ -959,7 +1062,7 @@ function manageArmy(
   // first, so `% 6` could never equal zero and player 1 never attacked at all.
   if (beat % 6 !== 0) return;
 
-  const target = pickAttackTarget(world, s, tuning);
+  const target = pickAttackTarget(world, s, tuning, player);
   if (target < 0) return;
 
   cmds.push({
@@ -986,44 +1089,61 @@ function manageArmy(
  * while two whose armies are apart still agree — they compute one centroid, not
  * one each.
  */
-function pickAttackTarget(world: World, s: Survey, tuning: Tuning): number {
+function pickAttackTarget(world: World, s: Survey, tuning: Tuning, player: PlayerId): number {
   const pool = world.pool;
   const from = tuning.coordinates && s.teamArmy.length > 0 ? s.teamArmy : s.army;
+  const flip = world.flipOf(player);
 
+  // Summed in whole tiles of this player's canonical frame, and compared as
+  // `(n * target - sum)^2` rather than against a rounded mean. A mean has to
+  // be rounded, and no rounding of an absolute coordinate is its own mirror;
+  // the scaled comparison never divides, so the two halves rank targets
+  // identically. Tiles rather than world units keep `n * tile` well inside
+  // float64's exact range for any army.
   let cx = 0;
   let cy = 0;
   let n = 0;
   for (const i of from) {
-    cx += pool.posX[i]!;
-    cy += pool.posY[i]!;
+    cx += canonicalTileX(world, pool.posX[i]!, flip);
+    cy += canonicalTileY(world, pool.posY[i]!, flip);
     n++;
   }
   if (n === 0) {
     // No army at all: workers are marching, and they start from home.
     if (s.commandPosts.length === 0) return s.enemyTargets[0]!;
-    cx = pool.posX[s.commandPosts[0]!]!;
-    cy = pool.posY[s.commandPosts[0]!]!;
+    cx = canonicalTileX(world, pool.posX[s.commandPosts[0]!]!, flip);
+    cy = canonicalTileY(world, pool.posY[s.commandPosts[0]!]!, flip);
     n = 1;
   }
-  // Exact integer arithmetic: the sums stay far inside float64's exact range
-  // (a position is at most 152 << 16, and there are at most a few hundred of
-  // them), and flooring a correctly-rounded division of exact integers is the
-  // same on every engine.
-  const ax = Math.floor(cx / n);
-  const ay = Math.floor(cy / n);
 
   let best = -1;
   let bestDist = Number.POSITIVE_INFINITY;
   for (const t of s.enemyTargets) {
-    const dx = pool.posX[t]! - ax;
-    const dy = pool.posY[t]! - ay;
+    const dx = n * canonicalTileX(world, pool.posX[t]!, flip) - cx;
+    const dy = n * canonicalTileY(world, pool.posY[t]!, flip) - cy;
     const d = dx * dx + dy * dy;
-    // Strictly ordered: distance, then ascending slot index, which the scan
-    // order already guarantees by only replacing on a strict improvement.
+    // Strictly ordered: distance, then creation order, which the list order
+    // already guarantees by only replacing on a strict improvement.
     if (d < bestDist) {
       bestDist = d;
       best = t;
     }
   }
   return best;
+}
+
+/**
+ * The tile column a world coordinate falls in, seen from the canonical half.
+ *
+ * A building's centre sits exactly on a tile boundary, and a plain floor puts
+ * a boundary in the higher tile on both halves — which, rotated back, is the
+ * lower tile on one of them. Flooring in the canonical frame makes a mirrored
+ * coordinate give the same canonical tile.
+ */
+function canonicalTileX(world: World, x: number, flip: boolean): number {
+  return flip ? world.map.width - 1 - toInt(fromInt(world.map.width) - x) : toInt(x);
+}
+
+function canonicalTileY(world: World, y: number, flip: boolean): number {
+  return flip ? world.map.height - 1 - toInt(fromInt(world.map.height) - y) : toInt(y);
 }

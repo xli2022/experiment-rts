@@ -9,8 +9,21 @@
  * implementation detail will hand two peers different-but-equally-valid routes,
  * and the simulations separate immediately.
  *
- * So the heap comparator is a *total* order: f-score first, then tile index.
- * Two nodes can never compare equal, because no two nodes share a tile index.
+ * So the heap comparator is a *total* order: f-score, then cost so far, then
+ * tile index. Two nodes can never compare equal, because no two nodes share a
+ * tile index.
+ *
+ * ## What makes it rotation-equivariant
+ *
+ * The tile index is compared in the requesting player's *canonical frame*, and
+ * neighbours are enumerated in that frame too. Row-major index inverts under
+ * the map's 180-degree rotation, so "lowest index wins" picked the top-left
+ * route for one player and the top-left route for their opposite number as
+ * well — which, seen from the second player's side, is the bottom-right one.
+ * Equal-cost routes therefore came out differently shaped for the two halves,
+ * and a differently shaped polyline is walked at a different real speed. With
+ * both decisions made in the canonical frame, the mirrored request returns the
+ * mirrored route, tile for tile.
  *
  * Costs are integers (10 orthogonal, 14 diagonal — a 1.4 approximation of √2),
  * which keeps the whole search in exact integer arithmetic.
@@ -75,10 +88,15 @@ export class AStar {
   /** Scratch for the reconstructed path, reversed in place before returning. */
   private readonly scratch: number[] = [];
 
+  /** Whether the current search is for a player on the rotated half. */
+  private flip = false;
+  private readonly tileCount: number;
+
   constructor(map: GameMap) {
     this.width = map.width;
     this.height = map.height;
     const n = map.width * map.height;
+    this.tileCount = n;
     this.gScore = new Int32Array(n);
     this.cameFrom = new Int32Array(n);
     this.stampAt = new Int32Array(n);
@@ -94,15 +112,21 @@ export class AStar {
    * or an empty array when no route exists. The start tile is omitted because
    * the unit is already standing on it.
    *
-   * `blockedBy` lets the caller treat dynamic obstacles as passable or not —
-   * units path around buildings but through each other, with local separation
-   * handling the overlap.
+   * `flip` is `World.flipOf` for the unit the path is for: it decides the frame
+   * every tie is broken in, so a mirrored request gets the mirrored route.
    */
-  find(map: GameMap, startIndex: number, goalIndex: number, out: number[] = []): number[] {
+  find(
+    map: GameMap,
+    startIndex: number,
+    goalIndex: number,
+    out: number[] = [],
+    flip = false,
+  ): number[] {
     out.length = 0;
     if (startIndex < 0 || goalIndex < 0) return out;
     if (startIndex === goalIndex) return out;
 
+    this.flip = flip;
     this.stamp++;
     this.heapSize = 0;
 
@@ -133,7 +157,11 @@ export class AStar {
       const cg = this.gScore[current]!;
 
       for (let n = 0; n < NEIGHBOURS.length; n++) {
-        const [dx, dy, cost] = NEIGHBOURS[n]!;
+        const [ox, oy, cost] = NEIGHBOURS[n]!;
+        // Enumerated in the canonical frame, so the first of two equal-cost
+        // parents is the mirrored one for a mirrored search.
+        const dx = flip ? -ox : ox;
+        const dy = flip ? -oy : oy;
         const nx = cx + dx;
         const ny = cy + dy;
         if (nx < 0 || ny < 0 || nx >= this.width || ny >= this.height) continue;
@@ -220,17 +248,29 @@ export class AStar {
   }
 
   /**
-   * Strict total order on heap entries: f-score, then tile index.
+   * Strict total order on heap entries: f-score, then the larger cost so far
+   * (the node nearer the goal), then tile index in the canonical frame.
    *
    * The tile-index tiebreak is the load-bearing part. Without it, equal-f nodes
    * pop in an order that depends on heap history, and two peers exploring the
-   * same grid produce different paths.
+   * same grid produce different paths. Preferring the deeper node first is a
+   * magnitude, so it is the same for a mirrored search, and it stops the
+   * frontier fanning out across every equally good tile before it commits.
    */
   private less(a: number, b: number): boolean {
     const fa = this.heapF[a]!;
     const fb = this.heapF[b]!;
     if (fa !== fb) return fa < fb;
-    return this.heapNode[a]! < this.heapNode[b]!;
+    const na = this.heapNode[a]!;
+    const nb = this.heapNode[b]!;
+    const ga = this.gScore[na]!;
+    const gb = this.gScore[nb]!;
+    if (ga !== gb) return ga > gb;
+    return this.canonical(na) < this.canonical(nb);
+  }
+
+  private canonical(node: number): number {
+    return this.flip ? this.tileCount - 1 - node : node;
   }
 
   private swap(a: number, b: number): void {
@@ -244,24 +284,50 @@ export class AStar {
 }
 
 /**
- * Nearest walkable tile to a target, searched in rings.
+ * Nearest walkable tile to a target, by true distance.
  *
  * Used when a player right-clicks onto a cliff or inside a building footprint:
- * rather than refusing the order, units walk to the closest reachable tile. Ring
- * order is fixed, so every peer picks the same substitute.
+ * rather than refusing the order, units walk to the closest reachable tile.
+ *
+ * "Nearest" is the straight-line distance and ties go to the lowest tile index
+ * in the requester's canonical frame (`flip`). It used to return the first
+ * walkable tile met on the first ring that had one, scanning each ring from its
+ * top-left corner — which is the tile nearest the map's origin, not the tile
+ * nearest the target, and the *same* absolute corner for both halves of the
+ * map. Every attack-move on a building was aimed at it, so both armies
+ * converged on the same corner of either base, five tiles from where a true
+ * mirror would have sent one of them. A whole ring is a Chebyshev shell, so
+ * the search carries on until the next ring cannot beat the best so far.
  */
-export function nearestWalkable(map: GameMap, tx: number, ty: number, maxRing = 12): number {
+export function nearestWalkable(
+  map: GameMap,
+  tx: number,
+  ty: number,
+  maxRing = 12,
+  flip = false,
+): number {
   if (map.isWalkable(tx, ty)) return map.index(tx, ty);
-  for (let r = 1; r <= maxRing; r++) {
+  let best = -1;
+  let bestDist = Number.POSITIVE_INFINITY;
+  let bestKey = 0;
+  for (let r = 1; r <= maxRing && r * r < bestDist; r++) {
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
         // Only the ring perimeter.
         if (dx > -r && dx < r && dy > -r && dy < r) continue;
         const nx = tx + dx;
         const ny = ty + dy;
-        if (map.isWalkable(nx, ny)) return map.index(nx, ny);
+        if (!map.isWalkable(nx, ny)) continue;
+        const d = dx * dx + dy * dy;
+        const tile = map.index(nx, ny);
+        const key = map.canonicalIndex(tile, flip);
+        if (d < bestDist || (d === bestDist && key < bestKey)) {
+          bestDist = d;
+          best = tile;
+          bestKey = key;
+        }
       }
     }
   }
-  return -1;
+  return best;
 }

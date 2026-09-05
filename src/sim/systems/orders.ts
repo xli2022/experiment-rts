@@ -38,29 +38,22 @@ export function executeCommand(world: World, cmd: Command): void {
   if (world.player(player).defeated) return;
 
   switch (cmd.type) {
-    case CommandType.Move: {
-      if (!standableTarget(world, cmd.x, cmd.y, targetOut)) break;
-      const grouped = cmd.units.length >= GROUP_PATH_THRESHOLD;
-      const { x: gx, y: gy } = targetOut;
-      let slot = 0;
-      forEachOwned(world, cmd.units, player, (i) => {
-        // The slot counts units the order actually applied to, in the order
-        // `forEachOwned` walks them — identical on every peer.
-        spreadDestination(world, cmd.units.length > 1 ? slot++ : 0, gx, gy, destOut);
-        setMoveOrder(world, i, Order.Move, destOut.x, destOut.y, grouped, gx, gy);
-      });
-      break;
-    }
-
+    case CommandType.Move:
     case CommandType.AttackMove: {
-      if (!standableTarget(world, cmd.x, cmd.y, targetOut)) break;
+      if (!standableTarget(world, player, cmd.x, cmd.y, targetOut)) break;
       const grouped = cmd.units.length >= GROUP_PATH_THRESHOLD;
+      const order = cmd.type === CommandType.Move ? Order.Move : Order.AttackMove;
       const { x: gx, y: gy } = targetOut;
-      let slot = 0;
-      forEachOwned(world, cmd.units, player, (i) => {
-        spreadDestination(world, cmd.units.length > 1 ? slot++ : 0, gx, gy, destOut);
-        setMoveOrder(world, i, Order.AttackMove, destOut.x, destOut.y, grouped, gx, gy);
-      });
+      const flip = world.flipOf(player);
+      // Formation slots go out in creation order, oldest unit first. The
+      // command lists units in whatever order the selection or the bot built
+      // it, and that order is not mirrored between the two halves of a match
+      // once slots have been recycled; creation order is.
+      const units = ownedUnits(world, cmd.units, player);
+      for (let k = 0; k < units.length; k++) {
+        spreadDestination(world, cmd.units.length > 1 ? k : 0, gx, gy, flip, destOut);
+        setMoveOrder(world, units[k]!, order, destOut.x, destOut.y, grouped, gx, gy);
+      }
       break;
     }
 
@@ -153,7 +146,7 @@ export function executeCommand(world: World, cmd: Command): void {
       // every unit the building will ever train, so a rally on a cliff is the
       // same unreachable-destination bug repeated forever — and it does not
       // even go through this file when production issues it.
-      if (!standableTarget(world, cmd.x, cmd.y, targetOut)) break;
+      if (!standableTarget(world, player, cmd.x, cmd.y, targetOut)) break;
       world.pool.rallyX[bi] = targetOut.x;
       world.pool.rallyY[bi] = targetOut.y;
       world.pool.hasRally[bi] = 1;
@@ -189,6 +182,20 @@ function forEachOwned(
     if (defOf(pool.type[i]! as EntityType).isBuilding) continue;
     fn(i);
   }
+}
+
+/**
+ * The live, owned, movable entities a command names, oldest first.
+ *
+ * Same filter as `forEachOwned`, as a list sorted by serial, for the orders
+ * that hand out formation slots and need a mirror-consistent order to do it.
+ */
+function ownedUnits(world: World, units: readonly EntityId[], player: PlayerId): number[] {
+  const pool = world.pool;
+  const out: number[] = [];
+  forEachOwned(world, units, player, (i) => out.push(i));
+  out.sort((a, b) => pool.serial[a]! - pool.serial[b]!);
+  return out;
 }
 
 /**
@@ -255,11 +262,16 @@ const DESTINATION_SNAP_RINGS = 8;
  */
 export function standableTarget(
   world: World,
+  player: PlayerId,
   x: number,
   y: number,
   out: { x: number; y: number },
 ): boolean {
-  const tile = world.map.tileOfPos(x, y);
+  // Decided in the player's own frame, so the opposite number's click on the
+  // mirrored point resolves to the mirrored tile — including a point exactly
+  // on a tile boundary, which a building's centre always is.
+  const flip = world.flipOf(player);
+  const tile = world.map.tileOfPosFor(x, y, flip);
   if (tile < 0) return false;
 
   const tx = world.map.tileXOf(tile);
@@ -270,7 +282,7 @@ export function standableTarget(
     return true;
   }
 
-  const free = nearestWalkable(world.map, tx, ty, DESTINATION_SNAP_RINGS);
+  const free = nearestWalkable(world.map, tx, ty, DESTINATION_SNAP_RINGS, flip);
   if (free < 0) return false;
   out.x = fromInt(world.map.tileXOf(free)) + FIX_HALF;
   out.y = fromInt(world.map.tileYOf(free)) + FIX_HALF;
@@ -298,15 +310,20 @@ function spreadDestination(
   slot: number,
   x: number,
   y: number,
+  flip: boolean,
   out: { x: number; y: number },
 ): void {
   out.x = x;
   out.y = y;
   if (slot <= 0) return;
   spreadSlot(slot, slotOut);
-  const sx = (x + slotOut.x * SPREAD_STEP) | 0;
-  const sy = (y + slotOut.y * SPREAD_STEP) | 0;
-  const tile = world.map.tileOfPos(sx, sy);
+  // The spiral is walked in the player's canonical frame: rotated for the
+  // second half, so a mirrored group stands in the mirrored formation rather
+  // than in a translated copy of the other side's.
+  const sign = flip ? -1 : 1;
+  const sx = (x + sign * slotOut.x * SPREAD_STEP) | 0;
+  const sy = (y + sign * slotOut.y * SPREAD_STEP) | 0;
+  const tile = world.map.tileOfPosFor(sx, sy, flip);
   if (tile < 0) return;
   if (!world.map.isWalkable(world.map.tileXOf(tile), world.map.tileYOf(tile))) return;
   out.x = sx;
@@ -355,7 +372,7 @@ function setMoveOrder(
     // one sweep into one per unit, which took the test match from 5s to over
     // 150s. Arrival is still measured against the spread point below, so the
     // formation survives.
-    const goal = world.map.tileOfPos(goalX, goalY);
+    const goal = world.map.tileOfPosFor(goalX, goalY, world.flipOf(pool.owner[index]!));
     pool.flowGoal[index] = goal >= 0 ? goal : -1;
     // Remembered separately: stopping to fight wipes the active route, and an
     // attack-move has to pick its advance back up on the *same shared field*

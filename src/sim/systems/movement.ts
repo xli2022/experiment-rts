@@ -3,10 +3,22 @@
  *
  * Pathfinding is the one system that can realistically blow the tick budget, and
  * in lockstep a slow tick is not a local problem — every peer waits for the
- * slowest one. So A* requests are served from a bounded FIFO: at most
+ * slowest one. So A* requests are served from a bounded queue: at most
  * `PATH_BUDGET_PER_TICK` searches run per tick and the rest wait. Because the
  * queue is part of world state and drains in a fixed order, every peer defers
  * exactly the same requests to exactly the same later tick.
+ *
+ * ## Every unit sees the tick as it started
+ *
+ * Units are processed in ascending slot order, and the first player's units
+ * hold the low slots. Any pass that reads *another* unit's position while
+ * writing its own therefore sees a half-updated world, in an order that is not
+ * the mirrored order for the other side: a unit closing on an enemy stepped,
+ * and its opposite number then measured against the moved position and stood
+ * still one step short. So the movers read other units' positions from a
+ * snapshot taken before any of them moves (`snapX`, `snapY`), and separation
+ * accumulates every pair's push before applying any of them. Both halves then
+ * compute from the same picture whatever order they are visited in.
  */
 
 import {
@@ -16,7 +28,7 @@ import {
   reachSlackFor,
 } from '../../config/rules.js';
 import type { FlowFieldCache } from '../pathing/flowfield.js';
-import { ARRIVE_BEST_NONE, idIndex, MAX_PATH } from '../entities.js';
+import { ARRIVE_BEST_NONE, ENTITY_CAPACITY, idIndex, MAX_PATH } from '../entities.js';
 import {
   FIX_HALF,
   fdiv,
@@ -48,7 +60,17 @@ const CHASE_REPATH_INTERVAL = 10;
 /** Ticks a unit waits before retrying a path search that found no route. */
 const PATH_RETRY_COOLDOWN = 40;
 
+/**
+ * Positions as they were when the movement pass began, for reading *other*
+ * units' positions. Scratch, refilled every tick, never checksummed.
+ */
+const snapX = new Int32Array(ENTITY_CAPACITY);
+const snapY = new Int32Array(ENTITY_CAPACITY);
+
 export function movementSystem(world: World, astar: AStar, fields: FlowFieldCache): void {
+  const pool = world.pool;
+  snapX.set(pool.posX.subarray(0, pool.count));
+  snapY.set(pool.posY.subarray(0, pool.count));
   moveFlyers(world);
   resumeAdvance(world);
   servePathRequests(world, astar);
@@ -198,8 +220,8 @@ function shouldPursue(world: World, index: number, def: EntityDef): boolean {
   }
 
   const ti = idIndex(targetId);
-  const dx = pool.posX[ti]! - pool.posX[index]!;
-  const dy = pool.posY[ti]! - pool.posY[index]!;
+  const dx = snapX[ti]! - pool.posX[index]!;
+  const dy = snapY[ti]! - pool.posY[index]!;
   const reach = def.attackRange + defOf(pool.type[ti]! as EntityType).radius;
   if (vecLenSqRaw(dx, dy) > sqRange(reach + ENGAGE_LEASH)) {
     pool.pursuing[index] = 0;
@@ -250,8 +272,8 @@ function engageNearby(world: World): void {
     if (!shouldPursue(world, i, def)) continue;
 
     const ti = idIndex(pool.combatTarget[i]!);
-    const dx = pool.posX[ti]! - pool.posX[i]!;
-    const dy = pool.posY[ti]! - pool.posY[i]!;
+    const dx = snapX[ti]! - pool.posX[i]!;
+    const dy = snapY[ti]! - pool.posY[i]!;
     // Combat measures to the target's edge, so this has to agree with it or the
     // unit creeps forward for one more tick after it can already shoot.
     const reach = def.attackRange + defOf(pool.type[ti]! as EntityType).radius;
@@ -260,7 +282,7 @@ function engageNearby(world: World): void {
     // Drop the route while closing, so path-following does not drag the unit
     // onward in the same tick. `resumeAdvance` restores it when the fight ends.
     if (order === Order.AttackMove) pool.clearPath(i);
-    stepToward(world, i, pool.posX[ti]!, pool.posY[ti]!, def.speedPerTick, def.turnPerTick);
+    stepToward(world, i, snapX[ti]!, snapY[ti]!, def.speedPerTick, def.turnPerTick);
   }
 }
 
@@ -292,8 +314,8 @@ function moveFlyers(world: World): void {
     const targetId = pool.orderTarget[i]!;
     if (targetId !== NO_ENTITY && pool.isAlive(targetId)) {
       const ti = idIndex(targetId);
-      tx = pool.posX[ti]!;
-      ty = pool.posY[ti]!;
+      tx = snapX[ti]!;
+      ty = snapY[ti]!;
       // Stop at weapon range rather than flying into the target.
       stopWithin = def.attackRange + defOf(pool.type[ti]! as EntityType).radius;
     }
@@ -359,7 +381,8 @@ function followFlowFields(world: World, fields: FlowFieldCache): void {
     }
 
     const field = fields.get(world.map, goal);
-    const here = world.map.tileOfPos(pool.posX[i]!, pool.posY[i]!);
+    const flip = world.flipOf(pool.owner[i]!);
+    const here = world.map.tileOfPosFor(pool.posX[i]!, pool.posY[i]!, flip);
     if (here < 0 || field.isStranded(here)) {
       // No route from here — give up rather than jitter against a wall.
       pool.flowGoal[i] = -1;
@@ -367,7 +390,7 @@ function followFlowFields(world: World, fields: FlowFieldCache): void {
       continue;
     }
 
-    const next = field.stepFrom(world.map, here);
+    const next = field.stepFrom(world.map, here, flip, pool.posX[i]!, pool.posY[i]!);
     let tx: Fix;
     let ty: Fix;
     if (next < 0) {
@@ -480,8 +503,20 @@ function accelerate(world: World, index: number, dist: Fix, top: Fix): Fix {
   return dist < v ? dist : v;
 }
 
+/** Per-owner views of the path queue. Scratch for `servePathRequests`. */
+const ownerQueues: number[][] = [];
+const ownerHeads = new Int32Array(8);
+
 /**
- * Drain up to the per-tick budget of path requests.
+ * Drain up to the per-tick budget of path requests, one round at a time.
+ *
+ * A round serves one request for every player with a request waiting, and
+ * only whole rounds are served. The queue used to drain first come, first
+ * served, and since commands execute in player order the first player's units
+ * were always at the front of it: whenever more requests arrived than the
+ * budget covered, the other side's routes were the ones deferred to the next
+ * tick. Under a mirrored attack order both armies ask at once, so that is
+ * exactly when it happened.
  *
  * Entities that died or changed orders while queued are skipped without
  * consuming budget, so a burst of cancelled orders cannot starve live ones.
@@ -489,49 +524,95 @@ function accelerate(world: World, index: number, dist: Fix, top: Fix): Fix {
 function servePathRequests(world: World, astar: AStar): void {
   const pool = world.pool;
   const queue = world.pathQueue;
-  let served = 0;
-  let read = 0;
+  if (queue.length === 0) return;
 
-  while (read < queue.length && served < PATH_BUDGET_PER_TICK) {
-    const i = queue[read++]!;
+  const owners = world.players.length;
+  while (ownerQueues.length < owners) ownerQueues.push([]);
+  for (let o = 0; o < owners; o++) {
+    ownerQueues[o]!.length = 0;
+    ownerHeads[o] = 0;
+  }
+  for (let k = 0; k < queue.length; k++) {
+    const i = queue[k]!;
     if (pool.alive[i] !== 1 || pool.pathPending[i] !== 1) continue;
+    const owner = pool.owner[i]!;
+    if (owner >= 0 && owner < owners) ownerQueues[owner]!.push(i);
+  }
+  // Within a player's list, oldest unit first. Requests arrive in slot order,
+  // which the two halves of a mirrored match do not share; when the budget
+  // binds, the units that wait must be the same units on both sides.
+  for (let o = 0; o < owners; o++) {
+    ownerQueues[o]!.sort((a, b) => pool.serial[a]! - pool.serial[b]!);
+  }
 
-    const startTile = world.map.tileOfPos(pool.posX[i]!, pool.posY[i]!);
-    let goalTile = world.map.tileOfPos(pool.orderX[i]!, pool.orderY[i]!);
+  let served = 0;
+  let active = 0;
+  for (let o = 0; o < owners; o++) if (ownerQueues[o]!.length > 0) active++;
 
-    // Right-clicking a cliff or a building should walk as close as possible
-    // rather than being rejected outright.
-    if (goalTile >= 0) {
-      const gx = world.map.tileXOf(goalTile);
-      const gy = world.map.tileYOf(goalTile);
-      if (!world.map.isWalkable(gx, gy)) goalTile = nearestWalkable(world.map, gx, gy);
-    }
-
-    pool.pathPending[i] = 0;
-    served++;
-
-    if (startTile < 0 || goalTile < 0) {
-      pool.clearPath(i);
-      continue;
-    }
-    const path = astar.find(world.map, startTile, goalTile);
-    if (path.length === 0) {
-      // No route. Drop the order so the unit does not spin re-requesting, and
-      // back off before trying again — a failed search costs the full expansion
-      // budget, so retrying every tick is what made pathfinding dominate the
-      // whole simulation.
-      pool.clearPath(i);
-      pool.pathCooldown[i] = PATH_RETRY_COOLDOWN;
-      if (pool.order[i] === Order.Move || pool.order[i] === Order.AttackMove) {
-        pool.order[i] = Order.None;
+  while (active > 0 && served + active <= PATH_BUDGET_PER_TICK) {
+    for (let o = 0; o < owners; o++) {
+      const list = ownerQueues[o]!;
+      let head = ownerHeads[o]!;
+      if (head >= list.length) continue;
+      // The same unit can be queued twice; the second entry is stale once the
+      // first has been served, and costs nothing.
+      while (head < list.length) {
+        const i = list[head++]!;
+        if (pool.pathPending[i] !== 1) continue;
+        servePathRequest(world, astar, i);
+        served++;
+        break;
       }
-    } else {
-      pool.setPath(i, path);
+      ownerHeads[o] = head;
+      if (head >= list.length) active--;
     }
   }
 
-  // Compact the queue in place, preserving order for anything still pending.
-  if (read > 0) queue.splice(0, read);
+  // What is left waits, in the order it arrived within each player's own list.
+  queue.length = 0;
+  for (let o = 0; o < owners; o++) {
+    const list = ownerQueues[o]!;
+    for (let k = ownerHeads[o]!; k < list.length; k++) queue.push(list[k]!);
+  }
+}
+
+function servePathRequest(world: World, astar: AStar, i: number): void {
+  const pool = world.pool;
+  // Every tile decision on this unit's behalf is made in its owner's frame,
+  // so the mirrored unit asks the mirrored question and gets the mirrored
+  // route.
+  const flip = world.flipOf(pool.owner[i]!);
+  const startTile = world.map.tileOfPosFor(pool.posX[i]!, pool.posY[i]!, flip);
+  let goalTile = world.map.tileOfPosFor(pool.orderX[i]!, pool.orderY[i]!, flip);
+
+  // Right-clicking a cliff or a building should walk as close as possible
+  // rather than being rejected outright.
+  if (goalTile >= 0) {
+    const gx = world.map.tileXOf(goalTile);
+    const gy = world.map.tileYOf(goalTile);
+    if (!world.map.isWalkable(gx, gy)) goalTile = nearestWalkable(world.map, gx, gy, 12, flip);
+  }
+
+  pool.pathPending[i] = 0;
+
+  if (startTile < 0 || goalTile < 0) {
+    pool.clearPath(i);
+    return;
+  }
+  const path = astar.find(world.map, startTile, goalTile, [], flip);
+  if (path.length === 0) {
+    // No route. Drop the order so the unit does not spin re-requesting, and
+    // back off before trying again — a failed search costs the full expansion
+    // budget, so retrying every tick is what made pathfinding dominate the
+    // whole simulation.
+    pool.clearPath(i);
+    pool.pathCooldown[i] = PATH_RETRY_COOLDOWN;
+    if (pool.order[i] === Order.Move || pool.order[i] === Order.AttackMove) {
+      pool.order[i] = Order.None;
+    }
+  } else {
+    pool.setPath(i, path);
+  }
 }
 
 /**
@@ -596,7 +677,7 @@ function followPaths(world: World): void {
         // walkable tile to it — the same tile for everyone, whichever side they
         // came from, which is what made workers walk around a Command Post
         // instead of delivering where they stood.
-        approachPoint(world, ti, pool.posX[i]!, pool.posY[i]!, approachOut);
+        approachPoint(world, ti, pool.posX[i]!, pool.posY[i]!, approachOut, snapX[ti]!, snapY[ti]!);
         maybeRepathToward(world, i, approachOut.x, approachOut.y);
       }
     }
@@ -679,8 +760,8 @@ function closeOnTarget(world: World, index: number, def: EntityDef): void {
   if (targetId === NO_ENTITY || !pool.isAlive(targetId)) return;
 
   const ti = idIndex(targetId);
-  const dx = pool.posX[ti]! - pool.posX[index]!;
-  const dy = pool.posY[ti]! - pool.posY[index]!;
+  const dx = snapX[ti]! - pool.posX[index]!;
+  const dy = snapY[ti]! - pool.posY[index]!;
   const reach = def.radius + defOf(pool.type[ti]! as EntityType).radius + reachSlackFor(order);
   const distSq = vecLenSqRaw(dx, dy);
   if (distSq <= sqRange(reach)) return; // already there
@@ -689,7 +770,7 @@ function closeOnTarget(world: World, index: number, def: EntityDef): void {
   // and should wait for a path rather than walking into a wall.
   if (distSq > sqRange(reach + fromInt(6))) return;
 
-  stepToward(world, index, pool.posX[ti]!, pool.posY[ti]!, def.speedPerTick, def.turnPerTick);
+  stepToward(world, index, snapX[ti]!, snapY[ti]!, def.speedPerTick, def.turnPerTick);
 }
 
 /**
@@ -720,15 +801,19 @@ function maybeRepathToward(world: World, index: number, tx: Fix, ty: Fix): void 
       defOf(pool.type[index]! as EntityType).radius +
       defOf(pool.type[ti]! as EntityType).radius +
       reachSlackFor(pool.order[index]! as Order);
-    const dx = pool.posX[ti]! - pool.posX[index]!;
-    const dy = pool.posY[ti]! - pool.posY[index]!;
+    const dx = snapX[ti]! - pool.posX[index]!;
+    const dy = snapY[ti]! - pool.posY[index]!;
     if (vecLenSqRaw(dx, dy) <= sqRange(reach)) {
       pool.clearPath(index);
       return;
     }
   }
 
-  const stale = pool.pathLen[index] === 0 || (world.tick + index) % CHASE_REPATH_INTERVAL === 0;
+  // Phased on the unit's serial rather than its slot: a mirrored pair share a
+  // serial and so re-path on the same ticks, where slots put them up to nine
+  // ticks apart, one of them chasing a stale position for longer every cycle.
+  const stale =
+    pool.pathLen[index] === 0 || (world.tick + pool.serial[index]!) % CHASE_REPATH_INTERVAL === 0;
   if (!stale) return;
 
   pool.orderX[index] = tx;
@@ -746,15 +831,29 @@ function maybeRepathToward(world: World, index: number, tx: Fix, ty: Fix): void 
  * what RTS movement wants anyway (units should squeeze past each other, not
  * bounce).
  *
- * Pairs are visited in ascending index order via the spatial grid, and each pair
- * is handled exactly once (`j > i`), so the result is order-independent in the
- * only sense that matters: it is the same on every peer.
+ * Every pair is measured against where both units stood when the pass began,
+ * and every push is summed before any is applied. Applied as it went, a push
+ * moved the lower-slot unit before its neighbours were measured, and since
+ * one side's units hold the lower slots the two halves of a mirrored crowd
+ * relaxed in different orders and settled in different places. Summing first
+ * makes the result the same whatever order the pairs are visited in — which is
+ * also what lets `SEPARATION_STRENGTH` mean one thing for every unit in a jam.
  */
+const sepX = new Int32Array(ENTITY_CAPACITY);
+const sepY = new Int32Array(ENTITY_CAPACITY);
+const pushX = new Int32Array(ENTITY_CAPACITY);
+const pushY = new Int32Array(ENTITY_CAPACITY);
+
 function separate(world: World): void {
   const pool = world.pool;
   const grid = world.grid;
+  const count = pool.count;
+  sepX.set(pool.posX.subarray(0, count));
+  sepY.set(pool.posY.subarray(0, count));
+  pushX.fill(0, 0, count);
+  pushY.fill(0, 0, count);
 
-  for (let i = 0; i < pool.count; i++) {
+  for (let i = 0; i < count; i++) {
     if (pool.alive[i] !== 1) continue;
     const defI = defOf(pool.type[i]! as EntityType);
     if (defI.isBuilding) continue;
@@ -764,12 +863,12 @@ function separate(world: World): void {
     // air should block the ground.
     if (!defI.collides && !defI.flying) continue;
 
-    const px = pool.posX[i]!;
-    const py = pool.posY[i]!;
+    const px = sepX[i]!;
+    const py = sepY[i]!;
     const ri = defI.radius;
 
     grid.forEachNear(px, py, fromInt(2), (j) => {
-      if (j <= i) return; // handle each pair once, from the lower index
+      if (j <= i) return; // handle each pair once
       if (pool.alive[j] !== 1) return;
       const defJ = defOf(pool.type[j]! as EntityType);
       if (defJ.isBuilding) return;
@@ -778,18 +877,22 @@ function separate(world: World): void {
       if (defI.flying !== defJ.flying) return;
       if (!defJ.collides && !defJ.flying) return;
 
-      const dx = pool.posX[j]! - px;
-      const dy = pool.posY[j]! - py;
+      const dx = sepX[j]! - px;
+      const dy = sepY[j]! - py;
       const minDist = ri + defJ.radius;
       const distSq = vecLenSqRaw(dx, dy);
       if (distSq >= sqRange(minDist)) return;
 
       if (distSq === 0) {
-        // Exactly coincident: nudge apart along a fixed axis chosen by index
-        // parity, so the resolution is deterministic rather than arbitrary.
-        const nudge = (i & 1) === 0 ? SEPARATION_STRENGTH : -SEPARATION_STRENGTH;
-        nudgeBy(world, i, -nudge as Fix, 0 as Fix, defI);
-        nudgeBy(world, j, nudge as Fix, 0 as Fix, defJ);
+        // Exactly coincident: nudge apart along the x axis of the canonical
+        // frame of whichever unit was created first, so the pair's mirror
+        // image is pushed the mirrored way. Index parity chose the axis
+        // before, and slot parity is unrelated between two halves of a match.
+        const first = createdBefore(world, i, j) ? i : j;
+        const sign = world.flipOf(pool.owner[first]!) ? -1 : 1;
+        const nudge = first === i ? sign * SEPARATION_STRENGTH : -sign * SEPARATION_STRENGTH;
+        pushX[i] = (pushX[i]! - nudge) | 0;
+        pushX[j] = (pushX[j]! + nudge) | 0;
         return;
       }
 
@@ -800,12 +903,40 @@ function separate(world: World): void {
       const ox = fmul(dx, inv);
       const oy = fmul(dy, inv);
 
-      nudgeBy(world, i, -ox as Fix, -oy as Fix, defI);
-      nudgeBy(world, j, ox as Fix, oy as Fix, defJ);
+      pushX[i] = (pushX[i]! - ox) | 0;
+      pushY[i] = (pushY[i]! - oy) | 0;
+      pushX[j] = (pushX[j]! + ox) | 0;
+      pushY[j] = (pushY[j]! + oy) | 0;
     });
   }
 
+  for (let i = 0; i < count; i++) {
+    if (pool.alive[i] !== 1) continue;
+    const ox = pushX[i]!;
+    const oy = pushY[i]!;
+    if (ox === 0 && oy === 0) continue;
+    nudgeBy(world, i, ox, oy, defOf(pool.type[i]! as EntityType));
+  }
+
   clampToMap(world);
+}
+
+/**
+ * Was `a` created before `b`, in the order both halves of a match share?
+ *
+ * Seat within the half, then creation ordinal, then the slot itself for two
+ * units that agree on both — which can only be a unit and its own mirror
+ * image, and any strict order will do for those.
+ */
+function createdBefore(world: World, a: number, b: number): boolean {
+  const pool = world.pool;
+  const sa = world.ownerCanonical(pool.owner[a]!);
+  const sb = world.ownerCanonical(pool.owner[b]!);
+  if (sa !== sb) return sa < sb;
+  const ra = pool.serial[a]!;
+  const rb = pool.serial[b]!;
+  if (ra !== rb) return ra < rb;
+  return pool.owner[a]! < pool.owner[b]!;
 }
 
 /**
@@ -832,22 +963,23 @@ function nudgeBy(world: World, index: number, ox: Fix, oy: Fix, def: EntityDef):
 
   const x = pool.posX[index]!;
   const y = pool.posY[index]!;
-  if (standable(world, (x + ox) | 0, (y + oy) | 0)) {
+  const flip = world.flipOf(pool.owner[index]!);
+  if (standable(world, (x + ox) | 0, (y + oy) | 0, flip)) {
     pool.posX[index] = (x + ox) | 0;
     pool.posY[index] = (y + oy) | 0;
     return;
   }
-  if (ox !== 0 && standable(world, (x + ox) | 0, y)) {
+  if (ox !== 0 && standable(world, (x + ox) | 0, y, flip)) {
     pool.posX[index] = (x + ox) | 0;
     return;
   }
-  if (oy !== 0 && standable(world, x, (y + oy) | 0)) {
+  if (oy !== 0 && standable(world, x, (y + oy) | 0, flip)) {
     pool.posY[index] = (y + oy) | 0;
   }
 }
 
-function standable(world: World, x: number, y: number): boolean {
-  const tile = world.map.tileOfPos(x, y);
+function standable(world: World, x: number, y: number, flip: boolean): boolean {
+  const tile = world.map.tileOfPosFor(x, y, flip);
   if (tile < 0) return false;
   return world.map.isWalkable(world.map.tileXOf(tile), world.map.tileYOf(tile));
 }
@@ -862,8 +994,12 @@ function standable(world: World, x: number, y: number): boolean {
  */
 function clampToMap(world: World): void {
   const pool = world.pool;
-  const lo = 0;
-  const hi = fromInt(world.map.width) - 1;
+  // An interval that is its own rotation: `lo` maps to `hi` under
+  // `x -> width - x`. `[0, width - 1]` was not, so a unit pinned against one
+  // wall sat one unit further out than its mirror pinned against the other.
+  const lo = 1;
+  const hiX = fromInt(world.map.width) - 1;
+  const hiY = fromInt(world.map.height) - 1;
   for (let i = 0; i < pool.count; i++) {
     if (pool.alive[i] !== 1) continue;
     const def = defOf(pool.type[i]! as EntityType);
@@ -871,19 +1007,20 @@ function clampToMap(world: World): void {
 
     if (pool.posX[i]! < lo) pool.posX[i] = lo;
     if (pool.posY[i]! < lo) pool.posY[i] = lo;
-    if (pool.posX[i]! > hi) pool.posX[i] = hi;
-    if (pool.posY[i]! > hi) pool.posY[i] = hi;
+    if (pool.posX[i]! > hiX) pool.posX[i] = hiX;
+    if (pool.posY[i]! > hiY) pool.posY[i] = hiY;
 
     // Flyers are over the terrain, not on it, so nothing ejects them.
     if (def.flying) continue;
 
-    const tile = world.map.tileOfPos(pool.posX[i]!, pool.posY[i]!);
+    const flip = world.flipOf(pool.owner[i]!);
+    const tile = world.map.tileOfPosFor(pool.posX[i]!, pool.posY[i]!, flip);
     if (tile < 0) continue;
     const tx = world.map.tileXOf(tile);
     const ty = world.map.tileYOf(tile);
     if (world.map.isWalkable(tx, ty)) continue;
 
-    const free = nearestWalkable(world.map, tx, ty, 6);
+    const free = nearestWalkable(world.map, tx, ty, 6, flip);
     if (free < 0) continue;
     pool.posX[i] = fromInt(world.map.tileXOf(free)) + FIX_HALF;
     pool.posY[i] = fromInt(world.map.tileYOf(free)) + FIX_HALF;

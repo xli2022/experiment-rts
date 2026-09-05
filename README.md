@@ -165,6 +165,7 @@ npm test                    # full suite
 npm run typecheck           # tsc --noEmit
 npm run build               # production build
 npm run determinism:cross   # run the same match under V8 and JavaScriptCore
+npm run mirror:probe        # where a mirrored match first stops mirroring
 ```
 
 `determinism:cross` is the strongest check here and it is close to free. Node

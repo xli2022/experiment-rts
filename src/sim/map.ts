@@ -20,7 +20,7 @@
  */
 
 import { checksumArray, checksumInit, checksumU32 } from './checksum.js';
-import { toInt, type Fix } from './fixed.js';
+import { fromInt, toInt, type Fix } from './fixed.js';
 import { carveLayout, layoutSize } from './mapgen.js';
 import { MapLayout, Tile } from './types.js';
 
@@ -118,6 +118,43 @@ export class GameMap {
     return this.index(tx, ty);
   }
 
+  /**
+   * The tile a position falls in, decided in the player's canonical frame.
+   *
+   * `tileOfPos` floors, and a floor is not symmetric under the map's rotation:
+   * a point exactly on the boundary between two tiles lands in the higher one,
+   * and its rotation — also exactly on a boundary — lands in the higher one
+   * too, which is the *lower* tile once rotated back. Building centres, the
+   * approach points beside them and spread formation slots all sit on exact
+   * boundaries, so the two halves quantised the same geometry a tile apart.
+   *
+   * Rotating the point into the first half's frame, flooring there and rotating
+   * the tile back makes both halves answer with mirrored tiles for mirrored
+   * points. `flip` is `World.flipOf(owner)` for whoever the tile is for.
+   */
+  tileOfPosFor(x: Fix, y: Fix, flip: boolean): number {
+    if (!flip) return this.tileOfPos(x, y);
+    const tile = this.tileOfPos(fromInt(this.width) - x, fromInt(this.height) - y);
+    return tile < 0 ? -1 : this.mirrorIndex(tile);
+  }
+
+  /** The tile index 180 degrees round the map centre from `tile`. */
+  mirrorIndex(tile: number): number {
+    return this.width * this.height - 1 - tile;
+  }
+
+  /**
+   * A tile index that reads the same from both halves of the map.
+   *
+   * Row-major index inverts under the rotation (`i` becomes `N-1-i`), so any
+   * "lowest tile wins" rule picks the top-left-most tile for one half and the
+   * bottom-right-most for the other. Comparing indices in the requester's
+   * canonical frame instead makes every such tie-break mirror-consistent.
+   */
+  canonicalIndex(tile: number, flip: boolean): number {
+    return flip ? this.mirrorIndex(tile) : tile;
+  }
+
   /** Terrain alone permits walking here. */
   isGroundWalkable(tx: number, ty: number): boolean {
     if (!this.inBounds(tx, ty)) return false;
@@ -198,6 +235,11 @@ export class GameMap {
     x = checksumU32(x, this.terrainHash);
     return x;
   }
+}
+
+/** Top-left tile of a footprint rotated 180 degrees about the map centre. */
+export function mirrorTile(size: number, tile: number, footprint: number): number {
+  return size - 1 - tile - (footprint - 1);
 }
 
 /**

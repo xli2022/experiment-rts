@@ -16,17 +16,42 @@
  *
  * Each was invisible to unit tests and obvious the moment a whole match ran. So
  * a whole match runs here.
+ *
+ * The two bots play at different strengths. The simulation is exactly
+ * rotation-equivariant (see `mirror.test.ts`), so two identical bots on the
+ * mirrored map make mirrored moves for the whole match and can only draw — a
+ * match that has to *resolve* needs the sides to differ.
  */
 
 import { describe, expect, it } from 'vitest';
 import { defOf } from '../src/config/rules.js';
-import { EntityType, NEUTRAL, NO_ENTITY, TICKS_PER_SECOND } from '../src/sim/types.js';
+import {
+  BotDifficulty,
+  EntityType,
+  NEUTRAL,
+  NO_ENTITY,
+  TICKS_PER_SECOND,
+  type MatchConfig,
+} from '../src/sim/types.js';
 import { duelMatch } from '../src/sim/match.js';
 import { Simulation } from '../src/sim/tick.js';
 
 const SEED = 0x51ce7a11;
-/** Long enough for a mirror match to resolve, with headroom. */
+/** Long enough for a match between unequal bots to resolve, with headroom. */
 const MAX_TICKS = TICKS_PER_SECOND * 60 * 30;
+
+/** Hard in one seat, Normal in the other. */
+function unequal(seed: number, hardSeat: 0 | 1): MatchConfig {
+  const base = duelMatch(seed, { botPlayers: [0, 1] });
+  const normal = hardSeat === 0 ? 1 : 0;
+  return {
+    ...base,
+    bots: [
+      { player: hardSeat, difficulty: BotDifficulty.Hard },
+      { player: normal, difficulty: BotDifficulty.Normal },
+    ].sort((a, b) => a.player - b.player),
+  };
+}
 
 interface Tally {
   workers: number;
@@ -48,8 +73,8 @@ function tally(sim: Simulation, owner: number): Tally {
 }
 
 /** Run a bot-vs-bot match, collecting what actually happened along the way. */
-function playMatch(seed: number, maxTicks = MAX_TICKS) {
-  const sim = new Simulation(duelMatch(seed, { botPlayers: [0, 1] }));
+function playMatch(seed: number, maxTicks = MAX_TICKS, hardSeat: 0 | 1 = 0) {
+  const sim = new Simulation(unequal(seed, hardSeat));
 
   let deaths = 0;
   let shots = 0;
@@ -139,6 +164,20 @@ describe('bot-vs-bot match', () => {
         expect(pool.owner[i]).toBe(NEUTRAL);
       }
     }
+  });
+});
+
+describe('the seats are equal', () => {
+  it('gives the same match with the seats swapped, so the winner swaps too', () => {
+    // The outcome-level statement of what `mirror.test.ts` checks tick by
+    // tick: which seat a player sits in changes nothing but the orientation.
+    const a = playMatch(SEED, MAX_TICKS, 0);
+    const b = playMatch(SEED, MAX_TICKS, 1);
+    expect(a.sim.world.matchOver).toBe(true);
+    expect(b.ticks).toBe(a.ticks);
+    expect(b.sim.world.winner).toBe(1 - a.sim.world.winner);
+    expect(b.shots).toBe(a.shots);
+    expect(b.deaths).toBe(a.deaths);
   });
 });
 

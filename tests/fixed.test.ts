@@ -13,9 +13,12 @@ import {
   vecRotateToward,
 } from '../src/sim/fixed.js';
 
-/** Exact reference multiply via BigInt, used to prove `fmul` is not approximate. */
+/**
+ * Exact reference multiply via BigInt, used to prove `fmul` is not approximate.
+ * BigInt division truncates toward zero, which is the rounding `fmul` promises.
+ */
 function refMul(a: number, b: number): number {
-  return Number(BigInt.asIntN(32, (BigInt(a) * BigInt(b)) >> 16n));
+  return Number(BigInt.asIntN(32, (BigInt(a) * BigInt(b)) / 65536n));
 }
 
 describe('fixed-point multiply', () => {
@@ -59,6 +62,29 @@ describe('fixed-point multiply', () => {
   it('treats FIX_ONE as the multiplicative identity', () => {
     for (const v of [0, 1, -1, 12345, -98765, 1 << 20]) {
       expect(fmul(v, FIX_ONE)).toBe(v);
+    }
+  });
+
+  it('is symmetric under negation', () => {
+    // The property the mirror-symmetry of the whole simulation rests on. A
+    // floor is not symmetric: `fmul(-a, b)` came out one below `-fmul(a, b)`
+    // whenever the product was not a whole number, and every moving unit's
+    // per-tick step goes through here with a signed direction.
+    let seed = 0x9e3779b9;
+    for (let i = 0; i < 20000; i++) {
+      seed ^= seed << 13;
+      seed ^= seed >>> 17;
+      seed ^= seed << 5;
+      seed |= 0;
+      const a = seed;
+      seed ^= seed << 13;
+      seed ^= seed >>> 17;
+      seed ^= seed << 5;
+      seed |= 0;
+      const b = seed >> 4;
+      if (a === -0x80000000 || b === -0x80000000) continue;
+      expect(fmul(-a, b)).toBe(-fmul(a, b));
+      expect(fmul(a, -b)).toBe(-fmul(a, b));
     }
   });
 });

@@ -43,10 +43,13 @@ are a rendering concern; convert at the boundary.
 
 ### Fixed-point gotchas
 
-- `fmul` splits operands into 16-bit halves and uses `Math.imul`. The obvious
-  `(a * b) >> 16` is **wrong** — `int32 * int32` reaches 2^62, past the 2^53
-  where float64 stops representing integers exactly, and it silently disagrees
-  with exact arithmetic on ~2.5% of operand pairs.
+- `fmul` splits the operands' magnitudes into 16-bit halves whose partial
+  products are exact, then applies the sign. The obvious `(a * b) >> 16` is
+  **wrong** — `int32 * int32` reaches 2^62, past the 2^53 where float64 stops
+  representing integers exactly, and it silently disagrees with exact
+  arithmetic on ~2.5% of operand pairs. It truncates toward zero rather than
+  flooring, so that `fmul(-a, b) === -fmul(a, b)`; see "The simulation is
+  rotation-equivariant" for why that matters.
 - Squared distances overflow int32 at map scale, so use `vecLenSqRaw` /
   `sqRange`, which stay in exact float64 integer range and compare safely.
 
@@ -93,45 +96,83 @@ on every trip for the rest of the match.
 from walkability alone — but it is still computed deterministically, because two
 peers rendering visibly different terrain would look exactly like a desync.
 
-## Mirror fairness is not the same as symmetry
+## The simulation is rotation-equivariant
 
-The map is symmetric; that does not make the _match_ symmetric. Anything placed
-at setup has to be laid out as an exact 180-degree rotation of player 0's, not by
-applying the same offsets to a mirrored start. Three separate bugs came from
-getting this subtly wrong, each worth a real advantage and none visible on
-screen:
+The map is symmetric under a 180-degree rotation, and so is everything that
+runs on it: a match whose second-half commands are the exact rotations of the
+first half's stays an exact mirror to the last tick — every entity has a twin
+at the rotated position with identical state, and both banks are equal, on
+every tick. `tests/mirror.test.ts` enforces it mechanically, the way
+`determinism.test.ts` enforces reproducibility: on a harvest-only match, on a
+scripted match that builds, trains, rallies, paths across the map, fights and
+expands, on a 20,000-tick Hard-versus-Hard mirror, on the same match with the
+seats swapped, and on the four-corner map. `npm run mirror:probe` runs the same
+scenarios and names the first tick, entity and field that broke the mirror,
+which is the tool for finding out why a change broke it.
 
-- A Command Post's footprint is 4, and `start - 2` cannot be symmetric about a
-  tile — so player 1's whole base sat a tile nearer the middle of the map.
-- Reflecting a mineral patch's _top-left corner_ about the base's centre tile
-  rather than its centre is half a tile out, which rounds to a whole tile of
-  extra walking on every trip.
-- Units spawn facing +Y and trained units pop out on the +Y side of a building,
-  so one player's reinforcements appeared four tiles nearer the front than the
-  other's, every time.
+It was not always so, and the size of the effect is worth remembering. Before
+the fix seat 1 won 15 of 16 bot mirror matches; Hard in seat 0 lost to Normal
+in seat 1 five times in eight, so the seat was worth more than a difficulty
+step; and with no bot at all, exactly mirrored harvest orders gave seat 1 12%
+more minerals by tick 3000. Four families of cause, and each had to be closed
+in full — one survivor re-breaks the mirror at the first tick it fires:
 
-**The simulation is deterministic but not rotation-equivariant.** Set both sides
-up as exact mirrors, give them mirrored orders, and they still diverge. Two
-independent causes, measured:
+- **Rounding that is not symmetric under negation.** `fmul` floored, so
+  `fmul(-a, b)` came out one below `-fmul(a, b)` for nearly every operand pair
+  and every mover drifted one unit per axis per tick; it truncates toward zero
+  now. `toInt` floors, and a position exactly on a tile boundary — every
+  building centre, every approach point beside one — landed in the tile
+  *inside* a box on one half and *outside* it on the other.
+  `GameMap.tileOfPosFor(x, y, flip)` floors in the player's canonical frame
+  instead, and every tile lookup made on an owned entity's behalf goes through
+  it.
+- **Ties broken by slot index or tile index.** Row-major tile index inverts
+  under the rotation, so "lowest index wins" was "top-left wins" for one half
+  and "bottom-right wins" for the other: A*'s heap and its first-parent rule,
+  the flow-field descent, and `nearestWalkable`, which returned the first tile
+  met on a ring scanned from its top-left corner and seeded every attack-move
+  on a building. Slot indices are lower for seat 0 at setup and scrambled by
+  the shared free list after the first death, so every ascending-index
+  tie-break and every slot-keyed phase differed between twins. Entities now
+  carry a `serial` — the owner's creation ordinal, which twins share — and
+  ties break on `(ownerCanonical, serial)`; tiles break on
+  `map.canonicalIndex(tile, flip)`.
+- **Searches that walk absolute map directions.** The formation spiral, the
+  bot's build spiral and its open-tile searches all walked the map's axes, so
+  the second seat's base was a *translated* copy of the first's rather than a
+  rotated one: it put all of its first eight structures, both turrets among
+  them, on its enemy-facing side, where the first seat put four and both
+  turrets behind. Every one of them now walks the player's canonical frame,
+  and the flow field seeds every walkable tile on the ring around an
+  unwalkable goal rather than picking one.
+- **Order-dependent passes across the halves.** Units are visited in slot
+  order, and a pass that read another unit's position while writing its own
+  saw a half-updated world in an order the other side did not share: a unit
+  closing on an enemy stepped, and its opposite number then measured against
+  the moved position and stopped one step short. Movement reads other units'
+  positions from a tick-start snapshot; separation sums every pair's push
+  before applying any; path requests are served round-robin per owner and in
+  serial order within one; production spawns in creation order; two workers
+  finishing on one patch in the same tick share it evenly.
 
-- **A\* breaks ties by tile index**, and row-major index is not invariant under a
-  180-degree rotation. 27 of 30 mirrored start/goal pairs return a
-  _differently shaped_ route — always the same length, never the same tiles.
-  Units steer between waypoints, so a different-shaped path of equal tile cost
-  is a different real distance. This is the big one: with no bots and exactly
-  mirrored harvest orders, one side out-mined the other by a third.
-- **`fmul` truncates toward negative infinity**, so `fmul(-a, b) !== -fmul(a, b)`
-  for 99.99% of operand pairs — always by one ULP. This is the floor: even with
-  direct steering and no pathfinding, two mirrored units drift apart within
-  about ten ticks.
+Two rules keep it that way, and `tests/mirror.test.ts` is what says when one
+has been broken:
 
-None of this is a desync risk — every peer computes the same numbers, which is
-all lockstep needs — and none of it is perceptible in a human game. What it means
-is that **an AI-vs-AI mirror match is not a fair fight**, and measuring balance
-by running bot matches on a symmetric map will report whichever side the
-tie-breaks happen to favour. Fixing it needs a rotation-invariant tie-break in
-A\* and a change to `fmul`'s rounding, and `fmul` is the function everything
-else's correctness rests on.
+- **Nothing decides by slot index or raw tile index.** Break ties on `serial`
+  (after `World.ownerCanonical` when the owners can differ) or on
+  `canonicalIndex`; phase timers on `serial`; convert a position to a tile
+  with `tileOfPosFor(…, world.flipOf(owner))`; walk a spiral or a ring in the
+  frame `flipOf` names.
+- **A pass that reads other entities while writing its own reads a
+  snapshot.** Accumulate, then apply.
+
+One consequence to keep in mind when writing tests: two identical bots on the
+mirrored map make mirrored moves for the whole match and can only draw, by
+mutual elimination or by timeout. A test that needs a match to *resolve* has
+to give the two seats different strengths — `tests/match.test.ts` plays Hard
+against Normal, and checks that swapping the seats swaps the winner and
+changes nothing else. Measured across eight seeds: Hard beats Normal 8–0 from
+either seat with identical tick counts, and Hard mirrors draw 8–0.
 
 ## Teams
 
@@ -142,8 +183,9 @@ as an inexplicable divergence some seconds in.
 
 **A 1v1 is the degenerate case, and that is load-bearing.** Team ids equal player
 ids there, so `world.winner` still reads as a player, `teamsFor(Lanes)` is
-`[0, 1]`, and the duel map plus its opening are byte for byte what they were —
-verified against the pre-teams build, not assumed.
+`[0, 1]`, and the duel map plus its opening are what they were — verified
+against the pre-teams build when teams landed, not assumed; the only change
+since is the starting workers standing on tile centres.
 
 `World.isHostile(index, player)` is the one place hostility is decided. It used
 to live on the entity pool, where it could only compare owners — correct while
@@ -320,6 +362,7 @@ be removed after encoding.
 ```sh
 npm test                    # full suite, including the per-tick replay check
 npm run determinism:cross   # same match under V8 and JavaScriptCore, diffed
+npm run mirror:probe        # where a mirrored match first stops mirroring
 ```
 
 `determinism:cross` is the strongest check we have and it is nearly free: Node
