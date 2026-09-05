@@ -6,10 +6,10 @@
  * unit's model is adding a row to this table.
  */
 
-import * as THREE from "three";
-import { EntityType } from "../../sim/types.js";
-import { KTX2Loader } from "three/examples/jsm/loaders/KTX2Loader.js";
-import { loadAnimatedModel, type AnimatedModel } from "./animated.js";
+import * as THREE from 'three';
+import { EntityType } from '../../sim/types.js';
+import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
+import { loadAnimatedModel, type AnimatedModel } from './animated.js';
 
 /**
  * How a model is scaled into world units.
@@ -19,7 +19,7 @@ import { loadAnimatedModel, type AnimatedModel } from "./animated.js";
  * height would size it by whatever fin happens to stick up.
  */
 interface Fit {
-  axis: "x" | "y" | "z";
+  axis: 'x' | 'y' | 'z';
   /** Target size on that axis, in world units. One unit is one map tile. */
   target: number;
 }
@@ -46,21 +46,21 @@ interface UnitModelSpec {
 const MODELS: UnitModelSpec[] = [
   {
     type: EntityType.Slicebot,
-    file: "sword-machine.glb",
-    skins: ["sword-machine-blue.ktx2", "sword-machine-red.ktx2"],
-    fit: { axis: "y", target: 1.16 },
+    file: 'sword-machine.glb',
+    skins: ['sword-machine-blue.ktx2', 'sword-machine-red.ktx2'],
+    fit: { axis: 'y', target: 1.16 },
   },
   {
     type: EntityType.Burstbot,
-    file: "revolver.glb",
-    skins: ["revolver-blue.ktx2", "revolver-red.ktx2"],
-    fit: { axis: "y", target: 1.01 },
+    file: 'revolver.glb',
+    skins: ['revolver-blue.ktx2', 'revolver-red.ktx2'],
+    fit: { axis: 'y', target: 1.01 },
   },
   {
     type: EntityType.Beamdrone,
-    file: "beam-ship.glb",
-    skins: ["beam-ship-blue.ktx2", "beam-ship-red.ktx2"],
-    fit: { axis: "x", target: 1.43 },
+    file: 'beam-ship.glb',
+    skins: ['beam-ship-blue.ktx2', 'beam-ship-red.ktx2'],
+    fit: { axis: 'x', target: 1.43 },
   },
 ];
 
@@ -91,10 +91,7 @@ function assetUrl(name: string): string {
  * texture cannot be flipped as it uploads the way a PNG can — so the flip is
  * baked in by the encoder instead. See `scripts/encode-textures.mjs`.
  */
-async function loadSkin(
-  loader: KTX2Loader,
-  file: string,
-): Promise<THREE.Texture | null> {
+async function loadSkin(loader: KTX2Loader, file: string): Promise<THREE.Texture | null> {
   try {
     const tex = await loader.loadAsync(assetUrl(file));
     tex.colorSpace = THREE.SRGBColorSpace;
@@ -113,9 +110,7 @@ async function loadSkin(
  * optional the same way — without one the renderer falls back to flat team
  * colour, which is worse-looking but never blocks the unit from appearing.
  */
-export async function loadUnitModels(
-  renderer: THREE.WebGLRenderer,
-): Promise<LoadedUnitModel[]> {
+export async function loadUnitModels(renderer: THREE.WebGLRenderer): Promise<LoadedUnitModel[]> {
   // The transcoder picks a target format from what the GPU reports, so it needs
   // the renderer before it can decode anything. Its own WASM is left at the
   // default path: three.js resolves that against `import.meta.url`, so the
@@ -127,9 +122,7 @@ export async function loadUnitModels(
     MODELS.map(async (spec): Promise<LoadedUnitModel | null> => {
       try {
         const model = await loadAnimatedModel(assetUrl(spec.file));
-        const textures = await Promise.all(
-          spec.skins.map((f) => loadSkin(skinLoader, f)),
-        );
+        const textures = await Promise.all(spec.skins.map((f) => loadSkin(skinLoader, f)));
         const measured = Math.max(0.001, model.bindSize[spec.fit.axis]);
         return {
           type: spec.type,
@@ -138,10 +131,7 @@ export async function loadUnitModels(
           scale: spec.fit.target / measured,
         };
       } catch (err) {
-        console.warn(
-          `model ${spec.file} unavailable, keeping the procedural one`,
-          err,
-        );
+        console.warn(`model ${spec.file} unavailable, keeping the procedural one`, err);
         return null;
       }
     }),

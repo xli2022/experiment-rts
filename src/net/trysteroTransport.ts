@@ -88,10 +88,7 @@ export const TRANSPORT_CHUNK_BYTES = 16 * 1024 - 36;
 function unorderedPeerConnection(): typeof RTCPeerConnection | undefined {
   if (typeof RTCPeerConnection === 'undefined') return undefined;
   return class extends RTCPeerConnection {
-    override createDataChannel(
-      label: string,
-      options?: RTCDataChannelInit,
-    ): RTCDataChannel {
+    override createDataChannel(label: string, options?: RTCDataChannelInit): RTCDataChannel {
       return super.createDataChannel(label, { ...options, ordered: false });
     }
   };

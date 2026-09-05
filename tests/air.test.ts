@@ -49,7 +49,8 @@ function duel(
 
   const ax = spot.x + 0.5;
   const ay = spot.y + 0.5;
-  const a = pool.spawn(attacker, 0 as PlayerId, Math.round(ax * FIX), Math.round(ay * FIX)) & 0xffff;
+  const a =
+    pool.spawn(attacker, 0 as PlayerId, Math.round(ax * FIX), Math.round(ay * FIX)) & 0xffff;
   const b =
     pool.spawn(target, 1 as PlayerId, Math.round((ax + gap) * FIX), Math.round(ay * FIX)) & 0xffff;
 

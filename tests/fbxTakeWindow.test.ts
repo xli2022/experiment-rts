@@ -1,9 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from 'vitest';
 
 const FBX_TIME_UNIT = 46_186_158_000n;
-const parser = (await import(
-  new URL("../scripts/fbx-take-window.mjs", import.meta.url).href
-)) as {
+const parser = (await import(new URL('../scripts/fbx-take-window.mjs', import.meta.url).href)) as {
   parseFbxTakeWindows(bytes: Uint8Array): readonly {
     name: string;
     start: number;
@@ -11,8 +9,8 @@ const parser = (await import(
   }[];
 };
 
-describe("FBX animation take windows", () => {
-  it("reads an ASCII AnimationStack without accepting template defaults", () => {
+describe('FBX animation take windows', () => {
+  it('reads an ASCII AnimationStack without accepting template defaults', () => {
     const fbx = new TextEncoder().encode(`
 Definitions:  {
   ObjectType: "AnimationStack" {
@@ -32,31 +30,29 @@ Objects:  {
 }
 `);
 
-    expect(parser.parseFbxTakeWindows(fbx)).toEqual([
-      { name: "Walk", start: 1 / 15, stop: 2 / 3 },
-    ]);
+    expect(parser.parseFbxTakeWindows(fbx)).toEqual([{ name: 'Walk', start: 1 / 15, stop: 2 / 3 }]);
   });
 
-  it("reads the same window from binary FBX nodes", () => {
+  it('reads the same window from binary FBX nodes', () => {
     const header = Buffer.alloc(27);
-    header.write("Kaydara FBX Binary  \0\x1a\0", 0, "binary");
+    header.write('Kaydara FBX Binary  \0\x1a\0', 0, 'binary');
     header.writeUInt32LE(7400, 23);
     const startTicks = FBX_TIME_UNIT / 15n;
     const stopTicks = (FBX_TIME_UNIT * 2n) / 3n;
     const objects = binaryNode(
-      "Objects",
+      'Objects',
       [],
       [
         {
-          name: "AnimationStack",
-          properties: [1n, "AnimStack::Walk", ""],
+          name: 'AnimationStack',
+          properties: [1n, 'AnimStack::Walk', ''],
           children: [
             {
-              name: "Properties70",
+              name: 'Properties70',
               properties: [],
               children: [
-                propertyNode("LocalStart", startTicks),
-                propertyNode("LocalStop", stopTicks),
+                propertyNode('LocalStart', startTicks),
+                propertyNode('LocalStop', stopTicks),
               ],
             },
           ],
@@ -66,9 +62,7 @@ Objects:  {
     );
     const fbx = Buffer.concat([header, objects, Buffer.alloc(13)]);
 
-    expect(parser.parseFbxTakeWindows(fbx)).toEqual([
-      { name: "Walk", start: 1 / 15, stop: 2 / 3 },
-    ]);
+    expect(parser.parseFbxTakeWindows(fbx)).toEqual([{ name: 'Walk', start: 1 / 15, stop: 2 / 3 }]);
   });
 });
 
@@ -80,8 +74,8 @@ interface BinaryNode {
 
 function propertyNode(name: string, value: bigint): BinaryNode {
   return {
-    name: "P",
-    properties: [name, "KTime", "Time", "", value],
+    name: 'P',
+    properties: [name, 'KTime', 'Time', '', value],
   };
 }
 
@@ -97,12 +91,7 @@ function binaryNode(
   const encodedChildren: Buffer[] = [];
   let childOffset = absoluteOffset + headerLength;
   for (const child of children) {
-    const encoded = binaryNode(
-      child.name,
-      child.properties,
-      child.children ?? [],
-      childOffset,
-    );
+    const encoded = binaryNode(child.name, child.properties, child.children ?? [], childOffset);
     encodedChildren.push(encoded);
     childOffset += encoded.length;
   }
@@ -116,25 +105,19 @@ function binaryNode(
   header.writeUInt32LE(properties.length, 4);
   header.writeUInt32LE(encodedProperties.length, 8);
   header.writeUInt8(encodedName.length, 12);
-  return Buffer.concat([
-    header,
-    encodedName,
-    encodedProperties,
-    ...encodedChildren,
-    terminator,
-  ]);
+  return Buffer.concat([header, encodedName, encodedProperties, ...encodedChildren, terminator]);
 }
 
 function binaryProperty(value: bigint | string): Buffer {
-  if (typeof value === "bigint") {
+  if (typeof value === 'bigint') {
     const property = Buffer.alloc(9);
-    property.write("L", 0);
+    property.write('L', 0);
     property.writeBigInt64LE(value, 1);
     return property;
   }
   const encoded = Buffer.from(value);
   const property = Buffer.alloc(5 + encoded.length);
-  property.write("S", 0);
+  property.write('S', 0);
   property.writeUInt32LE(encoded.length, 1);
   encoded.copy(property, 5);
   return property;

@@ -18,7 +18,14 @@ import { CommandType, type Command } from '../commands.js';
 import { ARRIVE_BEST_NONE, idIndex } from '../entities.js';
 import { FIX_HALF, fromInt } from '../fixed.js';
 import { nearestWalkable } from '../pathing/astar.js';
-import { BuildState, EntityType, NO_ENTITY, Order, type EntityId, type PlayerId } from '../types.js';
+import {
+  BuildState,
+  EntityType,
+  NO_ENTITY,
+  Order,
+  type EntityId,
+  type PlayerId,
+} from '../types.js';
 import type { World } from '../world.js';
 
 /**
@@ -433,12 +440,7 @@ function assignBuilder(world: World, workerIndex: number, siteId: EntityId): voi
  *
  * Scans the pool in ascending index order, so every peer finds the same one.
  */
-function findWorkableAt(
-  world: World,
-  player: PlayerId,
-  tileX: number,
-  tileY: number,
-): EntityId {
+function findWorkableAt(world: World, player: PlayerId, tileX: number, tileY: number): EntityId {
   const pool = world.pool;
   for (let i = 0; i < pool.count; i++) {
     if (pool.alive[i] !== 1) continue;

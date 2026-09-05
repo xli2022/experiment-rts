@@ -101,7 +101,12 @@ describe('rally points', () => {
     expect(pool.hasRally[barracks]).toBe(0);
 
     sim.step([
-      { type: CommandType.Train, player: 0, building: pool.idAt(barracks), unit: EntityType.Burstbot },
+      {
+        type: CommandType.Train,
+        player: 0,
+        building: pool.idAt(barracks),
+        unit: EntityType.Burstbot,
+      },
     ]);
     let unit = -1;
     for (let t = 0; t < defOf(EntityType.Burstbot).buildTicks + 30 && unit < 0; t++) {

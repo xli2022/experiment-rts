@@ -256,7 +256,7 @@ describe('packets fit in one chunk', () => {
   function fullSelectionMove(): Command {
     const units: number[] = [];
     // Worst case ids: high slot, high generation, so every one serialises long.
-    for (let i = 0; i < MAX_SELECTION; i++) units.push(((2047 - i) << 16 | 0xffff) >>> 0);
+    for (let i = 0; i < MAX_SELECTION; i++) units.push((((2047 - i) << 16) | 0xffff) >>> 0);
     return { type: CommandType.Move, player: 1, units, x: -2147483648, y: -2147483648 };
   }
 
@@ -278,9 +278,9 @@ describe('packets fit in one chunk', () => {
     // ever fails, unordered delivery is no longer safe — a packet split across
     // chunks is reassembled by arrival order and would be scrambled.
     const bytes = wireBytes(worstPacket(4));
-    expect(`${bytes} bytes vs ${TRANSPORT_CHUNK_BYTES} limit: ${bytes < TRANSPORT_CHUNK_BYTES}`).toBe(
-      `${bytes} bytes vs ${TRANSPORT_CHUNK_BYTES} limit: true`,
-    );
+    expect(
+      `${bytes} bytes vs ${TRANSPORT_CHUNK_BYTES} limit: ${bytes < TRANSPORT_CHUNK_BYTES}`,
+    ).toBe(`${bytes} bytes vs ${TRANSPORT_CHUNK_BYTES} limit: true`);
     // And not merely fitting: an order of magnitude of headroom.
     expect(bytes * 4).toBeLessThan(TRANSPORT_CHUNK_BYTES);
   });

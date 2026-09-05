@@ -83,10 +83,8 @@ describe('damage is a single number', () => {
     const spot = clearSpot(sim);
     const pool = sim.world.pool;
     const at = (n: number) => Math.round(n * FIX);
-    const a =
-      pool.spawn(attacker, 0 as PlayerId, at(spot.x + 0.5), at(spot.y + 0.5)) & 0xffff;
-    const b =
-      pool.spawn(target, 1 as PlayerId, at(spot.x + 1.7), at(spot.y + 0.5)) & 0xffff;
+    const a = pool.spawn(attacker, 0 as PlayerId, at(spot.x + 0.5), at(spot.y + 0.5)) & 0xffff;
+    const b = pool.spawn(target, 1 as PlayerId, at(spot.x + 1.7), at(spot.y + 0.5)) & 0xffff;
     const attackerHp = defOf(attacker).maxHp;
     const targetHp = defOf(target).maxHp;
 
@@ -104,12 +102,7 @@ describe('damage is a single number', () => {
     return -1;
   }
 
-  const ARMED = [
-    EntityType.Burstbot,
-    EntityType.Slicebot,
-    EntityType.Beamdrone,
-    EntityType.Worker,
-  ];
+  const ARMED = [EntityType.Burstbot, EntityType.Slicebot, EntityType.Beamdrone, EntityType.Worker];
 
   for (const attacker of ARMED) {
     for (const target of ARMED) {

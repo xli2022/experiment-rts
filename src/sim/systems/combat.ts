@@ -51,7 +51,10 @@ export function combatSystem(world: World): void {
       // are refused at source, so this only catches a target that became
       // unreachable afterwards — but it is the difference between a unit that
       // stands there and one that lands impossible blows.
-      if (pool.isAlive(t) && (def.canHitAir || !defOf(pool.type[idIndex(t)]! as EntityType).flying)) {
+      if (
+        pool.isAlive(t) &&
+        (def.canHitAir || !defOf(pool.type[idIndex(t)]! as EntityType).flying)
+      ) {
         targetIndex = idIndex(t);
       } else {
         // Target died: fall back to free acquisition rather than standing idle.
@@ -257,12 +260,7 @@ export function reapDead(world: World): void {
 }
 
 /** Distance helper shared with the AI, which reasons about threat ranges. */
-export function withinRange(
-  world: World,
-  a: number,
-  b: number,
-  range: number,
-): boolean {
+export function withinRange(world: World, a: number, b: number, range: number): boolean {
   const pool = world.pool;
   const dx = pool.posX[b]! - pool.posX[a]!;
   const dy = pool.posY[b]! - pool.posY[a]!;

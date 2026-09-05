@@ -144,12 +144,7 @@ class Game {
     this.entities = new EntityRenderer(this.provider, this.sim.world);
     this.fog = new FogRenderer(this.sim.world.map);
     this.fog.update(this.sim.world, this.localPlayer);
-    this.scene.add(
-      this.terrain.group,
-      this.entities.group,
-      this.projectiles.group,
-      this.fog.mesh,
-    );
+    this.scene.add(this.terrain.group, this.entities.group, this.projectiles.group, this.fog.mesh);
     this.addLights();
 
     this.ghost = this.makeGhost();
@@ -217,9 +212,7 @@ class Game {
 
   /** Slots on the local player's side other than their own, ascending. */
   private allies(): PlayerId[] {
-    return this.sim.world
-      .playersOnTeam(this.localTeam)
-      .filter((p) => p !== this.localPlayer);
+    return this.sim.world.playersOnTeam(this.localTeam).filter((p) => p !== this.localPlayer);
   }
 
   private addLights(): void {
@@ -627,7 +620,12 @@ class Game {
     return any;
   }
 
-  private issueGroundOrder(x: number, z: number, attackMove: boolean, alreadyRallied = false): void {
+  private issueGroundOrder(
+    x: number,
+    z: number,
+    attackMove: boolean,
+    alreadyRallied = false,
+  ): void {
     // A mixed selection does both: the buildings take the rally, the units take
     // the move. They never compete, since buildings cannot move anyway.
     if (!attackMove && !alreadyRallied && this.setRallyPoints(x, z)) return;

@@ -219,7 +219,10 @@ describe('arrival spread', () => {
  * ground, 20 of 24 units in a single group move never came to rest.
  */
 describe('coming to rest', () => {
-  function marchAndSettle(n: number, clear: number): {
+  function marchAndSettle(
+    n: number,
+    clear: number,
+  ): {
     sim: Simulation;
     ids: number[];
     to: { x: number; y: number };
@@ -296,7 +299,9 @@ describe('coming to rest', () => {
       if (moving === 0) settledAt = t;
     }
     expect(`settled at tick ${settledAt}`).toBe(
-      settledAt >= 0 && settledAt < 220 ? `settled at tick ${settledAt}` : 'settled before tick 220',
+      settledAt >= 0 && settledAt < 220
+        ? `settled at tick ${settledAt}`
+        : 'settled before tick 220',
     );
   });
 

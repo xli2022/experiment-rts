@@ -408,7 +408,13 @@ function stepToward(
     // along a path: the final approach to a formation slot, closing on a build
     // site, and stepping up to a combat target all aim straight at a point, and
     // a straight line to a point near a cliff clips the cliff.
-    nudgeBy(world, index, fmul(dir.x, step), fmul(dir.y, step), defOf(pool.type[index]! as EntityType));
+    nudgeBy(
+      world,
+      index,
+      fmul(dir.x, step),
+      fmul(dir.y, step),
+      defOf(pool.type[index]! as EntityType),
+    );
     // Facing is taken from the direction of travel, which is the same thing the
     // old code used — but read before the position update rather than after, so
     // a unit that arrives this tick still faces where it was going.
@@ -641,13 +647,7 @@ function followPaths(world: World): void {
       pool.posX[i] = (pool.posX[i]! + fmul(dirX, step)) | 0;
       pool.posY[i] = (pool.posY[i]! + fmul(dirY, step)) | 0;
 
-      const face = vecRotateToward(
-        pool.faceX[i]!,
-        pool.faceY[i]!,
-        dirX,
-        dirY,
-        def.turnPerTick,
-      );
+      const face = vecRotateToward(pool.faceX[i]!, pool.faceY[i]!, dirX, dirY, def.turnPerTick);
       pool.faceX[i] = face.x;
       pool.faceY[i] = face.y;
 
@@ -681,8 +681,7 @@ function closeOnTarget(world: World, index: number, def: EntityDef): void {
   const ti = idIndex(targetId);
   const dx = pool.posX[ti]! - pool.posX[index]!;
   const dy = pool.posY[ti]! - pool.posY[index]!;
-  const reach =
-    def.radius + defOf(pool.type[ti]! as EntityType).radius + reachSlackFor(order);
+  const reach = def.radius + defOf(pool.type[ti]! as EntityType).radius + reachSlackFor(order);
   const distSq = vecLenSqRaw(dx, dy);
   if (distSq <= sqRange(reach)) return; // already there
 
@@ -690,14 +689,7 @@ function closeOnTarget(world: World, index: number, def: EntityDef): void {
   // and should wait for a path rather than walking into a wall.
   if (distSq > sqRange(reach + fromInt(6))) return;
 
-  stepToward(
-    world,
-    index,
-    pool.posX[ti]!,
-    pool.posY[ti]!,
-    def.speedPerTick,
-    def.turnPerTick,
-  );
+  stepToward(world, index, pool.posX[ti]!, pool.posY[ti]!, def.speedPerTick, def.turnPerTick);
 }
 
 /**
@@ -736,8 +728,7 @@ function maybeRepathToward(world: World, index: number, tx: Fix, ty: Fix): void 
     }
   }
 
-  const stale =
-    pool.pathLen[index] === 0 || (world.tick + index) % CHASE_REPATH_INTERVAL === 0;
+  const stale = pool.pathLen[index] === 0 || (world.tick + index) % CHASE_REPATH_INTERVAL === 0;
   if (!stale) return;
 
   pool.orderX[index] = tx;

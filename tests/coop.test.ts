@@ -411,8 +411,7 @@ describe('player colours', () => {
       const n = world.players.length;
       for (let a = 0; a < n; a++) {
         for (let b = 0; b < n; b++) {
-          const sameFamily =
-            colourSlotFor(a, n) >> 1 === colourSlotFor(b, n) >> 1;
+          const sameFamily = colourSlotFor(a, n) >> 1 === colourSlotFor(b, n) >> 1;
           expect(`${a},${b}:${sameFamily}`).toBe(`${a},${b}:${world.areAllied(a, b)}`);
         }
       }
@@ -710,9 +709,7 @@ describe('the bot on a side', () => {
 
     const defenders: number[] = [];
     for (let k = 0; k < 6; k++) {
-      defenders.push(
-        spawnAt(world, EntityType.Burstbot, 0, middle.tileX + k - 3, middle.tileY),
-      );
+      defenders.push(spawnAt(world, EntityType.Burstbot, 0, middle.tileX + k - 3, middle.tileY));
     }
     // A raiding party inside the bot's base, close enough to count as an
     // attack. Armed, because a lone scouting worker deliberately does not.

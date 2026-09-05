@@ -86,9 +86,7 @@ describe('deterministic simulation', () => {
     // every other assertion in this file vacuous.
     const a = recordMatch(SEED, 300);
     const b = recordMatch(SEED + 1, 300);
-    expect(a.checksums[a.checksums.length - 1]).not.toBe(
-      b.checksums[b.checksums.length - 1],
-    );
+    expect(a.checksums[a.checksums.length - 1]).not.toBe(b.checksums[b.checksums.length - 1]);
   });
 
   it('actually simulates something', () => {

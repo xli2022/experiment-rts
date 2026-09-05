@@ -23,8 +23,21 @@ describe('fixed-point multiply', () => {
     // Deterministic sample set including the extremes where the naive
     // `(a * b) >> 16` implementation silently loses precision past 2^53.
     const values: number[] = [
-      0, 1, -1, FIX_ONE, -FIX_ONE, 2, -2, 65535, -65535,
-      0x7fffffff, -0x80000000, 100000, -99999, 1 << 20, -(1 << 20),
+      0,
+      1,
+      -1,
+      FIX_ONE,
+      -FIX_ONE,
+      2,
+      -2,
+      65535,
+      -65535,
+      0x7fffffff,
+      -0x80000000,
+      100000,
+      -99999,
+      1 << 20,
+      -(1 << 20),
     ];
     let seed = 12345;
     for (let i = 0; i < 120; i++) {

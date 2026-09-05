@@ -79,7 +79,11 @@ function patchesAround(sim: Simulation, at: { tileX: number; tileY: number }): n
 }
 
 /** The three trunk routes, identified by a point only that route passes through. */
-function trunkChokes(size: number): { centre: { x: number; y: number; r: number }; low: { x: number; y: number; r: number }; high: { x: number; y: number; r: number } } {
+function trunkChokes(size: number): {
+  centre: { x: number; y: number; r: number };
+  low: { x: number; y: number; r: number };
+  high: { x: number; y: number; r: number };
+} {
   const edge = Math.floor(size * 0.11);
   // Wider than any corridor at these points, so a block really does sever the
   // route rather than leaving a lip of open ground to squeeze past.

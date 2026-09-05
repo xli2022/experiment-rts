@@ -219,13 +219,7 @@ export function vecNormalize(dx: Fix, dy: Fix): typeof vecOut {
  * than by comparing angles — is what lets the whole simulation avoid trig, and
  * therefore avoid the one part of `Math` that is not portable.
  */
-export function vecRotateToward(
-  fx: Fix,
-  fy: Fix,
-  tx: Fix,
-  ty: Fix,
-  maxStep: Fix,
-): typeof vecOut {
+export function vecRotateToward(fx: Fix, fy: Fix, tx: Fix, ty: Fix, maxStep: Fix): typeof vecOut {
   const dx = tx - fx;
   const dy = ty - fy;
   const d = vecLen(dx, dy);

@@ -260,7 +260,9 @@ describe('adapting the input delay', () => {
 
     const slow = peers[1]!.runner.inputDelayTurns;
     const fast = peers[0]!.runner.inputDelayTurns;
-    expect(`late peer ${slow} > prompt peer ${fast}`).toBe(`late peer ${slow} > prompt peer ${fast}`);
+    expect(`late peer ${slow} > prompt peer ${fast}`).toBe(
+      `late peer ${slow} > prompt peer ${fast}`,
+    );
     expect(slow).toBeGreaterThan(fast);
 
     expectAgreement(peers);

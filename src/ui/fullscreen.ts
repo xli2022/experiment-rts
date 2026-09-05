@@ -42,7 +42,9 @@ export function fullscreenSupported(): boolean {
  * Must be called from a user gesture (click or keypress) — browsers reject it
  * otherwise, which is why nothing here tries to enter fullscreen on load.
  */
-export async function toggleFullscreen(target: HTMLElement = document.documentElement): Promise<boolean> {
+export async function toggleFullscreen(
+  target: HTMLElement = document.documentElement,
+): Promise<boolean> {
   const doc = document as WebkitDocument;
   try {
     if (isFullscreen()) {

@@ -196,12 +196,7 @@ export class World {
    * Buildings are positioned by their top-left tile and their stored position is
    * the footprint centre, which is what movement and combat measure against.
    */
-  placeBuilding(
-    type: EntityType,
-    owner: PlayerId,
-    tileX: number,
-    tileY: number,
-  ): EntityId {
+  placeBuilding(type: EntityType, owner: PlayerId, tileX: number, tileY: number): EntityId {
     const def = defOf(type);
     const half = def.footprint / 2;
     const cx = fromInt(tileX) + Math.round(half * 65536);

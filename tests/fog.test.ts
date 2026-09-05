@@ -84,7 +84,12 @@ describe('fog texture layout', () => {
       { player: 2, x: 80, y: 76 },
     ];
     for (const spot of spots) {
-      const id = world.pool.spawn(EntityType.Burstbot, spot.player, fromInt(spot.x), fromInt(spot.y));
+      const id = world.pool.spawn(
+        EntityType.Burstbot,
+        spot.player,
+        fromInt(spot.x),
+        fromInt(spot.y),
+      );
       expect(id).not.toBe(NO_ENTITY);
     }
 

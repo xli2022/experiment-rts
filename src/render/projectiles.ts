@@ -303,15 +303,42 @@ export class ProjectileRenderer {
       this.group.add(mesh);
     }
     this.disposables.push(
-      boltGeo, boltMat, flashGeo, flashMat, debrisGeo, debrisMat, markerGeo, markerMat,
+      boltGeo,
+      boltMat,
+      flashGeo,
+      flashMat,
+      debrisGeo,
+      debrisMat,
+      markerGeo,
+      markerMat,
     );
 
     for (let i = 0; i < CAPACITY; i++) {
-      this.bolts.push({ x0: 0, y0: 0, z0: 0, x1: 0, y1: 0, z1: 0, age: 0, colour: 0, active: false });
+      this.bolts.push({
+        x0: 0,
+        y0: 0,
+        z0: 0,
+        x1: 0,
+        y1: 0,
+        z1: 0,
+        age: 0,
+        colour: 0,
+        active: false,
+      });
       this.flashes.push({ x: 0, y: 0, z: 0, age: 0, colour: 0, active: false });
       this.debris.push({
-        x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0,
-        spin: 0, age: 0, life: 0, size: 0.2, colour: 0, active: false,
+        x: 0,
+        y: 0,
+        z: 0,
+        vx: 0,
+        vy: 0,
+        vz: 0,
+        spin: 0,
+        age: 0,
+        life: 0,
+        size: 0.2,
+        colour: 0,
+        active: false,
       });
     }
     for (let i = 0; i < 64; i++) {

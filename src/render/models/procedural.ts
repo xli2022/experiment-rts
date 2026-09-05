@@ -149,9 +149,24 @@ export class ProceduralModelProvider implements ModelProvider {
             // Irregular crystal cluster. Cones at varied tilts avoid the
             // "three identical spikes" look while staying cheap.
             part(new THREE.ConeGeometry(0.32, 1.0, 5), 'resource', [0, 0.5, 0]),
-            part(new THREE.ConeGeometry(0.24, 0.72, 5), 'resource', [0.42, 0.36, 0.2], [0, 0, 0.32]),
-            part(new THREE.ConeGeometry(0.2, 0.6, 5), 'resource', [-0.36, 0.3, -0.26], [0, 0, -0.4]),
-            part(new THREE.ConeGeometry(0.18, 0.5, 5), 'resource', [0.05, 0.25, -0.45], [0.3, 0, 0]),
+            part(
+              new THREE.ConeGeometry(0.24, 0.72, 5),
+              'resource',
+              [0.42, 0.36, 0.2],
+              [0, 0, 0.32],
+            ),
+            part(
+              new THREE.ConeGeometry(0.2, 0.6, 5),
+              'resource',
+              [-0.36, 0.3, -0.26],
+              [0, 0, -0.4],
+            ),
+            part(
+              new THREE.ConeGeometry(0.18, 0.5, 5),
+              'resource',
+              [0.05, 0.25, -0.45],
+              [0.3, 0, 0],
+            ),
           ],
         };
 

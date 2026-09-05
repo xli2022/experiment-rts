@@ -108,9 +108,7 @@ describe('mineral patches', () => {
     expect(patch).toBeGreaterThanOrEqual(0);
 
     const before = sim.world.player(0).minerals;
-    sim.step([
-      { type: CommandType.Harvest, player: 0, units: workers, target: pool.idAt(patch) },
-    ]);
+    sim.step([{ type: CommandType.Harvest, player: 0, units: workers, target: pool.idAt(patch) }]);
     for (let t = 0; t < 600; t++) sim.step([]);
     expect(sim.world.player(0).minerals).toBeGreaterThan(before);
   });

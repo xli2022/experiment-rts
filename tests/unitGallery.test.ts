@@ -1,21 +1,18 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
-import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import {
-  loadAnimatedModel,
-  type AnimatedModel,
-} from "../src/render/models/animated.js";
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { loadAnimatedModel, type AnimatedModel } from '../src/render/models/animated.js';
 import {
   galleryAnimationAt,
   previewGroundOffset,
   proportionalPreviewScale,
-} from "../src/render/unitGallery.js";
+} from '../src/render/unitGallery.js';
 
-if (typeof ProgressEvent === "undefined") {
-  Object.defineProperty(globalThis, "ProgressEvent", {
+if (typeof ProgressEvent === 'undefined') {
+  Object.defineProperty(globalThis, 'ProgressEvent', {
     value: class extends Event {
       readonly lengthComputable: boolean;
       readonly loaded: number;
@@ -31,14 +28,14 @@ if (typeof ProgressEvent === "undefined") {
   });
 }
 
-const MODEL_ROOT = fileURLToPath(new URL("../public/models/", import.meta.url));
+const MODEL_ROOT = fileURLToPath(new URL('../public/models/', import.meta.url));
 const GROUNDED_UNITS = new Map<string, readonly string[]>([
-  ["FireDragon", ["foot", "toe"]],
-  ["GriffinRider", ["foot", "toe"]],
-  ["IceDragon", ["foot", "toe"]],
-  ["SkeletalDragon", ["ankle", "toe"]],
-  ["Sphinx", ["foot", "toe"]],
-  ["Treant", ["ankle"]],
+  ['FireDragon', ['foot', 'toe']],
+  ['GriffinRider', ['foot', 'toe']],
+  ['IceDragon', ['foot', 'toe']],
+  ['SkeletalDragon', ['ankle', 'toe']],
+  ['Sphinx', ['foot', 'toe']],
+  ['Treant', ['ankle']],
 ]);
 
 interface CatalogEntry {
@@ -52,7 +49,7 @@ interface Catalog {
   models: CatalogEntry[];
 }
 
-describe("unit gallery proportional scale", () => {
+describe('unit gallery proportional scale', () => {
   it("preserves Athena2's size ratio across different GLB source units", () => {
     const worldScale = 0.42;
     const authoredSmall = 0.75;
@@ -60,41 +57,36 @@ describe("unit gallery proportional scale", () => {
     const glbSmall = 28;
     const glbLarge = 415;
 
-    const renderedSmall =
-      glbSmall * proportionalPreviewScale(authoredSmall, glbSmall, worldScale);
-    const renderedLarge =
-      glbLarge * proportionalPreviewScale(authoredLarge, glbLarge, worldScale);
+    const renderedSmall = glbSmall * proportionalPreviewScale(authoredSmall, glbSmall, worldScale);
+    const renderedLarge = glbLarge * proportionalPreviewScale(authoredLarge, glbLarge, worldScale);
 
-    expect(renderedLarge / renderedSmall).toBeCloseTo(
-      authoredLarge / authoredSmall,
-      10,
-    );
+    expect(renderedLarge / renderedSmall).toBeCloseTo(authoredLarge / authoredSmall, 10);
     expect(renderedSmall).not.toBeCloseTo(renderedLarge, 5);
   });
 
-  it("retains animated-envelope grounding when no explicit plane is authored", () => {
+  it('retains animated-envelope grounding when no explicit plane is authored', () => {
     expect(previewGroundOffset(undefined, -12.5, 0.08)).toBe(1);
   });
 
   it("places each corrected unit's lowest run foot 0.02 Athena2 units above the grid", async () => {
     const catalog = JSON.parse(
-      await readFile(join(MODEL_ROOT, "all-units.json"), "utf8"),
+      await readFile(join(MODEL_ROOT, 'all-units.json'), 'utf8'),
     ) as Catalog;
     for (const [unit, tokens] of GROUNDED_UNITS) {
       const entry = catalog.models.find((candidate) => candidate.unit === unit);
       expect(entry, unit).toBeDefined();
       expect(Number.isFinite(entry?.runGroundY), unit).toBe(true);
       const bytes = await readFile(join(MODEL_ROOT, entry!.file));
-      const url = `data:model/gltf-binary;base64,${bytes.toString("base64")}`;
+      const url = `data:model/gltf-binary;base64,${bytes.toString('base64')}`;
       const [model, gltf] = await Promise.all([
-        loadAnimatedModel(url, "run"),
+        loadAnimatedModel(url, 'run'),
         new GLTFLoader().loadAsync(url),
       ]);
       try {
         const mesh = firstSkinnedMesh(gltf.scene);
-        const position = model.geometry.getAttribute("position");
-        const skinIndex = model.geometry.getAttribute("skinIndex");
-        const skinWeight = model.geometry.getAttribute("skinWeight");
+        const position = model.geometry.getAttribute('position');
+        const skinIndex = model.geometry.getAttribute('skinIndex');
+        const skinWeight = model.geometry.getAttribute('skinWeight');
         const configuredVertexCount = mesh.userData.boundsVertexCount;
         const vertexCount =
           Number.isInteger(configuredVertexCount) &&
@@ -119,12 +111,9 @@ describe("unit gallery proportional scale", () => {
           }
           if (weight >= 0.25) groundVertices.push(vertex);
         }
-        expect(
-          groundVertices.length,
-          `${unit} ground vertices`,
-        ).toBeGreaterThan(0);
+        expect(groundVertices.length, `${unit} ground vertices`).toBeGreaterThan(0);
 
-        const clip = model.clips.get("run")!;
+        const clip = model.clips.get('run')!;
         let footMinY = Infinity;
         for (let frame = 0; frame < clip.frameCount; frame++) {
           const ys = sampleVertexY(model, clip.startFrame + frame);
@@ -136,18 +125,10 @@ describe("unit gallery proportional scale", () => {
         const modelExtent = Math.max(modelSize.x, modelSize.y, modelSize.z);
         const authoredExtent = Math.max(...entry!.runSize);
         const worldScale = 0.42;
-        const scale = proportionalPreviewScale(
-          authoredExtent,
-          modelExtent,
-          worldScale,
-        );
+        const scale = proportionalPreviewScale(authoredExtent, modelExtent, worldScale);
         const renderedFootY =
           footMinY * scale +
-          previewGroundOffset(
-            entry!.runGroundY,
-            model.animatedBounds.min.y,
-            scale,
-          );
+          previewGroundOffset(entry!.runGroundY, model.animatedBounds.min.y, scale);
         expect(renderedFootY / worldScale, unit).toBeCloseTo(0.02, 6);
       } finally {
         model.geometry.dispose();
@@ -157,38 +138,38 @@ describe("unit gallery proportional scale", () => {
   });
 });
 
-describe("unit gallery attack playback", () => {
-  it("plays an attack once from frame zero before returning to the run loop", () => {
+describe('unit gallery attack playback', () => {
+  it('plays an attack once from frame zero before returning to the run loop', () => {
     expect(galleryAnimationAt(1.2, 10, 10)).toEqual({
-      clip: "attack",
+      clip: 'attack',
       time: 0,
       loop: false,
       finished: false,
     });
     expect(galleryAnimationAt(1.2, 10, 10.75)).toMatchObject({
-      clip: "attack",
+      clip: 'attack',
       time: 0.75,
       loop: false,
     });
     expect(galleryAnimationAt(1.2, 10, 11.2)).toMatchObject({
-      clip: "run",
+      clip: 'run',
       loop: true,
       finished: true,
     });
   });
 
-  it("restarts an in-progress attack on every click timestamp", () => {
+  it('restarts an in-progress attack on every click timestamp', () => {
     expect(galleryAnimationAt(1.2, 4, 4.5).time).toBeCloseTo(0.5);
     expect(galleryAnimationAt(1.2, 4.5, 4.5)).toMatchObject({
-      clip: "attack",
+      clip: 'attack',
       time: 0,
       loop: false,
     });
   });
 
-  it("gracefully keeps running when a model has no attack clip", () => {
+  it('gracefully keeps running when a model has no attack clip', () => {
     expect(galleryAnimationAt(undefined, 2, 3)).toEqual({
-      clip: "run",
+      clip: 'run',
       time: 3,
       loop: true,
       finished: false,
@@ -203,14 +184,14 @@ function firstSkinnedMesh(root: THREE.Object3D): THREE.SkinnedMesh {
       result = object as THREE.SkinnedMesh;
     }
   });
-  if (!result) throw new Error("model has no skinned mesh");
+  if (!result) throw new Error('model has no skinned mesh');
   return result;
 }
 
 function sampleVertexY(model: AnimatedModel, frame: number): Float64Array {
-  const position = model.geometry.getAttribute("position");
-  const skinIndex = model.geometry.getAttribute("skinIndex");
-  const skinWeight = model.geometry.getAttribute("skinWeight");
+  const position = model.geometry.getAttribute('position');
+  const skinIndex = model.geometry.getAttribute('skinIndex');
+  const skinWeight = model.geometry.getAttribute('skinWeight');
   const matrices = model.boneTexture.image.data as Float32Array;
   const frameOffset = frame * model.boneCount * 16;
   const blended = new THREE.Matrix4();
@@ -222,10 +203,7 @@ function sampleVertexY(model: AnimatedModel, frame: number): Float64Array {
     for (let component = 0; component < 4; component++) {
       const weight = skinWeight.getComponent(vertex, component);
       if (weight === 0) continue;
-      bone.fromArray(
-        matrices,
-        frameOffset + skinIndex.getComponent(vertex, component) * 16,
-      );
+      bone.fromArray(matrices, frameOffset + skinIndex.getComponent(vertex, component) * 16);
       for (let element = 0; element < 16; element++) {
         blended.elements[element] += bone.elements[element] * weight;
       }

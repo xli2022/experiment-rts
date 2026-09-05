@@ -186,7 +186,13 @@ export function distanceSqTo(world: World, b: number, px: Fix, py: Fix): number 
  * to whichever single tile `nearestWalkable` happened to pick for the middle of
  * the footprint, which is the long way round from three sides out of four.
  */
-export function approachPoint(world: World, b: number, px: Fix, py: Fix, out: { x: Fix; y: Fix }): void {
+export function approachPoint(
+  world: World,
+  b: number,
+  px: Fix,
+  py: Fix,
+  out: { x: Fix; y: Fix },
+): void {
   const pool = world.pool;
   const def = defOf(pool.type[b]! as EntityType);
   const bx = pool.posX[b]!;
@@ -324,7 +330,10 @@ function productionSystem(world: World): void {
     // Checked again here, not only where the rally was set: a building can be
     // raised on the rally spot afterwards, and then every unit this one trains
     // inherits a destination it can never reach.
-    if (pool.hasRally[i] === 1 && standableTarget(world, pool.rallyX[i]!, pool.rallyY[i]!, rallyOut)) {
+    if (
+      pool.hasRally[i] === 1 &&
+      standableTarget(world, pool.rallyX[i]!, pool.rallyY[i]!, rallyOut)
+    ) {
       const ui = id & 0xffff;
       pool.order[ui] = Order.Move;
       pool.orderX[ui] = rallyOut.x;
@@ -394,7 +403,10 @@ function spawnPointFor(world: World, buildingIndex: number): typeof spawnOut {
 
   // Search from the preferred tile when it is on the map at all, and from the
   // building itself when the preference fell off the edge.
-  const from = preferred >= 0 ? preferred : map.tileOfPos(pool.posX[buildingIndex]!, pool.posY[buildingIndex]!);
+  const from =
+    preferred >= 0
+      ? preferred
+      : map.tileOfPos(pool.posX[buildingIndex]!, pool.posY[buildingIndex]!);
   if (from < 0) {
     spawnOut.ok = false;
     return spawnOut;

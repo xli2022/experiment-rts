@@ -7,10 +7,10 @@
  * accessible grid.
  */
 
-import * as THREE from "three";
-import { KTX2Loader } from "three/examples/jsm/loaders/KTX2Loader.js";
-import { AnimatedUnitPool } from "./animatedUnits.js";
-import { loadAnimatedModel, type AnimatedModel } from "./models/animated.js";
+import * as THREE from 'three';
+import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
+import { AnimatedUnitPool } from './animatedUnits.js';
+import { loadAnimatedModel, type AnimatedModel } from './models/animated.js';
 
 const LOAD_CONCURRENCY = 4;
 // The original shared scale used 1.7; 2.55 keeps every proportion intact while
@@ -21,7 +21,7 @@ const PREVIEW_VIEW_HEIGHT = 3.6;
 // model against a light neutral card so dark silhouettes stay legible.
 const GALLERY_CLEAR = 0x0c131d;
 const CARD_CLEAR = 0xedf1f5;
-const FACTION_ORDER = ["Human", "Robot", "Monster", "Undead"] as const;
+const FACTION_ORDER = ['Human', 'Robot', 'Monster', 'Undead'] as const;
 type UnitFaction = (typeof FACTION_ORDER)[number];
 
 interface CatalogModel {
@@ -47,7 +47,7 @@ interface GalleryPreview {
 }
 
 export interface GalleryAnimation {
-  clip: "run" | "attack";
+  clip: 'run' | 'attack';
   time: number;
   loop: boolean;
   finished: boolean;
@@ -102,12 +102,10 @@ export class UnitGallery {
     if (this.isOpen) return;
 
     this.returnFocus =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
 
-    const overlay = document.createElement("div");
-    overlay.className = "unit-gallery-overlay interactive";
+    const overlay = document.createElement('div');
+    overlay.className = 'unit-gallery-overlay interactive';
     overlay.innerHTML = `
       <section class="unit-gallery-dialog" id="unit-gallery-dialog"
                role="dialog" aria-modal="true"
@@ -127,23 +125,20 @@ export class UnitGallery {
       </section>
     `;
     this.root.append(overlay);
-    this.root.classList.add("unit-gallery-open");
+    this.root.classList.add('unit-gallery-open');
 
     this.overlay = overlay;
-    required(overlay, ".unit-gallery-dialog");
-    this.scroll = required(overlay, ".unit-gallery-scroll");
-    this.groups = required(overlay, ".unit-gallery-groups");
-    this.status = required(overlay, ".unit-gallery-status");
-    this.closeButton = required(
-      overlay,
-      ".unit-gallery-close",
-    ) as HTMLButtonElement;
+    required(overlay, '.unit-gallery-dialog');
+    this.scroll = required(overlay, '.unit-gallery-scroll');
+    this.groups = required(overlay, '.unit-gallery-groups');
+    this.status = required(overlay, '.unit-gallery-status');
+    this.closeButton = required(overlay, '.unit-gallery-close') as HTMLButtonElement;
 
-    this.closeButton.addEventListener("click", () => this.close());
-    overlay.addEventListener("pointerdown", (event) => {
+    this.closeButton.addEventListener('click', () => this.close());
+    overlay.addEventListener('pointerdown', (event) => {
       if (event.target === overlay) this.close();
     });
-    overlay.addEventListener("keydown", this.handleModalKey);
+    overlay.addEventListener('keydown', this.handleModalKey);
     this.closeButton.focus();
 
     const session: LoadSession = {
@@ -193,17 +188,9 @@ export class UnitGallery {
 
         const rect = slot.getBoundingClientRect();
         const clipLeft = Math.max(rect.left, scrollRect.left, canvasRect.left);
-        const clipRight = Math.min(
-          rect.right,
-          scrollRect.right,
-          canvasRect.right,
-        );
+        const clipRight = Math.min(rect.right, scrollRect.right, canvasRect.right);
         const clipTop = Math.max(rect.top, scrollRect.top, canvasRect.top);
-        const clipBottom = Math.min(
-          rect.bottom,
-          scrollRect.bottom,
-          canvasRect.bottom,
-        );
+        const clipBottom = Math.min(rect.bottom, scrollRect.bottom, canvasRect.bottom);
         if (clipRight <= clipLeft || clipBottom <= clipTop) continue;
 
         const viewportX = rect.left - canvasRect.left;
@@ -212,12 +199,7 @@ export class UnitGallery {
         const scissorY = canvasRect.bottom - clipBottom;
 
         renderer.setViewport(viewportX, viewportY, rect.width, rect.height);
-        renderer.setScissor(
-          scissorX,
-          scissorY,
-          clipRight - clipLeft,
-          clipBottom - clipTop,
-        );
+        renderer.setScissor(scissorX, scissorY, clipRight - clipLeft, clipBottom - clipTop);
         renderer.setScissorTest(true);
         renderer.setClearColor(CARD_CLEAR, 1);
         renderer.clear(true, true, true);
@@ -231,7 +213,7 @@ export class UnitGallery {
         preview.camera.updateProjectionMatrix();
 
         const animation = galleryAnimationAt(
-          preview.model.clips.get("attack")?.duration,
+          preview.model.clips.get('attack')?.duration,
           preview.attackStartedAt,
           elapsedSeconds,
         );
@@ -259,7 +241,7 @@ export class UnitGallery {
 
   /** Close the modal, stop scheduling loads, and release every owned resource. */
   close(): void {
-    this.root.classList.remove("unit-gallery-open");
+    this.root.classList.remove('unit-gallery-open');
     if (!this.overlay) return;
 
     const session = this.session;
@@ -278,7 +260,7 @@ export class UnitGallery {
     this.buttons.length = 0;
     this.slots.length = 0;
 
-    this.overlay.removeEventListener("keydown", this.handleModalKey);
+    this.overlay.removeEventListener('keydown', this.handleModalKey);
     this.overlay.remove();
     this.overlay = null;
     this.scroll = null;
@@ -299,19 +281,14 @@ export class UnitGallery {
     // The modal is presentation-only: none of its keystrokes may issue commands
     // to the match underneath it.
     event.stopPropagation();
-    if (event.key === "Escape") {
+    if (event.key === 'Escape') {
       event.preventDefault();
       this.close();
       return;
     }
-    if (event.key === "Tab" && this.closeButton) {
-      const controls = [
-        this.closeButton,
-        ...this.buttons.filter((button) => !button.disabled),
-      ];
-      const current = controls.indexOf(
-        document.activeElement as HTMLButtonElement,
-      );
+    if (event.key === 'Tab' && this.closeButton) {
+      const controls = [this.closeButton, ...this.buttons.filter((button) => !button.disabled)];
+      const current = controls.indexOf(document.activeElement as HTMLButtonElement);
       const last = controls.length - 1;
       if (current < 0) {
         event.preventDefault();
@@ -328,16 +305,13 @@ export class UnitGallery {
 
   private async load(session: LoadSession): Promise<void> {
     try {
-      const response = await fetch(modelAssetUrl("all-units.json"), {
+      const response = await fetch(modelAssetUrl('all-units.json'), {
         signal: session.abort.signal,
       });
-      if (!response.ok)
-        throw new Error(`unit list returned ${response.status}`);
+      if (!response.ok) throw new Error(`unit list returned ${response.status}`);
       const entries = parseCatalog(await response.json());
       if (session.cancelled) return;
-      const largestRunExtent = Math.max(
-        ...entries.flatMap((entry) => entry.runSize),
-      );
+      const largestRunExtent = Math.max(...entries.flatMap((entry) => entry.runSize));
       const worldScale = PREVIEW_LARGEST_MODEL_SIZE / largestRunExtent;
 
       session.total = entries.length;
@@ -355,26 +329,22 @@ export class UnitGallery {
         }
       };
       await Promise.all(
-        Array.from({ length: Math.min(LOAD_CONCURRENCY, entries.length) }, () =>
-          worker(),
-        ),
+        Array.from({ length: Math.min(LOAD_CONCURRENCY, entries.length) }, () => worker()),
       );
       skinLoader.dispose();
 
       if (!session.cancelled && this.groups) {
-        this.groups.setAttribute("aria-busy", "false");
+        this.groups.setAttribute('aria-busy', 'false');
         this.updateProgress(session);
       }
     } catch (error) {
       if (session.cancelled || isAbort(error)) return;
-      if (this.status)
-        this.status.textContent = "Unit models could not be loaded.";
+      if (this.status) this.status.textContent = 'Unit models could not be loaded.';
       if (this.groups) {
-        this.groups.setAttribute("aria-busy", "false");
-        const message = document.createElement("p");
-        message.className = "unit-gallery-catalog-error";
-        message.textContent =
-          error instanceof Error ? error.message : String(error);
+        this.groups.setAttribute('aria-busy', 'false');
+        const message = document.createElement('p');
+        message.className = 'unit-gallery-catalog-error';
+        message.textContent = error instanceof Error ? error.message : String(error);
         this.groups.replaceChildren(message);
       }
     }
@@ -386,73 +356,69 @@ export class UnitGallery {
 
     this.observer?.disconnect();
     this.observer =
-      typeof IntersectionObserver === "undefined"
+      typeof IntersectionObserver === 'undefined'
         ? null
         : new IntersectionObserver(
             (changes) => {
               for (const change of changes) {
-                const index = Number(
-                  (change.target as HTMLElement).dataset.galleryIndex,
-                );
+                const index = Number((change.target as HTMLElement).dataset.galleryIndex);
                 if (change.isIntersecting) this.visible.add(index);
                 else this.visible.delete(index);
               }
             },
-            { root: this.scroll, rootMargin: "80px" },
+            { root: this.scroll, rootMargin: '80px' },
           );
 
     const factionGrids = new Map<UnitFaction, HTMLElement>();
     for (const faction of FACTION_ORDER) {
-      const section = document.createElement("section");
-      section.className = "unit-gallery-faction";
-      const heading = document.createElement("h2");
+      const section = document.createElement('section');
+      section.className = 'unit-gallery-faction';
+      const heading = document.createElement('h2');
       const headingId = `unit-gallery-faction-${faction.toLowerCase()}`;
       heading.id = headingId;
-      heading.className = "unit-gallery-faction-title";
+      heading.className = 'unit-gallery-faction-title';
       heading.textContent = faction;
 
-      const count = document.createElement("span");
-      const factionCount = entries.filter(
-        (entry) => entry.faction === faction,
-      ).length;
+      const count = document.createElement('span');
+      const factionCount = entries.filter((entry) => entry.faction === faction).length;
       count.textContent = `${factionCount} units`;
       heading.append(count);
 
-      const grid = document.createElement("div");
-      grid.className = "unit-gallery-grid";
-      grid.setAttribute("role", "list");
-      section.setAttribute("aria-labelledby", headingId);
+      const grid = document.createElement('div');
+      grid.className = 'unit-gallery-grid';
+      grid.setAttribute('role', 'list');
+      section.setAttribute('aria-labelledby', headingId);
       section.append(heading, grid);
       this.groups.append(section);
       factionGrids.set(faction, grid);
     }
 
     entries.forEach((entry, index) => {
-      const card = document.createElement("article");
-      card.className = "unit-gallery-card";
-      card.setAttribute("role", "listitem");
-      const button = document.createElement("button");
-      button.className = "unit-gallery-card-button";
-      button.type = "button";
+      const card = document.createElement('article');
+      card.className = 'unit-gallery-card';
+      card.setAttribute('role', 'listitem');
+      const button = document.createElement('button');
+      button.className = 'unit-gallery-card-button';
+      button.type = 'button';
       button.disabled = true;
       button.setAttribute(
-        "aria-label",
+        'aria-label',
         `${entry.unit}, ${entry.faction} faction model preview. Play attack animation`,
       );
-      button.addEventListener("click", () => this.playAttack(index));
+      button.addEventListener('click', () => this.playAttack(index));
 
-      const slot = document.createElement("div");
-      slot.className = "unit-gallery-preview";
+      const slot = document.createElement('div');
+      slot.className = 'unit-gallery-preview';
       slot.dataset.galleryIndex = String(index);
-      slot.setAttribute("aria-hidden", "true");
+      slot.setAttribute('aria-hidden', 'true');
 
-      const placeholder = document.createElement("span");
-      placeholder.className = "unit-gallery-placeholder";
-      placeholder.textContent = "Loading…";
+      const placeholder = document.createElement('span');
+      placeholder.className = 'unit-gallery-placeholder';
+      placeholder.textContent = 'Loading…';
       slot.append(placeholder);
 
-      const label = document.createElement("div");
-      label.className = "unit-gallery-label";
+      const label = document.createElement('div');
+      label.className = 'unit-gallery-label';
       label.textContent = entry.unit;
       button.append(slot, label);
       card.append(button);
@@ -475,8 +441,8 @@ export class UnitGallery {
     let texture: THREE.Texture | null = null;
     try {
       model = await loadAnimatedModel(modelAssetUrl(entry.file), {
-        clips: ["run", "attack"],
-        boundsClip: "run",
+        clips: ['run', 'attack'],
+        boundsClip: 'run',
       });
       if (session.cancelled) return;
 
@@ -489,28 +455,22 @@ export class UnitGallery {
       }
       if (session.cancelled) return;
 
-      const preview = createPreview(
-        model,
-        texture,
-        entry.runSize,
-        worldScale,
-        entry.runGroundY,
-      );
+      const preview = createPreview(model, texture, entry.runSize, worldScale, entry.runGroundY);
       this.previews.set(index, preview);
       model = null;
       texture = null;
       const card = this.cards[index];
       const button = this.buttons[index];
-      card?.classList.add("loaded");
+      card?.classList.add('loaded');
       if (button) button.disabled = false;
     } catch (error) {
       session.failed++;
       if (!session.cancelled) {
         const card = this.cards[index];
         if (card) {
-          card.classList.add("error");
-          const placeholder = card.querySelector(".unit-gallery-placeholder");
-          if (placeholder) placeholder.textContent = "Unavailable";
+          card.classList.add('error');
+          const placeholder = card.querySelector('.unit-gallery-placeholder');
+          if (placeholder) placeholder.textContent = 'Unavailable';
           card.title = error instanceof Error ? error.message : String(error);
         }
       }
@@ -525,7 +485,7 @@ export class UnitGallery {
   private updateProgress(session: LoadSession): void {
     if (!this.status) return;
     if (session.total === 0) {
-      this.status.textContent = "Loading unit list…";
+      this.status.textContent = 'Loading unit list…';
       return;
     }
     if (session.completed < session.total) {
@@ -536,14 +496,13 @@ export class UnitGallery {
     const ready = session.total - session.failed;
     const notes: string[] = [`${ready} models ready`];
     if (session.failed > 0) notes.push(`${session.failed} unavailable`);
-    if (session.untextured > 0)
-      notes.push(`${session.untextured} without team skin`);
-    this.status.textContent = notes.join(" · ");
+    if (session.untextured > 0) notes.push(`${session.untextured} without team skin`);
+    this.status.textContent = notes.join(' · ');
   }
 
   private playAttack(index: number): void {
     const preview = this.previews.get(index);
-    if (!preview?.model.clips.has("attack")) return;
+    if (!preview?.model.clips.has('attack')) return;
     // Assigning on every click intentionally restarts the clip from frame zero,
     // including when the previous one-shot is still in progress.
     preview.attackStartedAt = this.elapsedSeconds;
@@ -560,17 +519,9 @@ function createPreview(
   const size = model.firstFrameBounds.getSize(new THREE.Vector3());
   const modelExtent = Math.max(0.001, size.x, size.y, size.z);
   const authoredExtent = Math.max(...authoredRunSize);
-  const scale = proportionalPreviewScale(
-    authoredExtent,
-    modelExtent,
-    worldScale,
-  );
+  const scale = proportionalPreviewScale(authoredExtent, modelExtent, worldScale);
   const center = model.animatedBounds.getCenter(new THREE.Vector3());
-  const groundOffset = previewGroundOffset(
-    runGroundY,
-    model.animatedBounds.min.y,
-    scale,
-  );
+  const groundOffset = previewGroundOffset(runGroundY, model.animatedBounds.min.y, scale);
 
   const matrix = new THREE.Matrix4().compose(
     new THREE.Vector3(-center.x * scale, groundOffset, -center.z * scale),
@@ -596,9 +547,7 @@ function createPreview(
   // Two Athena2 world units in every card: the identical guide and camera make
   // the size difference between a Parasite and a dragon visible at a glance.
   const guide = new THREE.GridHelper(2 * worldScale, 2, 0x778597, 0xaeb8c4);
-  const guideMaterials = Array.isArray(guide.material)
-    ? guide.material
-    : [guide.material];
+  const guideMaterials = Array.isArray(guide.material) ? guide.material : [guide.material];
   for (const guideMaterial of guideMaterials) {
     guideMaterial.transparent = true;
     guideMaterial.opacity = 0.55;
@@ -637,21 +586,21 @@ export function galleryAnimationAt(
     const attackTime = Math.max(0, elapsedSeconds - attackStartedAt);
     if (attackTime < attackDuration - Number.EPSILON * 16) {
       return {
-        clip: "attack",
+        clip: 'attack',
         time: attackTime,
         loop: false,
         finished: false,
       };
     }
     return {
-      clip: "run",
+      clip: 'run',
       time: elapsedSeconds,
       loop: true,
       finished: true,
     };
   }
   return {
-    clip: "run",
+    clip: 'run',
     time: elapsedSeconds,
     loop: true,
     finished: false,
@@ -699,26 +648,25 @@ function modelAssetUrl(file: string): string {
 
 function parseCatalog(value: unknown): CatalogModel[] {
   if (!isRecord(value) || value.version !== 2 || !Array.isArray(value.models)) {
-    throw new Error("all-units.json is not a version 2 model catalog");
+    throw new Error('all-units.json is not a version 2 model catalog');
   }
 
   return value.models.map((candidate, index) => {
     if (
       !isRecord(candidate) ||
-      typeof candidate.unit !== "string" ||
+      typeof candidate.unit !== 'string' ||
       !isFaction(candidate.faction) ||
-      typeof candidate.file !== "string" ||
+      typeof candidate.file !== 'string' ||
       !Array.isArray(candidate.skins) ||
-      typeof candidate.skins[0] !== "string" ||
-      typeof candidate.skins[1] !== "string" ||
+      typeof candidate.skins[0] !== 'string' ||
+      typeof candidate.skins[1] !== 'string' ||
       !Array.isArray(candidate.runSize) ||
       candidate.runSize.length !== 3 ||
       !candidate.runSize.every(
-        (size) => typeof size === "number" && Number.isFinite(size) && size > 0,
+        (size) => typeof size === 'number' && Number.isFinite(size) && size > 0,
       ) ||
       (candidate.runGroundY !== undefined &&
-        (typeof candidate.runGroundY !== "number" ||
-          !Number.isFinite(candidate.runGroundY)))
+        (typeof candidate.runGroundY !== 'number' || !Number.isFinite(candidate.runGroundY)))
     ) {
       throw new Error(`all-units.json model ${index} is malformed`);
     }
@@ -727,14 +675,8 @@ function parseCatalog(value: unknown): CatalogModel[] {
       faction: candidate.faction,
       file: candidate.file,
       skins: [candidate.skins[0], candidate.skins[1]],
-      runSize: [
-        candidate.runSize[0],
-        candidate.runSize[1],
-        candidate.runSize[2],
-      ],
-      ...(candidate.runGroundY === undefined
-        ? {}
-        : { runGroundY: candidate.runGroundY }),
+      runSize: [candidate.runSize[0], candidate.runSize[1], candidate.runSize[2]],
+      ...(candidate.runGroundY === undefined ? {} : { runGroundY: candidate.runGroundY }),
     };
   });
 }
@@ -744,11 +686,11 @@ function isFaction(value: unknown): value is UnitFaction {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === 'object' && value !== null;
 }
 
 function isAbort(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
+  return error instanceof DOMException && error.name === 'AbortError';
 }
 
 function required(root: HTMLElement, selector: string): HTMLElement {

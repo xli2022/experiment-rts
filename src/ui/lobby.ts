@@ -27,11 +27,7 @@
 
 import { joinLocalRoom } from '../net/broadcastChannelTransport.js';
 import { SoloTransport } from '../net/localTransport.js';
-import {
-  generateRoomCode,
-  joinOnlineRoom,
-  seedFromRoomCode,
-} from '../net/trysteroTransport.js';
+import { generateRoomCode, joinOnlineRoom, seedFromRoomCode } from '../net/trysteroTransport.js';
 import type { Transport } from '../net/transport.js';
 import { coopMatch, duelMatch } from '../sim/match.js';
 import { BotDifficulty, type MatchConfig } from '../sim/types.js';
@@ -237,8 +233,7 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
           {
             label: 'Start match',
             primary: true,
-            run: () =>
-              start(new SoloTransport(), { kind: 'skirmish', difficulty }, randomSeed()),
+            run: () => start(new SoloTransport(), { kind: 'skirmish', difficulty }, randomSeed()),
           },
         ],
         back: menu,

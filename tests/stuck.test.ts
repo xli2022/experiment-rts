@@ -334,7 +334,9 @@ describe('pathing invariants over a whole match', () => {
         if (dt < 0 || !map.isWalkable(map.tileXOf(dt), map.tileYOf(dt))) badDest++;
       }
     }
-    expect(`${onRock} on rock, ${badDest} ordered onto rock`).toBe('0 on rock, 0 ordered onto rock');
+    expect(`${onRock} on rock, ${badDest} ordered onto rock`).toBe(
+      '0 on rock, 0 ordered onto rock',
+    );
   });
 
   it('never leaves a unit holding one move order for a whole match', () => {

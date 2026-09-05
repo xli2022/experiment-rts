@@ -781,8 +781,7 @@ const FLIGHT_CLEARANCE = 0.35;
  * elevation and Beamdrones ended up flying through ridges. The margin covers the
  * model's underhang, the hover bob, and a visible gap on top.
  */
-export const FLIGHT_ALTITUDE =
-  MAX_CLIFF_HEIGHT + FLYER_UNDERHANG + FLYER_BOB + FLIGHT_CLEARANCE;
+export const FLIGHT_ALTITUDE = MAX_CLIFF_HEIGHT + FLYER_UNDERHANG + FLYER_BOB + FLIGHT_CLEARANCE;
 
 /** The exact visual altitude used by both aircraft and their weapon effects. */
 export function flyerAltitudeAt(elapsedS: number, slotIndex: number): number {

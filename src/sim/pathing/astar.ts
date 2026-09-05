@@ -98,12 +98,7 @@ export class AStar {
    * units path around buildings but through each other, with local separation
    * handling the overlap.
    */
-  find(
-    map: GameMap,
-    startIndex: number,
-    goalIndex: number,
-    out: number[] = [],
-  ): number[] {
+  find(map: GameMap, startIndex: number, goalIndex: number, out: number[] = []): number[] {
     out.length = 0;
     if (startIndex < 0 || goalIndex < 0) return out;
     if (startIndex === goalIndex) return out;
@@ -117,7 +112,10 @@ export class AStar {
     this.gScore[startIndex] = 0;
     this.cameFrom[startIndex] = -1;
     this.stampAt[startIndex] = this.stamp;
-    this.push(this.heuristic(startIndex % this.width, (startIndex / this.width) | 0, gx, gy), startIndex);
+    this.push(
+      this.heuristic(startIndex % this.width, (startIndex / this.width) | 0, gx, gy),
+      startIndex,
+    );
 
     let expansions = 0;
     let found = false;

@@ -55,7 +55,8 @@ describe('clicking a unit', () => {
       const x = spot.x + 0.5;
       const z = spot.y + 0.5;
       const idx =
-        sim.world.pool.spawn(type, 0 as PlayerId, Math.round(x * FIX), Math.round(z * FIX)) & 0xffff;
+        sim.world.pool.spawn(type, 0 as PlayerId, Math.round(x * FIX), Math.round(z * FIX)) &
+        0xffff;
 
       const ring = toFloat(defOf(type).radius) * RING_OVERSIZE;
       const cam = cameraOver(x, z);
@@ -63,9 +64,9 @@ describe('clicking a unit', () => {
       const inside = ndcOf(cam, x + ring * 0.8, z);
       const outside = ndcOf(cam, x + ring * 1.4, z);
 
-      expect(`${defOf(type).name} inside: ${pickAt(sim.world, cam, inside.x, inside.y, 0) === idx}`).toBe(
-        `${defOf(type).name} inside: true`,
-      );
+      expect(
+        `${defOf(type).name} inside: ${pickAt(sim.world, cam, inside.x, inside.y, 0) === idx}`,
+      ).toBe(`${defOf(type).name} inside: true`);
       expect(
         `${defOf(type).name} outside: ${pickAt(sim.world, cam, outside.x, outside.y, 0) === idx}`,
       ).toBe(`${defOf(type).name} outside: false`);
@@ -126,9 +127,9 @@ describe('clicking a unit', () => {
       [-1.8, -1.8],
     ]) {
       const p = ndcOf(cam, x + dx!, z + dz!);
-      expect(`(${dx},${dz}) picks the Command Post: ${pickAt(sim.world, cam, p.x, p.y, 0) === cp}`).toBe(
-        `(${dx},${dz}) picks the Command Post: true`,
-      );
+      expect(
+        `(${dx},${dz}) picks the Command Post: ${pickAt(sim.world, cam, p.x, p.y, 0) === cp}`,
+      ).toBe(`(${dx},${dz}) picks the Command Post: true`);
     }
 
     // And well outside it does not.
@@ -239,7 +240,12 @@ describe('selection identity across slot reuse', () => {
     return { sim, sel: new Selection(0 as PlayerId), spot: clearSpot(sim) };
   }
 
-  function spawn(sim: Simulation, spot: { x: number; y: number }, type: EntityType, k: number): number {
+  function spawn(
+    sim: Simulation,
+    spot: { x: number; y: number },
+    type: EntityType,
+    k: number,
+  ): number {
     return (
       sim.world.pool.spawn(
         type,
@@ -301,7 +307,9 @@ describe('selection identity across slot reuse', () => {
 
     sel.clear();
     expect(sel.recallGroup(1, sim.world)).toBe('selected');
-    expect([...sel.indices].sort((a, b) => a - b)).toEqual([ids[0]!, ids[2]!].sort((a, b) => a - b));
+    expect([...sel.indices].sort((a, b) => a - b)).toEqual(
+      [ids[0]!, ids[2]!].sort((a, b) => a - b),
+    );
   });
 
   it('drops a selected unit whose slot was reused, rather than adopting the newcomer', () => {

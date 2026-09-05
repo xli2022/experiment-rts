@@ -170,7 +170,8 @@ export class FogRenderer {
       const dst = (this.height - 1 - tz) * this.width;
       for (let tx = 0; tx < this.width; tx++) {
         const s = state[src + tx]!;
-        px[(dst + tx) * 4 + 3] = s === VISIBLE ? 0 : s === EXPLORED ? EXPLORED_ALPHA : UNEXPLORED_ALPHA;
+        px[(dst + tx) * 4 + 3] =
+          s === VISIBLE ? 0 : s === EXPLORED ? EXPLORED_ALPHA : UNEXPLORED_ALPHA;
       }
     }
     this.texture.needsUpdate = true;
@@ -208,10 +209,7 @@ export class FogRenderer {
         Math.floor(toFloat(world.pool.posY[index]!)),
       );
     }
-    return this.isVisibleAt(
-      toFloat(world.pool.posX[index]!),
-      toFloat(world.pool.posY[index]!),
-    );
+    return this.isVisibleAt(toFloat(world.pool.posX[index]!), toFloat(world.pool.posY[index]!));
   }
 
   dispose(): void {

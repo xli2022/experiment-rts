@@ -145,9 +145,7 @@ describe('delivering to a Command Post', () => {
     }
 
     const start = sim.world.players[0]!.minerals;
-    sim.step([
-      { type: CommandType.Harvest, player: 0, units: workers, target: pool.idAt(patch) },
-    ]);
+    sim.step([{ type: CommandType.Harvest, player: 0, units: workers, target: pool.idAt(patch) }]);
     for (let t = 0; t < 2000; t++) sim.step([]);
     const mined = sim.world.players[0]!.minerals - start;
 

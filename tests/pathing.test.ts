@@ -108,9 +108,7 @@ describe('flow field', () => {
     expect(field.dist[map.index(17, 16)]).toBe(10);
     expect(field.dist[map.index(17, 17)]).toBe(14);
     // Further away is strictly greater.
-    expect(field.dist[map.index(24, 16)]!).toBeGreaterThan(
-      field.dist[map.index(20, 16)]!,
-    );
+    expect(field.dist[map.index(24, 16)]!).toBeGreaterThan(field.dist[map.index(20, 16)]!);
   });
 
   it('marks sealed-off regions unreachable', () => {

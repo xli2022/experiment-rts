@@ -15,7 +15,12 @@ import { toFloat } from '../sim/fixed.js';
 import { BuildState, EntityType, NEUTRAL, TICKS_PER_SECOND, type PlayerId } from '../sim/types.js';
 import type { World } from '../sim/world.js';
 import { colourSlotFor, PLAYER_COLOURS, RESOURCE_COLOUR } from '../render/models/procedural.js';
-import { fullscreenSupported, isFullscreen, onFullscreenChange, toggleFullscreen } from './fullscreen.js';
+import {
+  fullscreenSupported,
+  isFullscreen,
+  onFullscreenChange,
+  toggleFullscreen,
+} from './fullscreen.js';
 import { audio } from '../audio/audio.js';
 import { activityOf } from './status.js';
 
@@ -58,7 +63,8 @@ export class Hud {
   private minimapFrame = 0;
 
   /** One row per partner in the ally strip, in slot order. */
-  private readonly allyRows: { player: PlayerId; minerals: HTMLElement; supply: HTMLElement }[] = [];
+  private readonly allyRows: { player: PlayerId; minerals: HTMLElement; supply: HTMLElement }[] =
+    [];
 
   constructor(
     root: HTMLElement,
@@ -216,8 +222,13 @@ export class Hud {
     // Panels swallow pointer events so a click on the command card never also
     // issues a world order behind it.
     for (const sel of [
-      '#resources', '#allies', '#minimap-panel', '#command-panel',
-      '#fullscreen-btn', '#mute-btn', '#surrender-btn',
+      '#resources',
+      '#allies',
+      '#minimap-panel',
+      '#command-panel',
+      '#fullscreen-btn',
+      '#mute-btn',
+      '#surrender-btn',
     ]) {
       const panel = must(root, sel);
       panel.classList.add('interactive');
@@ -272,7 +283,8 @@ export class Hud {
     // silently stops, so it gets a colour rather than needing to be noticed.
     this.supplyValue.classList.toggle(
       'supply-capped',
-      (ps.supplyUsed >= ps.supplyMax && ps.supplyMax > 0) || anySupplyBlocked(world, this.localPlayer),
+      (ps.supplyUsed >= ps.supplyMax && ps.supplyMax > 0) ||
+        anySupplyBlocked(world, this.localPlayer),
     );
 
     // A partner's bank and supply, because in co-op the useful question is
@@ -443,7 +455,11 @@ export class Hud {
     this.banner.style.display = 'none';
   }
 
-  showDialog(title: string, body: string, actions: { label: string; primary?: boolean; onClick: () => void }[]): void {
+  showDialog(
+    title: string,
+    body: string,
+    actions: { label: string; primary?: boolean; onClick: () => void }[],
+  ): void {
     this.overlay.classList.remove('hidden');
     this.overlay.innerHTML = `<div class="dialog"><h1></h1><p></p></div>`;
     const dialog = this.overlay.querySelector('.dialog')!;
@@ -479,7 +495,10 @@ export class Hud {
     focusX: number,
     focusZ: number,
     viewRadius: number,
-    fog?: { isExploredAt(tx: number, tz: number): boolean; isVisibleAt(x: number, z: number): boolean },
+    fog?: {
+      isExploredAt(tx: number, tz: number): boolean;
+      isVisibleAt(x: number, z: number): boolean;
+    },
   ): void {
     if (this.minimapFrame++ % 4 !== 0) return;
 

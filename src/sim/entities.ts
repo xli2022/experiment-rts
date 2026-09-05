@@ -24,14 +24,7 @@
 import { checksumArray, checksumU32 } from './checksum.js';
 import { defOf, MAX_PRODUCTION_QUEUE } from '../config/rules.js';
 import type { Fix } from './fixed.js';
-import {
-  BuildState,
-  EntityType,
-  NO_ENTITY,
-  Order,
-  type EntityId,
-  type PlayerId,
-} from './types.js';
+import { BuildState, EntityType, NO_ENTITY, Order, type EntityId, type PlayerId } from './types.js';
 
 /**
  * Maximum simultaneous entities.

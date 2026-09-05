@@ -97,10 +97,7 @@ describe('simulation determinism boundary', () => {
       const imports = [...code.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1]!);
       for (const spec of imports) {
         // The simulation may import itself and the balance tables, nothing else.
-        const ok =
-          spec.startsWith('./') ||
-          spec.startsWith('../') ||
-          spec === 'node:fs';
+        const ok = spec.startsWith('./') || spec.startsWith('../') || spec === 'node:fs';
         const reachesOutside =
           spec.includes('../render') ||
           spec.includes('../ui') ||

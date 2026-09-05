@@ -216,8 +216,12 @@ describe('the signal behind it', () => {
  * A stand-in for a baked model. `framesForPose` only ever reads the clip table,
  * so the texture, geometry and skeleton are irrelevant here.
  */
-function fakeModel(clips: Record<string, { startFrame: number; frameCount: number; duration: number }>) {
-  return { clips: new Map(Object.entries(clips)) } as unknown as Parameters<typeof framesForPose>[0];
+function fakeModel(
+  clips: Record<string, { startFrame: number; frameCount: number; duration: number }>,
+) {
+  return { clips: new Map(Object.entries(clips)) } as unknown as Parameters<
+    typeof framesForPose
+  >[0];
 }
 
 describe('resolving a pose to bone-texture rows', () => {

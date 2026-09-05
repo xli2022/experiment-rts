@@ -289,9 +289,7 @@ function survey(world: World, player: PlayerId): Survey {
 
     const def = defOf(type);
     const isArmy =
-      type === EntityType.Burstbot ||
-      type === EntityType.Slicebot ||
-      type === EntityType.Beamdrone;
+      type === EntityType.Burstbot || type === EntityType.Slicebot || type === EntityType.Beamdrone;
 
     if (!world.areAllied(owner, player)) {
       // Prefer structures as attack targets; killing buildings is what wins.
@@ -445,12 +443,7 @@ function nearestThreat(
 }
 
 /** Any worker with nothing to do goes back to the nearest live patch. */
-function keepWorkersBusy(
-  world: World,
-  player: PlayerId,
-  s: Survey,
-  cmds: Command[],
-): void {
+function keepWorkersBusy(world: World, player: PlayerId, s: Survey, cmds: Command[]): void {
   if (s.patches.length === 0) return;
   const pool = world.pool;
 
@@ -598,8 +591,7 @@ function manageConstruction(
 
   // An expansion goes on its site; everything else goes next to the base it
   // supports.
-  const site =
-    want === EntityType.CommandPost ? expansionSite(world, player, s, tuning) : null;
+  const site = want === EntityType.CommandPost ? expansionSite(world, player, s, tuning) : null;
   const spot = site ?? findBuildSpot(world, pool.tileX[hq]!, pool.tileY[hq]!, def.footprint);
   if (!spot) return;
 
@@ -695,12 +687,7 @@ function sq(v: number): number {
 }
 
 /** Send a worker to any construction site nobody is working on. */
-function staffOrphanedSites(
-  world: World,
-  player: PlayerId,
-  s: Survey,
-  cmds: Command[],
-): void {
+function staffOrphanedSites(world: World, player: PlayerId, s: Survey, cmds: Command[]): void {
   if (s.sites.length === 0) return;
   const pool = world.pool;
 
@@ -809,12 +796,7 @@ function findBuildSpot(
  * flush against each other, so walkable lanes always survive between them and
  * the base cannot be accidentally sealed shut.
  */
-function hasClearMoat(
-  world: World,
-  tileX: number,
-  tileY: number,
-  footprint: number,
-): boolean {
+function hasClearMoat(world: World, tileX: number, tileY: number, footprint: number): boolean {
   for (let y = tileY - 1; y <= tileY + footprint; y++) {
     for (let x = tileX - 1; x <= tileX + footprint; x++) {
       const onPerimeter =

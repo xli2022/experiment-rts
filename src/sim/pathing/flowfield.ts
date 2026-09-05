@@ -203,7 +203,6 @@ export class FlowField {
   isStranded(tile: number): boolean {
     return this.dist[tile] === UNREACHABLE;
   }
-
 }
 
 /**

@@ -169,8 +169,7 @@ describe('weapon reach', () => {
       }
     }
     const spawnX = pool.posX[post]! + Math.round(3.2 * FIX);
-    const slicebot =
-      pool.spawn(EntityType.Slicebot, 0, spawnX, pool.posY[post]!) & 0xffff;
+    const slicebot = pool.spawn(EntityType.Slicebot, 0, spawnX, pool.posY[post]!) & 0xffff;
     const hp0 = pool.hp[post]!;
 
     sim.step([

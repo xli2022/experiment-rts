@@ -160,8 +160,7 @@ export class Selection {
     // group that lost a member reads as a different set every time.
     this.prune(world);
     const wanted = live.map((id) => idIndex(id));
-    const already =
-      wanted.length === this.indices.size && wanted.every((i) => this.indices.has(i));
+    const already = wanted.length === this.indices.size && wanted.every((i) => this.indices.has(i));
 
     this.set(wanted, world);
     return already ? 'again' : 'selected';

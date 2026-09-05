@@ -20,14 +20,7 @@
  */
 
 export type SoundName =
-  | 'shot'
-  | 'explosion'
-  | 'death'
-  | 'select'
-  | 'order'
-  | 'build'
-  | 'ready'
-  | 'denied';
+  'shot' | 'explosion' | 'death' | 'select' | 'order' | 'build' | 'ready' | 'denied';
 
 /** Simultaneous voices. Beyond this, new sounds are dropped rather than queued. */
 const MAX_VOICES = 24;

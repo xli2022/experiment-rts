@@ -94,7 +94,9 @@ describe('what a worker is doing', () => {
     // Walking first, building second, and never the other way round.
     expect(seen[0]).toBe(`walking to ${DEPOT} site`);
     expect(seen).toContain(`building ${DEPOT}`);
-    expect(seen.indexOf(`building ${DEPOT}`)).toBeGreaterThan(seen.indexOf(`walking to ${DEPOT} site`));
+    expect(seen.indexOf(`building ${DEPOT}`)).toBeGreaterThan(
+      seen.indexOf(`walking to ${DEPOT} site`),
+    );
 
     // And it never claimed to be building before it got there.
     expect(seen.slice(0, seen.indexOf(`building ${DEPOT}`))).not.toContain(`building ${DEPOT}`);

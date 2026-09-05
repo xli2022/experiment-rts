@@ -15,13 +15,7 @@ import { defOf } from '../../src/config/rules.js';
 import { idIndex } from '../../src/sim/entities.js';
 import { fromInt } from '../../src/sim/fixed.js';
 import { Rng } from '../../src/sim/rng.js';
-import {
-  BuildState,
-  EntityType,
-  NO_ENTITY,
-  Order,
-  type MatchConfig,
-} from '../../src/sim/types.js';
+import { BuildState, EntityType, NO_ENTITY, Order, type MatchConfig } from '../../src/sim/types.js';
 import { Simulation } from '../../src/sim/tick.js';
 import type { World } from '../../src/sim/world.js';
 
@@ -315,7 +309,9 @@ export function replayMatch(match: MatchConfig | number, log: CommandLog): numbe
 }
 
 export function cloneCommands(commands: Command[]): Command[] {
-  return commands.map((c) => ({ ...c, ...('units' in c ? { units: [...c.units] } : {}) }) as Command);
+  return commands.map(
+    (c) => ({ ...c, ...('units' in c ? { units: [...c.units] } : {}) }) as Command,
+  );
 }
 
 /** Summarise a world, for failure messages that say something useful. */

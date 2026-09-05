@@ -21,8 +21,8 @@
  * neither is visible.
  */
 
-import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 /** Samples per second taken when baking. */
 export const BAKE_FPS = 30;
@@ -108,8 +108,7 @@ export async function loadAnimatedModel(
   request?: string | AnimatedModelLoadOptions,
 ): Promise<AnimatedModel> {
   const gltf = await new GLTFLoader().loadAsync(url);
-  const requestedClips =
-    typeof request === "string" ? [request] : request?.clips;
+  const requestedClips = typeof request === 'string' ? [request] : request?.clips;
   if (requestedClips?.length === 0) {
     throw new Error(`${url} requested no animations`);
   }
@@ -122,19 +121,14 @@ export async function loadAnimatedModel(
   const animations = requestedSet
     ? gltf.animations.filter((clip) => requestedSet.has(clip.name))
     : gltf.animations;
-  const boundsClip =
-    typeof request === "string" ? undefined : request?.boundsClip;
-  if (
-    boundsClip !== undefined &&
-    !animations.some((clip) => clip.name === boundsClip)
-  ) {
+  const boundsClip = typeof request === 'string' ? undefined : request?.boundsClip;
+  if (boundsClip !== undefined && !animations.some((clip) => clip.name === boundsClip)) {
     throw new Error(`${url} bounds clip ${boundsClip} was not baked`);
   }
 
   let skinned: THREE.SkinnedMesh | null = null;
   gltf.scene.traverse((o) => {
-    if (!skinned && (o as THREE.SkinnedMesh).isSkinnedMesh)
-      skinned = o as THREE.SkinnedMesh;
+    if (!skinned && (o as THREE.SkinnedMesh).isSkinnedMesh) skinned = o as THREE.SkinnedMesh;
   });
   if (!skinned) throw new Error(`${url} contains no skinned mesh`);
   const mesh = skinned as THREE.SkinnedMesh;
@@ -242,7 +236,7 @@ export async function loadAnimatedModel(
   boneTexture.needsUpdate = true;
 
   const geometry = mesh.geometry;
-  const position = geometry.getAttribute("position");
+  const position = geometry.getAttribute('position');
   if (!position) throw new Error(`${url} contains no vertex positions`);
   const boundsVertexCount = validatedBoundsVertexCount(
     mesh.userData.boundsVertexCount,
@@ -251,8 +245,7 @@ export async function loadAnimatedModel(
   );
   const bounds = vertexBounds(position, boundsVertexCount);
 
-  const boundsBaked =
-    boundsClip === undefined ? undefined : clips.get(boundsClip);
+  const boundsBaked = boundsClip === undefined ? undefined : clips.get(boundsClip);
   const floatsPerFrame = boneCount * 16;
   const boundsData = boundsBaked
     ? data.subarray(
@@ -284,10 +277,7 @@ export async function loadAnimatedModel(
     animatedBounds: extent.bounds,
     firstFrameBounds: extent.firstFrameBounds,
     lowestY: extent.lowestY,
-    bindSize: bounds
-      .clone()
-      .applyMatrix4(nodeMatrix)
-      .getSize(new THREE.Vector3()),
+    bindSize: bounds.clone().applyMatrix4(nodeMatrix).getSize(new THREE.Vector3()),
   };
 }
 
@@ -314,19 +304,13 @@ export function animatedExtent(
   lowestY: number;
   height: number;
 } {
-  const position = geometry.getAttribute("position");
-  const skinIndex = geometry.getAttribute("skinIndex");
-  const skinWeight = geometry.getAttribute("skinWeight");
+  const position = geometry.getAttribute('position');
+  const skinIndex = geometry.getAttribute('skinIndex');
+  const skinWeight = geometry.getAttribute('skinWeight');
   if (!position || !skinIndex || !skinWeight) {
     return {
-      bounds: new THREE.Box3(
-        new THREE.Vector3(0, 0, 0),
-        new THREE.Vector3(0, 1, 0),
-      ),
-      firstFrameBounds: new THREE.Box3(
-        new THREE.Vector3(0, 0, 0),
-        new THREE.Vector3(0, 1, 0),
-      ),
+      bounds: new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 1, 0)),
+      firstFrameBounds: new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 1, 0)),
       lowestY: 0,
       height: 1,
     };
@@ -354,9 +338,7 @@ export function animatedExtent(
     // need a representative envelope for centering and grounding.
     const firstFrame = f === 0;
     const frameStride = firstFrame ? 1 : stride;
-    const frameVertexCount = firstFrame
-      ? boundsVertexCount
-      : animatedVertexCount;
+    const frameVertexCount = firstFrame ? boundsVertexCount : animatedVertexCount;
     for (let ordinal = 0; ordinal < frameVertexCount; ordinal += frameStride) {
       const v = firstFrame || !index ? ordinal : index.getX(ordinal);
       if (v >= boundsVertexCount) continue;
@@ -384,14 +366,10 @@ export function animatedExtent(
   };
 }
 
-function validatedBoundsVertexCount(
-  configured: unknown,
-  vertexCount: number,
-  url: string,
-): number {
+function validatedBoundsVertexCount(configured: unknown, vertexCount: number, url: string): number {
   if (configured === undefined) return vertexCount;
   if (
-    typeof configured !== "number" ||
+    typeof configured !== 'number' ||
     !Number.isSafeInteger(configured) ||
     configured <= 0 ||
     configured > vertexCount
