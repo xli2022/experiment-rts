@@ -110,3 +110,72 @@ describe('fog texture layout', () => {
     expect(fog.version).toBe(before); // refresh alone is not a change
   });
 });
+
+describe('revealing the map', () => {
+  const size = 16;
+
+  it('answers every query as seen, and hides the shroud', () => {
+    const fog = new FogRenderer(new GameMap(size));
+    fog.state.fill(UNEXPLORED);
+
+    expect(fog.isVisibleAt(5.5, 2.5)).toBe(false);
+    expect(fog.isExploredAt(5, 2)).toBe(false);
+    expect(fog.mesh.visible).toBe(true);
+
+    fog.revealed = true;
+
+    expect(fog.isVisibleAt(5.5, 2.5)).toBe(true);
+    expect(fog.isExploredAt(5, 2)).toBe(true);
+    // The shroud is a plane over the ground; revealing hides it rather than
+    // rewriting every texel to clear.
+    expect(fog.mesh.visible).toBe(false);
+  });
+
+  it('puts the shroud back, unchanged, when turned off', () => {
+    const fog = new FogRenderer(new GameMap(size));
+    fog.state.fill(UNEXPLORED);
+    fog.state[2 * size + 5] = VISIBLE;
+
+    fog.revealed = true;
+    fog.revealed = false;
+
+    expect(fog.mesh.visible).toBe(true);
+    expect(fog.isVisibleAt(5.5, 2.5)).toBe(true);
+    expect(fog.isVisibleAt(0.5, 0.5)).toBe(false);
+    // The texture has to be rewritten on the way back, or the shroud returns
+    // showing whatever it happened to hold before it was hidden.
+    fog.refresh();
+    expect(alphaAt(fog, size, 5, 2)).toBe(0);
+    expect(alphaAt(fog, size, 0, 0)).toBeGreaterThan(0);
+  });
+
+  it('moves its version, so the terrain re-shades its cliffs', () => {
+    const fog = new FogRenderer(new GameMap(size));
+    const before = fog.version;
+    fog.revealed = true;
+    expect(fog.version).not.toBe(before);
+    const revealed = fog.version;
+    fog.revealed = true; // already on: not a change
+    expect(fog.version).toBe(revealed);
+    fog.revealed = false;
+    expect(fog.version).not.toBe(revealed);
+  });
+
+  it('does not touch the visibility the bot reads', () => {
+    // The whole contract of the neural bot is that it sees exactly what a human
+    // does. It builds its own `Visibility`, but this one is shared with anything
+    // that asks the renderer, so revealing must stay a question of what is
+    // drawn — never of what is known.
+    const sim = new Simulation(coopMatch(0x51ce7a11));
+    const world = sim.world;
+    const fog = new FogRenderer(world.map);
+    const id = world.pool.spawn(EntityType.Burstbot, 2, fromInt(80), fromInt(76));
+    expect(id).not.toBe(NO_ENTITY);
+    fog.update(world, 0);
+
+    expect(fog.visibility.isVisibleAt(80.5, 76.5)).toBe(false);
+    fog.revealed = true;
+    expect(fog.isVisibleAt(80.5, 76.5)).toBe(true);
+    expect(fog.visibility.isVisibleAt(80.5, 76.5)).toBe(false);
+  });
+});

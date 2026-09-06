@@ -141,6 +141,18 @@ export function humanCount(config: MatchConfig): number {
 }
 
 /**
+ * Is one person playing this roster, however many bots are in it?
+ *
+ * The question two different features ask: whether conceding ends the match
+ * outright rather than leaving a side to fight on, and whether the shroud may
+ * be lifted. Both turn on there being nobody else at another keyboard — a bot
+ * neither watches the map nor plays on without you.
+ */
+export function isSoloMatch(config: MatchConfig): boolean {
+  return humanCount(config) <= 1;
+}
+
+/**
  * Why `config` cannot be played on a transport carrying `playerCount` peers,
  * or null when it can.
  *

@@ -20,7 +20,7 @@ import { hostingProblem, LockstepRunner } from './net/lockstep.js';
 import { SoloTransport } from './net/localTransport.js';
 import { CommandType, type Command } from './sim/commands.js';
 import { fromFloat, toFloat } from './sim/fixed.js';
-import { coopMatch, duelMatch, humanCount, withSeed, hostedBy } from './sim/match.js';
+import { coopMatch, duelMatch, isSoloMatch, withSeed, hostedBy } from './sim/match.js';
 import { Simulation } from './sim/tick.js';
 import {
   BotKind,
@@ -192,6 +192,16 @@ class Game {
       this.allies(),
       this.sim.world.players.length,
       () => this.surrender(),
+      // Offered only when one person is at the keyboard. The shroud is drawn
+      // per peer and lifting it changes nothing anyone else sees, so with a
+      // second human it would simply be a way to watch their half of the map.
+      // Bots are not a reason to withhold it: they read their own `Visibility`
+      // and cannot tell the difference.
+      isSoloMatch(setup.config)
+        ? (revealed) => {
+            this.fog.revealed = revealed;
+          }
+        : undefined,
     );
 
     this.runner = new LockstepRunner(this.sim, transport, {
@@ -405,6 +415,13 @@ class Game {
     }
     if (e.code === 'KeyF') {
       void this.hud.toggleFullscreen();
+      return;
+    }
+    // Does nothing in a match that was not offered the button, so it costs the
+    // command card nothing to reserve the letter in every match rather than
+    // some of them.
+    if (e.code === 'KeyV') {
+      this.hud.toggleFog();
       return;
     }
 
@@ -1073,7 +1090,7 @@ class Game {
       // spectate two bots, and the only exit from that is a page reload. The
       // solo co-op route puts an AI in the partner's seat, so this is reachable
       // from a button whose confirmation says the match is over for you.
-      if (humanCount(world.config) <= 1) {
+      if (isSoloMatch(world.config)) {
         this.finished = true;
         this.stopAgents();
         this.hud.setSurrenderAvailable(false);

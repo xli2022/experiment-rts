@@ -31,8 +31,8 @@
 import { describe, expect, it } from 'vitest';
 import { HeadlessMatch } from '../src/ai/headless.js';
 import { defOf } from '../src/config/rules.js';
-import { EntityType, NEUTRAL, NO_ENTITY, TICKS_PER_SECOND } from '../src/sim/types.js';
-import { duelMatch } from '../src/sim/match.js';
+import { BotKind, EntityType, NEUTRAL, NO_ENTITY, TICKS_PER_SECOND } from '../src/sim/types.js';
+import { coopMatch, duelMatch, isSoloMatch } from '../src/sim/match.js';
 import { unequalAgents } from './helpers/agents.js';
 
 const SEED = 0x51ce7a11;
@@ -193,5 +193,50 @@ describe('match variety', () => {
     // A draw is allowed, but every seed drawing would mean the win condition is
     // effectively unreachable.
     expect(outcomes.some((o) => o !== 'draw')).toBe(true);
+  });
+});
+
+/**
+ * Which rosters may lift the shroud.
+ *
+ * The reveal button (`Hud`'s `onToggleFog`, wired in `main.ts`) is offered when
+ * exactly one person is playing. It is drawn per peer and changes nothing the
+ * simulation or any other peer sees, so alone it is a convenience — but with a
+ * second human at another keyboard it would be a way to watch their half of the
+ * map. These are the four rosters the lobby can build; the gate is
+ * `isSoloMatch`, so the test is on the rosters rather than on the button.
+ */
+describe('who may reveal the map', () => {
+  it('offers it to a lone player, whatever the bots are doing', () => {
+    // Skirmish: one human, one bot.
+    expect(isSoloMatch(duelMatch(1, { botPlayers: [1] }))).toBe(true);
+    // Co-op with an AI partner: one human, three bots.
+    expect(
+      isSoloMatch(
+        coopMatch(1, {
+          botSlots: [
+            { player: 1, kind: BotKind.Scripted },
+            { player: 2, kind: BotKind.Scripted },
+            { player: 3, kind: BotKind.Scripted },
+          ],
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it('withholds it as soon as a second person is playing', () => {
+    // Versus: two humans, no bots.
+    expect(isSoloMatch(duelMatch(1, { botPlayers: [] }))).toBe(false);
+    // Co-op with a real partner: two humans, two bot opponents.
+    expect(
+      isSoloMatch(
+        coopMatch(1, {
+          botSlots: [
+            { player: 2, kind: BotKind.Scripted },
+            { player: 3, kind: BotKind.Scripted },
+          ],
+        }),
+      ),
+    ).toBe(false);
   });
 });

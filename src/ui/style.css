@@ -336,6 +336,7 @@ body {
 /* ---- fullscreen toggle ---- */
 #fullscreen-btn,
 #mute-btn,
+#fog-btn,
 #surrender-btn {
   top: 12px;
   right: 12px;
@@ -355,22 +356,35 @@ body {
     background 0.12s;
 }
 
-#mute-btn {
+/* Left to right: reveal, mute, maximize, surrender. Surrender sits on the end,
+   furthest from the three toggles, because it is the one irreversible thing up
+   here and a slip of the mouse should not land on it.
+
+   Offsets run right-to-left, so the base rule's `right: 12px` is the last
+   button and each step out adds 46px. Reveal is the outermost, which is also
+   why it is the one that may be missing — a match with a second human at the
+   keyboard is not offered it, and its absence leaves no gap between the rest. */
+#fullscreen-btn {
   right: 58px;
 }
 
-#surrender-btn {
+#mute-btn {
   right: 104px;
 }
 
+#fog-btn {
+  right: 150px;
+}
+
 #fullscreen-btn:hover,
-#mute-btn:hover {
+#mute-btn:hover,
+#fog-btn:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
 
 /* Giving up is destructive, so it warns on hover rather than inviting a click
-   the way the two toggles beside it do. */
+   the way the toggles beside it do. */
 #surrender-btn:hover {
   border-color: var(--enemy, #ff5a4a);
   color: var(--enemy, #ff5a4a);

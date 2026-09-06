@@ -53,6 +53,9 @@ export class Hud {
   readonly marquee: HTMLElement;
 
   private readonly fullscreenBtn: HTMLButtonElement;
+  /** Null when the match is not one the shroud may be lifted in. */
+  private readonly fogBtn: HTMLButtonElement | null;
+  private fogRevealed = false;
   private readonly muteBtn: HTMLButtonElement;
   private readonly surrenderBtn: HTMLButtonElement;
 
@@ -92,11 +95,22 @@ export class Hud {
      * nothing — a runtime state instead of a compile error.
      */
     private readonly onSurrender: () => void,
+    /**
+     * Lift the shroud, or put it back. Presentation only — see
+     * `FogRenderer.revealed`.
+     *
+     * Supplied only when the button should exist at all, which is when one
+     * person is playing. Left out, the button is never rendered: a match with a
+     * second human has no control to press, rather than one that is present and
+     * refuses, because the honest answer to "why is this greyed out" is that it
+     * would let you watch the other half of the map.
+     */
+    private readonly onToggleFog?: (revealed: boolean) => void,
   ) {
     const colour = (p: PlayerId): number =>
       PLAYER_COLOURS[colourSlotFor(p, playerCount)] ?? 0x888888;
     root.innerHTML = `
-      <div class="panel" id="resources">
+      <div class="panel interactive" id="resources">
         <div class="stat">
           <span class="stat-dot" style="background:${hex(RESOURCE_COLOUR)}"></span>
           <span class="stat-value" id="mineral-value">0</span>
@@ -109,7 +123,7 @@ export class Hud {
         </div>
       </div>
 
-      <div class="panel" id="allies"${allies.length === 0 ? ' hidden' : ''}>
+      <div class="panel interactive" id="allies"${allies.length === 0 ? ' hidden' : ''}>
         ${allies
           .map(
             (p, k) => `
@@ -123,11 +137,11 @@ export class Hud {
           .join('')}
       </div>
 
-      <div class="panel" id="minimap-panel">
+      <div class="panel interactive" id="minimap-panel">
         <canvas id="minimap" width="${MINIMAP_PX}" height="${MINIMAP_PX}"></canvas>
       </div>
 
-      <div class="panel" id="command-panel">
+      <div class="panel interactive" id="command-panel">
         <div id="selection-title">Nothing selected</div>
         <div id="selection-detail"></div>
         <div id="production" hidden>
@@ -141,12 +155,24 @@ export class Hud {
         <div id="command-grid"></div>
       </div>
 
-      <button class="panel" id="surrender-btn" type="button"
-              title="Surrender" aria-label="Surrender">🏳️</button>
-      <button class="panel" id="mute-btn" type="button"
+      <!--
+        In the order they sit on screen, left to right, so tabbing through them
+        follows the eye. They are positioned by the stylesheet rather than by
+        flow, so this order is for the keyboard, not the layout.
+      -->
+      ${
+        onToggleFog
+          ? `<button class="panel interactive" id="fog-btn" type="button"
+              title="Reveal map (V)" aria-label="Toggle fog of war"
+              aria-pressed="false">🕶️</button>`
+          : ''
+      }
+      <button class="panel interactive" id="mute-btn" type="button"
               title="Mute (M)" aria-label="Toggle sound"></button>
-      <button class="panel" id="fullscreen-btn" type="button"
+      <button class="panel interactive" id="fullscreen-btn" type="button"
               title="Fullscreen (F)" aria-label="Toggle fullscreen"></button>
+      <button class="panel interactive" id="surrender-btn" type="button"
+              title="Surrender" aria-label="Surrender">🏳️</button>
 
       <div class="panel" id="banner"></div>
       <div id="marquee"></div>
@@ -189,6 +215,12 @@ export class Hud {
     this.muteBtn.addEventListener('click', () => this.toggleMute());
     this.syncMuteLabel();
 
+    this.fogBtn = onToggleFog ? (must(root, '#fog-btn') as HTMLButtonElement) : null;
+    if (this.fogBtn) {
+      this.fogBtn.addEventListener('click', () => this.toggleFog());
+      this.syncFogLabel(this.fogBtn);
+    }
+
     // Confirmed, and deliberately given no hotkey. It is the one irreversible
     // thing on screen, and a stray keypress during a fight should not be able
     // to end a match.
@@ -229,18 +261,11 @@ export class Hud {
     }
 
     // Panels swallow pointer events so a click on the command card never also
-    // issues a world order behind it.
-    for (const sel of [
-      '#resources',
-      '#allies',
-      '#minimap-panel',
-      '#command-panel',
-      '#fullscreen-btn',
-      '#mute-btn',
-      '#surrender-btn',
-    ]) {
-      const panel = must(root, sel);
-      panel.classList.add('interactive');
+    // issues a world order behind it. Selected by class rather than by a list of
+    // ids: the list was a third copy of the button roster, and the one button
+    // that is only sometimes rendered had already fallen off it — leaving a
+    // click on it to also issue a world order behind it.
+    for (const panel of root.querySelectorAll<HTMLElement>('.interactive')) {
       panel.addEventListener('pointerenter', () => {
         this.pointerOverUi = true;
       });
@@ -269,6 +294,27 @@ export class Hud {
     const muted = audio.muted;
     this.muteBtn.textContent = muted ? '🔇' : '🔊';
     this.muteBtn.title = muted ? 'Unmute (M)' : 'Mute (M)';
+  }
+
+  /**
+   * Show the whole map, or put the shroud back. Does nothing in a match that
+   * was not offered the button, so the key is safe to press in any of them.
+   */
+  toggleFog(): void {
+    // The button exists exactly when the callback was supplied, so one guard
+    // answers both questions.
+    if (!this.fogBtn) return;
+    this.fogRevealed = !this.fogRevealed;
+    this.onToggleFog?.(this.fogRevealed);
+    this.syncFogLabel(this.fogBtn);
+  }
+
+  private syncFogLabel(btn: HTMLButtonElement): void {
+    // An eye rather than a fog bank: at 17px Noto's U+1F32B is a featureless
+    // white blob.
+    btn.textContent = this.fogRevealed ? '👁️' : '🕶️';
+    btn.title = this.fogRevealed ? 'Hide map (V)' : 'Reveal map (V)';
+    btn.setAttribute('aria-pressed', String(this.fogRevealed));
   }
 
   /** Enter or leave fullscreen. Safe to call from a click or a keypress. */

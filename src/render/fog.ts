@@ -36,15 +36,48 @@ export class FogRenderer {
   private readonly pixels: Uint8Array;
   private readonly disposables: { dispose(): void }[] = [];
   private dirty = true;
+  private revealedFlag = false;
+  /** Bumped on every reveal toggle; see `version`. */
+  private reveals = 0;
 
   /** One byte per tile: UNEXPLORED / EXPLORED / VISIBLE. */
   get state(): Uint8Array {
     return this.visibility.state;
   }
 
-  /** Bumped every time visibility changes; see `Visibility.version`. */
+  /**
+   * Bumped every time visibility changes; see `Visibility.version`. A reveal
+   * toggle counts as a change: the terrain re-shades its cliffs only when this
+   * moves, so without the bump the shroud would lift and the cliffs would keep
+   * the shading they had under it.
+   */
   get version(): number {
-    return this.visibility.version;
+    return this.visibility.version + this.reveals;
+  }
+
+  /**
+   * Draw the whole map, ignoring what the side can actually see.
+   *
+   * Presentation only, and deliberately so. `visibility` keeps running and
+   * keeps answering honestly; nothing that has to respect fog reads this class
+   * at all — the neural bot builds its own `Visibility` (`ai/neural/agent.ts`)
+   * and the simulation does not know the renderer exists. So this changes what
+   * is drawn and nothing else: no command becomes legal that was not, and no
+   * peer sees a different world.
+   *
+   * It is offered only when one person is playing. Against a second human it
+   * would be a way to watch their half of the map.
+   */
+  get revealed(): boolean {
+    return this.revealedFlag;
+  }
+
+  set revealed(on: boolean) {
+    if (on === this.revealedFlag) return;
+    this.revealedFlag = on;
+    this.mesh.visible = !on;
+    this.reveals++;
+    this.dirty = true;
   }
 
   constructor(map: GameMap) {
@@ -104,7 +137,8 @@ export class FogRenderer {
    * in a mirror match each player ends up watching the other's half.
    */
   refresh(): void {
-    if (!this.dirty) return;
+    // Nothing to push while the shroud is off: the mesh is hidden.
+    if (this.revealedFlag || !this.dirty) return;
     this.dirty = false;
     const state = this.state;
     const px = this.pixels;
@@ -122,12 +156,12 @@ export class FogRenderer {
 
   /** True when the tile under this world position is currently observed. */
   isVisibleAt(x: number, z: number): boolean {
-    return this.visibility.isVisibleAt(x, z);
+    return this.revealedFlag || this.visibility.isVisibleAt(x, z);
   }
 
   /** True when this tile has ever been seen. */
   isExploredAt(tx: number, tz: number): boolean {
-    return this.visibility.isExploredAt(tx, tz);
+    return this.revealedFlag || this.visibility.isExploredAt(tx, tz);
   }
 
   /**
@@ -135,7 +169,7 @@ export class FogRenderer {
    * `Visibility.canSee`; enemies are hidden by being skipped, not covered.
    */
   shouldDraw(world: World, index: number, viewer: PlayerId): boolean {
-    return this.visibility.canSee(world, index, viewer);
+    return this.revealedFlag || this.visibility.canSee(world, index, viewer);
   }
 
   dispose(): void {
