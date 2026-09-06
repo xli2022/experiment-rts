@@ -99,7 +99,17 @@ def quantize_int8(onnx_bytes: bytes) -> bytes:
         src = Path(tmp) / "fp32.onnx"
         dst = Path(tmp) / "int8.onnx"
         src.write_bytes(onnx_bytes)
-        quantize_dynamic(str(src), str(dst), weight_type=QuantType.QInt8)
+        # Matmuls only, as the docstring says. Left to itself `quantize_dynamic`
+        # also quantises Conv, which emits ConvInteger — a node onnxruntime's CPU
+        # provider has no kernel for, so the quantised model loads and then fails
+        # on the first inference, in the browser as readily as here. The
+        # convolutions are a small share of the weights in any case.
+        quantize_dynamic(
+            str(src),
+            str(dst),
+            weight_type=QuantType.QInt8,
+            op_types_to_quantize=["MatMul", "Gemm"],
+        )
         return dst.read_bytes()
 
 

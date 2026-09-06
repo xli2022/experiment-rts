@@ -119,7 +119,7 @@ def collect_labels(env: BunVectorEnv, n: int, rng: np.random.Generator, noop_kee
     return {name: array[:n] for name, array in data.items()}
 
 
-def train_on(policy: Policy, opt: torch.optim.Optimizer, data: dict[str, np.ndarray], batch_size: int, epochs: int, device: torch.device, rng: np.random.Generator) -> float:
+def train_on(policy: Policy, opt: torch.optim.Optimizer, data: dict[str, np.ndarray], batch_size: int, epochs: int, device: torch.device, rng: np.random.Generator, ent_coef: float) -> float:
     n = len(data["label"])
     losses: list[float] = []
     policy.train()
@@ -130,7 +130,13 @@ def train_on(policy: Policy, opt: torch.optim.Optimizer, data: dict[str, np.ndar
             obs = to_torch({k: v for k, v in data.items() if k != "label"}, device, idx)
             labels = torch.from_numpy(data["label"][idx].astype(np.int64)).to(device)
             out = policy.evaluate(obs, labels)
-            loss = -out["logp"].mean()
+            # The teacher is deterministic, so the cross-entropy optimum is a delta
+            # function and enough labels will drive the policy to it: probability
+            # exactly 1, entropy exactly 0, logits past +/-100. That clones the
+            # teacher well and is a dead initialisation for PPO, whose ratio is then
+            # identically 1 with no gradient to push on. A small entropy bonus keeps
+            # the cloned policy stochastic enough to be improvable.
+            loss = -out["logp"].mean() - ent_coef * out["entropy"].mean()
             opt.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
@@ -143,6 +149,7 @@ def validate(policy: Policy, data: dict[str, np.ndarray], device: torch.device, 
     """Negative log-likelihood and per-head accuracies on labelled rows."""
     n = len(data["label"])
     nll = 0.0
+    ent = 0.0
     type_hits = 0
     non_noop = 0
     non_noop_hits = 0
@@ -162,6 +169,7 @@ def validate(policy: Policy, data: dict[str, np.ndarray], device: torch.device, 
             out = policy.evaluate(obs, labels)
             t = labels[:, 0]
             nll += float(-out["logp"].sum())
+            ent += float(out["entropy"].sum())
             pred = out["type_logits"].argmax(-1)
             type_hits += int((pred == t).sum())
             nn_rows = t != NOOP
@@ -202,6 +210,7 @@ def validate(policy: Policy, data: dict[str, np.ndarray], device: torch.device, 
         "targetAccuracy": target_hits / max(1, target_rows),
         "cellAccuracy": cell_hits / max(1, cell_rows),
         "entityTypeAccuracy": et_hits / max(1, et_rows),
+        "entropy": ent / max(1, n),
     }
 
 
@@ -226,6 +235,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--epochs", type=int, default=1, help="passes over each buffer")
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--noop-keep", type=float, default=0.25)
+    parser.add_argument(
+        "--ent",
+        type=float,
+        default=0.01,
+        help="entropy bonus; keeps the clone stochastic enough for PPO to improve. 0 reproduces the old collapse",
+    )
     parser.add_argument("--val-labels", type=int, default=512)
     parser.add_argument("--val-every", type=int, default=5, help="buffers between validations")
     parser.add_argument("--seed0", type=int, default=0)
@@ -263,6 +278,23 @@ def main(argv: list[str] | None = None) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     log = (args.out / "log.jsonl").open("a")
     best = math.inf
+
+    def checkpoint(metrics: dict[str, float]) -> None:
+        """Write `last.pt`, and `best.pt` when this is the best clone so far.
+
+        Scored on the quantity training actually minimises, entropy bonus
+        included, rather than on nll alone. Nll alone picks the most collapsed
+        policy on offer, which is precisely the one PPO cannot improve: a clone
+        that answers with probability 1 has a ratio of exactly 1 and so no
+        gradient to push on. With the bonus in the score a collapsed checkpoint
+        loses on its own merits, and there is no separate floor to tune.
+        """
+        nonlocal best
+        save_checkpoint(args.out / "last.pt", policy, "bc", hparams, metrics)
+        score = metrics["nll"] - args.ent * metrics["entropy"]
+        if score < best:
+            best = score
+            save_checkpoint(args.out / "best.pt", policy, "bc", hparams, metrics)
     labels = 0
     rounds = 0
     buffer = LabelBuffer()
@@ -276,17 +308,14 @@ def main(argv: list[str] | None = None) -> int:
             labels += int(keep.sum())
             if len(buffer) < args.buffer:
                 continue
-            loss = train_on(policy, opt, buffer.materialise(), args.batch, args.epochs, device, rng)
+            loss = train_on(policy, opt, buffer.materialise(), args.batch, args.epochs, device, rng, args.ent)
             buffer.clear()
             rounds += 1
             record: dict[str, Any] = {"round": rounds, "labels": labels, "loss": loss, "seconds": round(time.time() - t0, 1)}
             if rounds % args.val_every == 0:
                 metrics = validate(policy, val, device)
                 record["val"] = metrics
-                save_checkpoint(args.out / "last.pt", policy, "bc", hparams, metrics)
-                if metrics["nll"] < best:
-                    best = metrics["nll"]
-                    save_checkpoint(args.out / "best.pt", policy, "bc", hparams, metrics)
+                checkpoint(metrics)
                 print(
                     f"round {rounds} labels {labels} loss {loss:.3f} val nll {metrics['nll']:.3f} "
                     f"type {metrics['nonNoopTypeAccuracy']:.2f} sel F1 {metrics['selectionF1']:.2f} "
@@ -295,9 +324,7 @@ def main(argv: list[str] | None = None) -> int:
             log.write(json.dumps(record) + "\n")
             log.flush()
         metrics = validate(policy, val, device)
-        save_checkpoint(args.out / "last.pt", policy, "bc", hparams, metrics)
-        if metrics["nll"] < best or not (args.out / "best.pt").exists():
-            save_checkpoint(args.out / "best.pt", policy, "bc", hparams, metrics)
+        checkpoint(metrics)
         print(f"done: {labels} labels, final val {json.dumps(metrics)}")
     finally:
         log.close()

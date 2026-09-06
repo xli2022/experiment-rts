@@ -105,7 +105,7 @@ class Eyes {
   readonly vis: Visibility;
   readonly mem: EntityMemory;
   readonly encoder: ObservationEncoder;
-  readonly out: SlotObs;
+  out: SlotObs;
   readonly recent: RecentActions & { lastUnits: Set<EntityId> } = {
     prevType: ActionType.Noop,
     sinceNonNoop: 0,
@@ -113,19 +113,17 @@ class Eyes {
     lastUnits: new Set(),
   };
   readonly commandTicks: number[] = [];
+  /**
+   * A teacher slot's previous observation, reported once the command the
+   * teacher chose *from* it is known. Null for every other kind of slot.
+   */
+  held: SlotObs | null = null;
 
   constructor(world: World, player: PlayerId) {
     this.vis = new Visibility(world.map);
     this.mem = new EntityMemory(player);
     this.encoder = new ObservationEncoder(world, player);
-    this.out = {
-      player,
-      observation: allocObservation(),
-      masks: allocMasks(),
-      critic: new Float32Array(CRITIC_LEN),
-      frame: allocFrame(),
-      label: new Int32Array(ACTION_INTS).fill(-1),
-    };
+    this.out = allocSlotObs(player);
   }
 
   look(world: World): void {
@@ -161,6 +159,37 @@ class Eyes {
     computeMasks(world, this.out.frame, this.vis, this.mem, this.out.masks);
     encodeCritic(world, this.out.player, this.out.critic);
   }
+
+  /**
+   * Keep this observation, so it can be reported once the teacher's answer to
+   * it is known, and start encoding into the other buffer.
+   *
+   * A swap rather than a copy. The two buffers alternate: the one just held was
+   * serialised on the previous `observe` and is free to write again, and every
+   * writer (`ObservationEncoder.encode`, `computeMasks`, `encodeCritic`)
+   * overwrites its output whole rather than updating it in place, so there is
+   * nothing to carry across. Copying instead meant naming all twenty fields by
+   * hand, and a field added to `Observation`, `Masks` or `Frame` and forgotten
+   * here would have paired labels with a stale copy of it — silently, with no
+   * test failing and the training data quietly rotting.
+   */
+  hold(): void {
+    const next = this.held ?? allocSlotObs(this.out.player);
+    this.held = this.out;
+    this.out = next;
+  }
+}
+
+/** One slot's buffers. Two of these alternate for a teacher slot; see `hold`. */
+function allocSlotObs(player: PlayerId): SlotObs {
+  return {
+    player,
+    observation: allocObservation(),
+    masks: allocMasks(),
+    critic: new Float32Array(CRITIC_LEN),
+    frame: allocFrame(),
+    label: new Int32Array(ACTION_INTS).fill(-1),
+  };
 }
 
 /** Plays whatever Python last decided, once, on the first tick after the decision. */
@@ -190,21 +219,21 @@ class TeacherAgent implements Agent {
   }
 }
 
-/** Mineral value of everything alive a team owns, plus its banks. */
-function teamValue(world: World, team: number): number {
-  const pool = world.pool;
-  let value = 0;
-  for (let i = 0; i < pool.count; i++) {
-    if (pool.alive[i] !== 1) continue;
-    const owner = pool.owner[i]!;
-    if (owner < 0 || world.teamOf(owner) !== team) continue;
-    value += defOf(pool.type[i]! as EntityType).mineralCost;
-  }
-  for (let p = 0; p < world.players.length; p++) {
-    if (world.teamOf(p) === team) value += world.player(p).minerals;
-  }
-  return value;
-}
+/**
+ * How much a side's own board presence counts toward its potential, against the
+ * enemy presence it is trying to remove.
+ *
+ * Deliberately asymmetric. A symmetric differential prices a unit lost exactly
+ * as dearly as a unit killed, so every attack is a local loss and the shaped
+ * optimum is to sit still and keep what you have — which cannot win a match
+ * decided by razing the other side's buildings. At a quarter weight an even
+ * trade is a gain, which is the truth when the enemy's board is what has to end
+ * up empty.
+ */
+const OWN_STANDING = 0.25;
+
+/** Enemy structures, the thing that actually has to be destroyed, count treble. */
+const ENEMY_BUILDINGS = 3;
 
 export class MatchEnv {
   readonly config: EnvConfig;
@@ -215,6 +244,9 @@ export class MatchEnv {
   /** Slots an observation is produced for: policy and teacher slots, ascending. */
   readonly observed: PlayerId[] = [];
   private potential = new Float32Array(0);
+  /** Per-team board presence, refreshed by `scanStanding` once a step. */
+  private unitValue = new Float64Array(0);
+  private buildingValue = new Float64Array(0);
   private readonly action = allocAction();
   private seed: number;
   private steps = 0;
@@ -276,56 +308,115 @@ export class MatchEnv {
     this.eyes.clear();
     for (const p of this.observed) this.eyes.set(p, new Eyes(world, p));
     this.potential = new Float32Array(this.observed.length);
+    let maxTeam = 0;
+    for (let p = 0; p < world.players.length; p++) maxTeam = Math.max(maxTeam, world.teamOf(p));
+    this.unitValue = new Float64Array(maxTeam + 1);
+    this.buildingValue = new Float64Array(maxTeam + 1);
     this.steps = 0;
     // Tick zero: look once so the first observation is not blind.
     for (const eyes of this.eyes.values()) eyes.look(world);
+    this.scanStanding();
     for (let k = 0; k < this.observed.length; k++)
       this.potential[k] = this.potentialOf(this.observed[k]!);
   }
 
+  /**
+   * Tally every team's board presence in one pass, splitting units from
+   * structures so either weighting is then arithmetic.
+   *
+   * Called once per step rather than from `potentialOf`, which would otherwise
+   * walk the whole entity pool once per enemy player per observed slot — twelve
+   * scans a step on the four-slot Quarters layout, most of them recomputing the
+   * same team's total.
+   */
+  private scanStanding(): void {
+    const world = this.match.world;
+    this.unitValue.fill(0);
+    this.buildingValue.fill(0);
+    const pool = world.pool;
+    for (let i = 0; i < pool.count; i++) {
+      if (pool.alive[i] !== 1) continue;
+      const owner = pool.owner[i]!;
+      if (owner < 0) continue;
+      const team = world.teamOf(owner);
+      const def = defOf(pool.type[i]! as EntityType);
+      if (def.isBuilding) this.buildingValue[team] += def.mineralCost;
+      else this.unitValue[team] += def.mineralCost;
+    }
+  }
+
+  /** Reads the tally `scanStanding` left; call that first. */
   private potentialOf(player: PlayerId): number {
     const world = this.match.world;
     const team = world.teamOf(player);
     let enemy = 0;
-    let teams = 0;
+    let seats = 0;
     for (let p = 0; p < world.players.length; p++) {
       const t = world.teamOf(p);
       if (t === team) continue;
-      teams++;
-      enemy += teamValue(world, t);
+      seats++;
+      enemy += this.unitValue[t]! + ENEMY_BUILDINGS * this.buildingValue[t]!;
     }
-    return (teamValue(world, team) - enemy / Math.max(1, teams)) / 1000;
+    const own = this.unitValue[team]! + this.buildingValue[team]!;
+    return (OWN_STANDING * own - enemy / Math.max(1, seats)) / 1000;
   }
 
-  /** The current observation for a slot. Valid until the next `step` or `reset`. */
+  /**
+   * The teacher's command written into `eyes.out.label`, encoded against the
+   * frame `eyes.out` is currently holding — which must be the observation the
+   * teacher chose it *from*. A command the student could not have expressed,
+   * or one the masks refuse, is marked invalid (type -1) and is not a lesson,
+   * since the teacher saw more than the student does.
+   */
+  private writeLabel(eyes: Eyes, command: Command | null): void {
+    eyes.out.label.fill(-1);
+    eyes.out.label[0] = ActionType.Noop;
+    if (command === null) return;
+    if (!encode(command, eyes.out.frame, this.action) || !legalise(this.action, eyes.out.masks)) {
+      eyes.out.label[0] = -1;
+      return;
+    }
+    eyes.out.label[0] = this.action.type;
+    eyes.out.label[1] = this.action.entityType;
+    eyes.out.label[2] = this.action.target;
+    eyes.out.label[3] = this.action.cell;
+    eyes.out.label[4] = this.action.sub;
+    for (let k = 0; k < this.action.selection.length; k++)
+      eyes.out.label[5 + k] = this.action.selection[k]!;
+  }
+
+  /**
+   * The current observation for a slot. Valid until the next `step` or `reset`.
+   *
+   * A teacher slot is reported one decision behind. The command the teacher
+   * takes from an observation is only known once the world has been stepped,
+   * and the label's rows are indices into the frame it was encoded against —
+   * so the pair can only be sent after the fact. Reporting the live
+   * observation with the last command instead would teach the student to
+   * answer with the previous state's move, which degenerates to Noop the
+   * moment the student drives. The first observation of a match is sent once
+   * with an invalid label, since nothing was decided from a state before it.
+   */
   observe(player: PlayerId): SlotObs {
     const eyes = this.eyes.get(player);
     if (!eyes) throw new Error(`slot ${player} is not observed`);
     eyes.observe(this.match.world);
-    const teacher = this.teachers.get(player);
-    eyes.out.label.fill(-1);
-    eyes.out.label[0] = ActionType.Noop;
-    if (teacher) {
-      // The label is the command the teacher released at this boundary,
-      // expressed in the frame the student is looking at right now — and only
-      // if the student could have said it: a label the masks refuse is marked
-      // invalid (type -1) and is not a lesson, since the teacher saw more.
-      const command = teacher.lastCommand;
-      if (command !== null && !encode(command, eyes.out.frame, this.action)) {
-        eyes.out.label[0] = -1;
-      } else if (command !== null && !legalise(this.action, eyes.out.masks)) {
-        eyes.out.label[0] = -1;
-      } else if (command !== null) {
-        eyes.out.label[0] = this.action.type;
-        eyes.out.label[1] = this.action.entityType;
-        eyes.out.label[2] = this.action.target;
-        eyes.out.label[3] = this.action.cell;
-        eyes.out.label[4] = this.action.sub;
-        for (let k = 0; k < this.action.selection.length; k++)
-          eyes.out.label[5 + k] = this.action.selection[k]!;
-      }
+    if (!this.teachers.has(player)) {
+      eyes.out.label.fill(-1);
+      eyes.out.label[0] = ActionType.Noop;
+      return eyes.out;
     }
-    return eyes.out;
+    if (!eyes.held) {
+      // The first observation of a match: nothing was decided from a state
+      // before it, so it goes out with an invalid label and is skipped. It is
+      // reported from `out` rather than held, because the step that follows
+      // encodes the teacher's answer against this very buffer — swapping here
+      // would leave it labelling one that has never been encoded.
+      eyes.out.label.fill(-1);
+      eyes.out.label[0] = -1;
+      return eyes.out;
+    }
+    return eyes.held;
   }
 
   /**
@@ -367,6 +458,11 @@ export class MatchEnv {
       const teacher = this.teachers.get(this.observed[k]!);
       if (!teacher) continue;
       const eyes = this.eyes.get(this.observed[k]!)!;
+      // `eyes.out` still holds the observation this command was chosen from —
+      // the next `observe` is what replaces it — so the label can be encoded
+      // against the right frame here, and the pair kept until it is reported.
+      this.writeLabel(eyes, teacher.lastCommand);
+      eyes.hold();
       eyes.noteCommand(
         world,
         teacher.lastCommand,
@@ -381,6 +477,7 @@ export class MatchEnv {
     const shaping = this.config.shaping ?? 1e-3;
     const gamma = this.config.gamma ?? 0.99;
     const timeCost = this.config.timeCost ?? 1e-4;
+    this.scanStanding();
     for (let k = 0; k < this.observed.length; k++) {
       const p = this.observed[k]!;
       const next = this.potentialOf(p);
