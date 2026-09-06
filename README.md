@@ -193,8 +193,8 @@ and workers that stopped one step short of the building they were sent to make.
 The learned bot is trained in Python against matches served by the game's own
 code under Bun — `tools/ml/serve.ts` steps headless matches one decision at a
 time, `ml/` holds the model, imitation from the scripted bot, PPO against a
-league, and the export to ONNX that the browser runs. It needs `bun`, a GPU
-machine and a few hours:
+league, and the export to ONNX that the browser runs. It needs `bun`, Python
+3.10 or newer, a GPU machine and a few hours:
 
 ```sh
 cd ml && pip install -e '.[dev]' && pytest

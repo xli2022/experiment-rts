@@ -9,6 +9,7 @@ observation, so the batch never shrinks and never waits.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import threading
 from dataclasses import dataclass, field
@@ -101,6 +102,28 @@ class Batch:
         return len(self.slots)
 
 
+def bun_executable() -> str:
+    """The Bun binary that serves environments, or a clear complaint that there is none.
+
+    `RTSML_BUN` names it outright; otherwise it is looked up on PATH the way a
+    shell would (so `bun.exe` is found on Windows). The resolved path is what is
+    spawned, since `CreateProcess` does not search PATH the way a shell does.
+    """
+    named = os.environ.get("RTSML_BUN")
+    found = shutil.which(named) if named else shutil.which("bun")
+    if found:
+        return found
+    hint = (
+        f"RTSML_BUN={named!r} is not an executable" if named else "`bun` is not on PATH"
+    )
+    raise RuntimeError(
+        f"{hint}. The training environment is the game itself, served by Bun "
+        "(tools/ml/serve.ts). Install it from https://bun.sh - on Windows: "
+        'powershell -c "irm bun.sh/install.ps1 | iex" - then open a new terminal, '
+        "or point RTSML_BUN at the binary."
+    )
+
+
 class _Process:
     def __init__(self, command: list[str], cwd: Path):
         self.proc = subprocess.Popen(
@@ -143,7 +166,7 @@ class BunVectorEnv:
         command: list[str] | None = None,
         cwd: Path = REPO_ROOT,
     ):
-        command = command or [os.environ.get("RTSML_BUN", "bun"), "run", "tools/ml/serve.ts"]
+        command = command or [bun_executable(), "run", "tools/ml/serve.ts"]
         self.procs = [_Process(command, cwd) for _ in configs]
         self.configs = configs
         self.max_observed = max(observed_slots(cfg) for group in configs for cfg in group)
