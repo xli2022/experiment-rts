@@ -1,0 +1,212 @@
+{
+  "specVersion": 1,
+  "model": "policy.onnx",
+  "sha256": "94497fa5323d5db106086aea85621a0c86f8ef0ec03b07504b0b58fb82ac4a43",
+  "bytes": 5896728,
+  "parameters": 1504126,
+  "opset": 18,
+  "inputs": [
+    {
+      "name": "entities",
+      "shape": [
+        1,
+        160,
+        44
+      ],
+      "dtype": "float32"
+    },
+    {
+      "name": "entity_mask",
+      "shape": [
+        1,
+        160
+      ],
+      "dtype": "uint8"
+    },
+    {
+      "name": "grid",
+      "shape": [
+        1,
+        13,
+        40,
+        40
+      ],
+      "dtype": "float32"
+    },
+    {
+      "name": "scalars",
+      "shape": [
+        1,
+        40
+      ],
+      "dtype": "float32"
+    },
+    {
+      "name": "mask_type",
+      "shape": [
+        1,
+        11
+      ],
+      "dtype": "uint8"
+    },
+    {
+      "name": "mask_selection",
+      "shape": [
+        1,
+        11,
+        160
+      ],
+      "dtype": "uint8"
+    },
+    {
+      "name": "mask_target",
+      "shape": [
+        1,
+        11,
+        160
+      ],
+      "dtype": "uint8"
+    },
+    {
+      "name": "mask_cell",
+      "shape": [
+        1,
+        11,
+        1600
+      ],
+      "dtype": "uint8"
+    },
+    {
+      "name": "mask_build_cell",
+      "shape": [
+        1,
+        9,
+        1600
+      ],
+      "dtype": "uint8"
+    },
+    {
+      "name": "mask_row_entity_type",
+      "shape": [
+        1,
+        160,
+        9
+      ],
+      "dtype": "uint8"
+    },
+    {
+      "name": "mask_build_type",
+      "shape": [
+        1,
+        9
+      ],
+      "dtype": "uint8"
+    },
+    {
+      "name": "noise",
+      "shape": [
+        1,
+        2116
+      ],
+      "dtype": "float32"
+    },
+    {
+      "name": "temperature",
+      "shape": [
+        1
+      ],
+      "dtype": "float32"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "action",
+      "shape": [
+        1,
+        29
+      ],
+      "dtype": "int32"
+    }
+  ],
+  "noise": {
+    "length": 2116,
+    "distribution": "gumbel"
+  },
+  "exportedAt": "2026-09-06T18:41:54Z",
+  "parity": {
+    "samples": 200,
+    "agree": 200,
+    "firstDifference": null
+  },
+  "quantized": false,
+  "checkpoint": "runs\\bc5\\best.pt",
+  "training": "bc",
+  "evaluation": {
+    "layout": "lanes",
+    "seeds": 16,
+    "rungs": {
+      "scripted@10": {
+        "seat0": {
+          "matches": 16,
+          "wins": 3,
+          "draws": 0,
+          "winRate": 0.1875,
+          "medianTicks": 8383.0,
+          "commandsPerMinute": 60.57066732433251
+        },
+        "seat1": {
+          "matches": 16,
+          "wins": 3,
+          "draws": 0,
+          "winRate": 0.1875,
+          "medianTicks": 8383.0,
+          "commandsPerMinute": 60.57066732433251
+        },
+        "winRate": 0.1875,
+        "seatBias": 0.0
+      },
+      "scripted@20": {
+        "seat0": {
+          "matches": 16,
+          "wins": 4,
+          "draws": 0,
+          "winRate": 0.25,
+          "medianTicks": 7151.5,
+          "commandsPerMinute": 59.75582621876889
+        },
+        "seat1": {
+          "matches": 16,
+          "wins": 4,
+          "draws": 0,
+          "winRate": 0.25,
+          "medianTicks": 7151.5,
+          "commandsPerMinute": 59.75582621876889
+        },
+        "winRate": 0.25,
+        "seatBias": 0.0
+      },
+      "scripted@40": {
+        "seat0": {
+          "matches": 16,
+          "wins": 2,
+          "draws": 2,
+          "winRate": 0.125,
+          "medianTicks": 9267.0,
+          "commandsPerMinute": 59.22309588319264
+        },
+        "seat1": {
+          "matches": 16,
+          "wins": 2,
+          "draws": 2,
+          "winRate": 0.125,
+          "medianTicks": 9267.0,
+          "commandsPerMinute": 59.22309588319264
+        },
+        "winRate": 0.125,
+        "seatBias": 0.0
+      }
+    },
+    "checkpoint": "runs\\bc5\\best.pt",
+    "seconds": 628.7
+  }
+}
