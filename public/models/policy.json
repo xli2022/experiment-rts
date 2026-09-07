@@ -1,7 +1,7 @@
 {
   "specVersion": 1,
   "model": "policy.onnx",
-  "sha256": "94497fa5323d5db106086aea85621a0c86f8ef0ec03b07504b0b58fb82ac4a43",
+  "sha256": "ecab322adedb0e8d1c00b28725aea3c879b2e8fc11c06ecd7ca9774f4258bd50",
   "bytes": 5896728,
   "parameters": 1504126,
   "opset": 18,
@@ -132,81 +132,81 @@
     "length": 2116,
     "distribution": "gumbel"
   },
-  "exportedAt": "2026-09-06T18:41:54Z",
+  "exportedAt": "2026-09-07T13:59:35Z",
   "parity": {
     "samples": 200,
     "agree": 200,
     "firstDifference": null
   },
   "quantized": false,
-  "checkpoint": "runs\\bc5\\best.pt",
-  "training": "bc",
+  "checkpoint": "runs\\champions\\gen4.pt",
+  "training": "ppo",
   "evaluation": {
     "layout": "lanes",
-    "seeds": 16,
+    "seeds": 48,
     "rungs": {
       "scripted@10": {
         "seat0": {
-          "matches": 16,
-          "wins": 3,
+          "matches": 48,
+          "wins": 41,
           "draws": 0,
-          "winRate": 0.1875,
-          "medianTicks": 8383.0,
-          "commandsPerMinute": 60.57066732433251
+          "winRate": 0.8541666666666666,
+          "medianTicks": 8090.5,
+          "commandsPerMinute": 64.89583806132374
         },
         "seat1": {
-          "matches": 16,
-          "wins": 3,
+          "matches": 48,
+          "wins": 41,
           "draws": 0,
-          "winRate": 0.1875,
-          "medianTicks": 8383.0,
-          "commandsPerMinute": 60.57066732433251
+          "winRate": 0.8541666666666666,
+          "medianTicks": 8090.5,
+          "commandsPerMinute": 64.89583806132374
         },
-        "winRate": 0.1875,
+        "winRate": 0.8541666666666666,
         "seatBias": 0.0
       },
       "scripted@20": {
         "seat0": {
-          "matches": 16,
-          "wins": 4,
-          "draws": 0,
-          "winRate": 0.25,
-          "medianTicks": 7151.5,
-          "commandsPerMinute": 59.75582621876889
+          "matches": 48,
+          "wins": 40,
+          "draws": 1,
+          "winRate": 0.8333333333333334,
+          "medianTicks": 8067.5,
+          "commandsPerMinute": 67.42738816580675
         },
         "seat1": {
-          "matches": 16,
-          "wins": 4,
-          "draws": 0,
-          "winRate": 0.25,
-          "medianTicks": 7151.5,
-          "commandsPerMinute": 59.75582621876889
+          "matches": 48,
+          "wins": 40,
+          "draws": 1,
+          "winRate": 0.8333333333333334,
+          "medianTicks": 8067.5,
+          "commandsPerMinute": 67.42738816580675
         },
-        "winRate": 0.25,
+        "winRate": 0.8333333333333334,
         "seatBias": 0.0
       },
       "scripted@40": {
         "seat0": {
-          "matches": 16,
-          "wins": 2,
-          "draws": 2,
-          "winRate": 0.125,
-          "medianTicks": 9267.0,
-          "commandsPerMinute": 59.22309588319264
+          "matches": 48,
+          "wins": 37,
+          "draws": 1,
+          "winRate": 0.7708333333333334,
+          "medianTicks": 8046.5,
+          "commandsPerMinute": 67.80430569441657
         },
         "seat1": {
-          "matches": 16,
-          "wins": 2,
-          "draws": 2,
-          "winRate": 0.125,
-          "medianTicks": 9267.0,
-          "commandsPerMinute": 59.22309588319264
+          "matches": 48,
+          "wins": 37,
+          "draws": 1,
+          "winRate": 0.7708333333333334,
+          "medianTicks": 8046.5,
+          "commandsPerMinute": 67.80430569441657
         },
-        "winRate": 0.125,
+        "winRate": 0.7708333333333334,
         "seatBias": 0.0
       }
     },
-    "checkpoint": "runs\\bc5\\best.pt",
-    "seconds": 628.7
+    "checkpoint": "runs\\champions\\gen4.pt",
+    "seconds": 1850.7
   }
 }

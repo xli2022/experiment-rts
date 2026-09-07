@@ -97,6 +97,74 @@ other gradient dropped, so the clone comes out of it unchanged. Watch
 `explainedVariance` in the log: near zero means the advantages are noise and
 the policy is about to sharpen onto it.
 
+**The discount is per decision, and a match is two thousand of them.** This is
+the one that cost every PPO run before it. `--gamma` is applied once per
+decision, a decision is four ticks, and matches run to a median 8,383 ticks — so
+`0.99` discounted the terminal ±1 by `0.99^2100 = 7e-10` and left an effective
+horizon of 100 decisions, about twenty seconds of a seven-minute match. Winning
+was not in the objective at all; the best PPO could do was climb the shaping
+potential greedily, which is why no run ever beat the clone it started from. At
+`0.999` the same terminal is worth 0.12, the same order as the shaping a whole
+match accumulates, and the outcome competes with the hint instead of vanishing
+underneath it. The time cost is a discounted sum too: at `1e-4` it came to 0.086
+against a win worth 0.12, so the clock was nearly as loud as the result.
+
+**Advantage normalisation turns a signal-free window into noise, at full
+strength.** `(adv - mean) / (std + 1e-8)` is the standard line and it is a trap
+here. Measured on a real rollout, the first 32-decision window of a match has a
+reward that is *exactly* constant — one unique value across every row and every
+step, std 0.0 — because neither side has committed anything to the board yet and
+the potential has not moved. The critic fits that constant trivially,
+`explainedVariance` reaches 0.994, the advantages are float32 rounding, and
+dividing by their own std rescales that rounding to unit variance and hands it
+to PPO for three epochs. Entropy collapsed to 2e-5, the ratio ran away, `pg`
+reached 4e7, and the win rate went to zero and stayed there. `--adv-floor`
+divides by the std *or* the floor, whichever is larger: a healthy window is
+untouched, a signal-free one becomes the near-no-op it should always have been.
+
+**The evaluation used to reset every environment.** `--eval-every` called
+`env.reset(groups)` when it was done, but `play` builds and tears down its own
+Bun processes and never touches the training environment. The reset threw away
+every match in flight — and a match needs about 65 updates to finish while the
+eval landed every 50, so most matches never reached a terminal ±1 and the league
+was never told who won. It is exactly the failure the `--refresh` note below
+describes, re-entered through a different door.
+
+**The joint log-ratio is an ordinary log-ratio.** A note here used to claim that
+`logp`, summed over six heads plus up to `N_ENT` Bernoulli selection rows, sat
+in the tens *by construction* and so had broken PPO's clip. Measured from the
+clone, it does not: `logp` is −2.4 on average with a minimum of −12.5, the
+selection head contributes −2.3 of that because a decision has about five legal
+rows rather than 160, and one Adam step moves the log-ratio by 0.05. Log-ratios
+in the tens were a symptom of the runaway above, not its cause, and the ±20
+clamp that was meant to contain them permitted a ratio of 4.8e8. What the joint
+*does* do is make the tail heavy, which is why the early stop reads half the
+mean square log-ratio rather than the usual `exp(-r) - 1 + r`: two unlikely rows
+drove that estimator to 17 in a minibatch whose clip fraction was 0.06, stopping
+every update after a single step.
+
+**A PPO run here has a peak and then decays, so evaluate often enough to catch
+it.** The entropy bonus is the only gradient in the loss that points the same
+way every step, so given long enough it outvotes a modest advantage signal:
+entropy climbs from 0.86 to 2.02 over seventy updates and the win rate goes
+0.25 → 0.42 → 0.00 as the policy spreads into near-random play. The obvious
+answer — a smaller `--ent`, a smaller `--lr`, a tighter `--kl-end` — was tried
+and is wrong. All three together kept the policy within a Huber KL of 0.08 of
+its initialisation over 150 updates of policy training and scored 4% against
+`scripted@10`, where the aggressive settings reached 42% in forty updates. The
+distance is what buys the improvement; the decay afterwards is the price. So the
+defaults stay aggressive, `--eval-every` is set fine enough to sample the peak,
+and `best.pt` is what you ship.
+
+Two things follow. `beta` anneals over `--updates`, in fractions of the run
+rather than in updates, so a long run holds the leash tight for far longer per
+update than a short one — `--updates 2000` left it near 0.9 where `--updates
+160` had reached 0.55 by the same update. And the first evaluation of a run
+lands *during* `--value-warmup` if `--eval-every` divides into it, which scores
+the frozen clone and anchors `best` to it; every earlier run in this repo did
+exactly that, which is why every `runs/*/best.pt` was the clone with a trained
+critic and nothing else.
+
 **The scripted ladder is a set of opponents, not a scale.** `scripted@k` is
 the one scripted bot thinking every k ticks. Measured over eight seeds from
 both seats, `@20` beats `@10` 8–0 and `@40` beats `@10` 5–3 while `@30`
@@ -127,6 +195,59 @@ results. `--refresh 0` auto-sizes to one full match.
 | imitate | non-Noop type accuracy ≥ 0.8; top-1 selection accuracy well clear of chance; validation entropy still well off zero; wins some matches against `scripted@10` from both seats |
 | PPO     | ≥ 70% versus `scripted@10` from both seats on 64 hold-out seeds, seat bias within ±5%; ≥ 55% versus the previous snapshot                                                    |
 | export  | fp32 parity exact; `npm test` green with the new `policy.json`; see the size note below                                                                                      |
+
+**Where the gates actually stand.** The model in `public/models` is a PPO
+checkpoint six generations on from the imitation clone. Over 48 hold-out seeds
+from both seats it beats `scripted@10` 85.4%, `scripted@20` 83.3% and
+`scripted@40` 77.1%, with a seat bias of 0.0 on every rung — the first time the
+≥70% gate has been met. Against the clone's 24.0% that is 278 wins in 336
+matches across five independent seed ranges, versus 46 in 192.
+
+**Iterating past the first PPO model took six generations, and four of them
+failed.** The log is worth keeping because the failures are more informative
+than the successes.
+
+| gen | change from the previous champion            | outcome                          |
+| --- | -------------------------------------------- | -------------------------------- |
+| 1   | the fixes above, from `bc5`                   | 0.240 → 0.646, decisive          |
+| 2   | `--ent-end`, annealing the entropy bonus      | 0.688, z = 1.26 — not established |
+| 3   | `--rollout` 32 → 64                           | failed; most checkpoints 0/48    |
+| 4   | `--minibatch` 1024, `--lr` 2e-4               | 0.875, z = +5.26 — decisive      |
+| 5   | generation 4's recipe again                   | failed                           |
+| 6   | gentler still: `--lr` 8e-5, `--ent` 1e-3      | 0.802, below the champion        |
+
+What moved it was **the minibatch, not the rollout or the learning rate**. At
+`--minibatch 256` an update abandoned after two of its sixty minibatches —
+`--target-kl` tripping on a gradient estimated from too few decisions — so the
+policy took a handful of large, noisy steps per rollout and mostly destroyed
+itself. Doubling the rollout did not help: it left the minibatch the same size
+and merely raised the count that went unused, two of a hundred and twenty three.
+At 1024 the whole update runs inside the trust region. Lowering `--lr` instead
+does not substitute for it, because the step count is not what was wrong: at
+8e-5 updates still stopped after two minibatches.
+
+**Three generations then failed to beat generation 4, which is what a plateau
+looks like here.** Generations 5 and 6 both started from it and both came back
+worse, and the good checkpoints of every run sit in the stretch where `steps`
+equals `planned` and the Huber KL stays under about 0.1 — visible in the log
+before any match is played, and a better guide to where the peak is than a
+short evaluation.
+
+**Screening candidates on their best score is a trap.** Every run produces a
+checkpoint that looks superb on the range it was screened on and regresses on a
+fresh one: generation 2's `ckpt180` screened 0.792 and verified 0.562,
+generation 6's `ckpt140` screened 0.875 and verified 0.802. Picking the maximum
+of nine noisy estimates is biased upward by roughly the amount that matters. So
+`--keep-every` writes checkpoints, a screen ranks them with the current champion
+included *in the same run* as a control, and nothing is promoted until it holds
+up on the two established ranges. Pairing does not rescue a small evaluation
+either — on identical seeds and seats two checkpoints disagree on about half
+their matches, so McNemar buys almost nothing over the two-proportion test.
+
+**Sampling colder does not help.** The exported graph takes `temperature` as an
+input and the browser passes 1. Measured at 0.8 and 0.6 the champion of the day
+scored 0.542 and 0.625 against 0.635 at 1.0 — neutral at best. The entropy the
+bonus leaves behind is not the kind that greedier sampling recovers.
 
 **Selection F1 is not the gate it looks like.** The scripted teacher names
 exactly one unit per command — 336 of 336 sampled multi-select labels, never

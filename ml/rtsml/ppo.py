@@ -48,17 +48,24 @@ OBS_NAMES = (
     "critic",
 )
 EVAL_SEED0 = 900_000
-LOG_RATIO_CLAMP = 20.0
+LOG_RATIO_CLAMP = 10.0
 """Log-ratios are clamped to this before `exp`. float32 `exp` overflows above ~88.
 
-This clamp, the Huber KL below, and the three non-finite guards all trace to one
-thing: `logp` is a joint summed over six heads plus up to `N_ENT` Bernoulli
-selection rows, so a per-decision log-ratio sits in the tens by construction
-rather than near zero. The clamp keeps the arithmetic finite; it does not restore
-the trust region, which the ratio clip stopped bounding long before. `approxKl`
-is logged unclamped so that stays visible. The fix at depth is to form the ratio
-per head, or to average rather than sum the selection head's terms, so what
-enters `exp` describes one decision.
+This clamp once carried a note claiming the joint log-probability is large *by
+construction* — summed over six heads plus up to `N_ENT` Bernoulli selection
+rows — and that a per-decision log-ratio therefore sits in the tens. Measured on
+a real rollout from the imitation clone, that is not so: `logp` is -2.4 on
+average with a minimum of -12.5, the selection head contributes -2.3 of it
+because a decision has about five legal rows rather than 160, and one Adam step
+moves the log-ratio by 0.05. The joint ratio is a perfectly ordinary PPO ratio.
+
+Log-ratios in the tens are a *symptom*: they appear only after the policy has
+already run away, which it did because the advantages were noise (see
+`--adv-floor`). The clamp is a guard against the arithmetic going non-finite on
+the way down, not a trust region. At the old +/-20 it permitted a ratio of 4.8e8
+and so a policy-gradient term of the same order, which is precisely the
+`pg` = 1e7 recorded in `runs/aligned/log.jsonl`; 10 keeps a blown-up minibatch
+merely large. `approxKl` is logged unclamped so the runaway stays visible.
 """
 
 
@@ -167,13 +174,48 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--updates", type=int, default=1000)
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--minibatch", type=int, default=256)
+    # 2.5e-4 trips `--target-kl` after a few minibatches of sixty, so most of a
+    # rollout is collected and thrown away, and it is still the right number.
+    # 1e-4 spends the whole update inside the trust region and gets a policy
+    # that has barely left the clone: measured over 150 updates of policy
+    # training it drifted to a Huber KL of 0.08 and scored 4% against
+    # `scripted@10`, where 2.5e-4 reached 42% in forty. The wasted rollouts buy
+    # the distance.
     parser.add_argument("--lr", type=float, default=2.5e-4)
-    parser.add_argument("--gamma", type=float, default=0.99)
+    # Per *decision*, not per tick, and a decision is SPEC.decision_ticks ticks.
+    # A match runs to a median 8,383 ticks, so ~2,100 decisions: at 0.99 the
+    # terminal +/-1 arrives discounted by 0.99^2100 = 7e-10 and the effective
+    # horizon is 100 decisions, about 20 seconds of a seven-minute match. Winning
+    # was literally not in the objective; every earlier PPO run could do no more
+    # than climb the shaping potential greedily. At 0.999 the same terminal is
+    # worth 0.12, which is the same order as the shaping a whole match
+    # accumulates, so the outcome competes with the hint instead of vanishing
+    # underneath it.
+    parser.add_argument("--gamma", type=float, default=0.999)
     parser.add_argument("--lam", type=float, default=0.95)
     parser.add_argument("--clip", type=float, default=0.2)
     parser.add_argument("--vf", type=float, default=0.5)
+    # This is the only gradient in the loss that points the same way every step,
+    # so given long enough it outvotes the advantage signal: entropy climbs from
+    # 0.86 to 2.02 over seventy updates and the win rate goes 0.25 -> 0.42 ->
+    # 0.00 as the policy spreads out into near-random play. Dropping it to 5e-4
+    # does not fix that — it only stops the policy ever getting anywhere, 4%
+    # against `scripted@10` versus 42%. A PPO run here has a peak and then
+    # decays, so evaluate often enough to catch the peak and trust `best.pt` to
+    # hold it; that is what `--eval-every` is for.
     parser.add_argument("--ent", type=float, default=0.003)
+    # Annealed to `--ent-end` over the run, on the same schedule as beta. A fixed
+    # coefficient is what ends every run here: exploration is worth most early,
+    # when the policy is still near the clone, and worth least once it has found
+    # something, at which point the bonus is simply a constant pressure toward
+    # uniform play that nothing opposes.
+    parser.add_argument("--ent-end", type=float, default=2e-4)
     parser.add_argument("--kl-start", type=float, default=1.0)
+    # The leash has to loosen for the policy to improve on the clone at all: held
+    # near 0.9 by a long `--updates`, the run stayed within a Huber KL of 0.08 of
+    # its initialisation and scored 4%. Note that beta anneals over `--updates`,
+    # so a long run loosens the leash more slowly per update than a short one —
+    # the schedule is in fractions of the run, not in updates.
     parser.add_argument("--kl-end", type=float, default=0.1)
     # Measured at 1e-3: the per-decision shaping term has std 2e-5, a fifth of the
     # constant time cost, and a terminal +/-1 reaches a 32-step rollout window
@@ -181,7 +223,13 @@ def main(argv: list[str] | None = None) -> int:
     # has to be worth more than rounding. Potential-based shaping leaves the
     # optimal policy alone, so scaling it is free.
     parser.add_argument("--shaping", type=float, default=1e-2)
-    parser.add_argument("--time-cost", type=float, default=1e-4)
+    # Paid every decision, so what matters is the discounted sum over a match,
+    # not the per-step figure. At gamma 0.999 over 2,100 decisions, 1e-4 sums to
+    # 0.086 against a terminal win worth 0.12 — the clock would have been nearly
+    # as loud as the result, and losing quickly nearly as good as winning slowly.
+    # 2e-5 sums to 0.017: enough that a draw is never free, quiet enough that the
+    # result decides.
+    parser.add_argument("--time-cost", type=float, default=2e-5)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--ladder", default="10,20,40")
     parser.add_argument("--quarters-share", type=float, default=0.25)
@@ -193,10 +241,23 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--snapshot-every", type=int, default=50)
     parser.add_argument(
+        "--keep-every",
+        type=int,
+        default=0,
+        help="also write ckpt<update>.pt every N updates; 0 disables. The in-run eval is too few "
+        "seeds to pick a winner — screen these offline with rtsml-eval instead",
+    )
+    parser.add_argument(
         "--target-kl",
         type=float,
         default=0.5,
         help="abandon the rest of an update once approxKl passes this; 0 disables",
+    )
+    parser.add_argument(
+        "--adv-floor",
+        type=float,
+        default=1e-3,
+        help="advantages are divided by their std or this, whichever is larger; stops a flat window being rescaled into noise",
     )
     parser.add_argument(
         "--value-warmup",
@@ -330,8 +391,26 @@ def main(argv: list[str] | None = None) -> int:
             # noise: entropy collapses while the win rate does not move.
             var_ret = float(returns.var())
             explained = float(1.0 - (returns - old_value).var() / var_ret) if var_ret > 1e-20 else 0.0
-            adv = (adv - adv.mean()) / (adv.std() + 1e-8)
-            beta = args.kl_start + (args.kl_end - args.kl_start) * (update - 1) / max(1, args.updates - 1)
+            # Dividing by the std alone is what killed every earlier run. Measured
+            # on a real rollout, the first 32-decision window of a match has a
+            # reward that is *exactly* constant — one unique value across every
+            # row and every step, std 0.0 — because no side has committed
+            # anything to the board yet and the potential has not moved. Once the
+            # critic has fitted that constant (explainedVariance reaches 0.994),
+            # the advantages are float32 rounding, and `/(std + 1e-8)` rescales
+            # that rounding to unit variance and hands it to PPO at full
+            # strength for three epochs. Entropy collapsed to 2e-5, the ratio ran
+            # away, and the win rate went to zero and stayed there.
+            #
+            # Dividing by whichever is larger of the std and a floor leaves a
+            # healthy window untouched — its std is well above the floor — and
+            # turns a signal-free one into the near-no-op it should always have
+            # been.
+            adv_std = float(adv.std())
+            adv = (adv - adv.mean()) / max(adv_std, args.adv_floor)
+            progress = (update - 1) / max(1, args.updates - 1)
+            beta = args.kl_start + (args.kl_end - args.kl_start) * progress
+            ent_coef = args.ent + (args.ent_end - args.ent) * progress
             # BC trains the policy heads only, so the critic arrives at PPO
             # random: its predictions (std ~0.18) swamp the real advantage signal
             # (std ~2e-5) by four orders of magnitude, and normalising advantages
@@ -353,6 +432,7 @@ def main(argv: list[str] | None = None) -> int:
             assert rollout.obs is not None
             n = rollout.steps * rollout.rows
             stats: dict[str, list[float]] = {"pg": [], "vf": [], "ent": [], "kl": [], "clip": [], "approxKl": []}
+            planned = args.epochs * math.ceil(n / args.minibatch)
             skipped = 0
             policy.train()
             stopped = False
@@ -380,7 +460,7 @@ def main(argv: list[str] | None = None) -> int:
                     v_clipped = v_old + torch.clamp(out["value"] - v_old, -args.clip, args.clip)
                     vf = 0.5 * torch.max((out["value"] - ret) ** 2, (v_clipped - ret) ** 2).mean()
                     ent = out["entropy"].mean()
-                    loss = vf if warming else pg + args.vf * vf - args.ent * ent
+                    loss = vf if warming else pg + args.vf * vf - ent_coef * ent
                     kl = torch.zeros((), device=device)
                     if reference is not None and not warming:
                         with torch.no_grad():
@@ -417,13 +497,28 @@ def main(argv: list[str] | None = None) -> int:
                     stats["ent"].append(float(ent.detach()))
                     stats["kl"].append(float(kl.detach()))
                     stats["clip"].append(float(((ratio - 1).abs() > args.clip).float().mean()))
-                    stats["approxKl"].append(float((lp_old - logp).mean().detach()))
+                    # Half the mean square log-ratio: non-negative per row, so
+                    # unlike the plain mean of (lp_old - logp) it cannot cancel.
+                    # That signed mean is why the early stop never fired — the
+                    # logs record it reaching -524, having passed the 0.5 target
+                    # thousands of updates earlier, because rows that had run one
+                    # way offset rows that had run the other.
+                    #
+                    # Not the more usual k3, exp(-r) - 1 + r, whose exponential
+                    # makes it a tail statistic: `logp` here reaches -12.5 on an
+                    # unlikely joint decision, and a couple of such rows drove k3
+                    # to 17 in a minibatch whose clip fraction was 0.06 and whose
+                    # pg was 0.03 — a policy that had barely moved, reported as a
+                    # catastrophe, stopping every update after one step.
+                    with torch.no_grad():
+                        r_kl = (logp - lp_old).clamp(-LOG_RATIO_CLAMP, LOG_RATIO_CLAMP)
+                        stats["approxKl"].append(float(0.5 * (r_kl * r_kl).mean()))
                     # PPO's trust region is only enforced through the ratio clip,
                     # which stops bounding anything once the policy has moved far:
                     # measured, approxKl runs 0.07-0.35 while the run is healthy and
                     # then climbs through 2, 6, 8 as it destroys itself. Abandon the
                     # rest of an update that has already moved too far.
-                    if not warming and args.target_kl > 0 and abs(stats["approxKl"][-1]) > args.target_kl:
+                    if not warming and args.target_kl > 0 and stats["approxKl"][-1] > args.target_kl:
                         stopped = True
                         break
 
@@ -443,11 +538,18 @@ def main(argv: list[str] | None = None) -> int:
                 "decisions": update * n,
                 "reward": float(rollout.reward.mean()),
                 "beta": beta,
+                "entCoef": ent_coef,
                 "seconds": round(time.time() - t0, 1),
                 "skipped": skipped,
                 "warming": warming,
                 "explainedVariance": explained,
+                "advStd": adv_std,
                 "stopped": stopped,
+                # Optimiser steps actually taken against the number the epochs
+                # asked for. A run that early-stops after one minibatch of forty
+                # eight is not training, however healthy its other numbers look.
+                "steps": len(stats["pg"]),
+                "planned": planned,
                 "results": {k: [None if w is None else bool(w) for w in v] for k, v in results.items()},
                 **{k: (float(np.mean(v)) if v else math.nan) for k, v in stats.items()},
             }
@@ -464,11 +566,17 @@ def main(argv: list[str] | None = None) -> int:
                 score = sum(rates) / 2
                 if score > best:
                     best = score
-                    save_checkpoint(args.out / "best.pt", policy, "ppo", hparams, {"winRateVsScripted10": score, "update": update})
+                    save_checkpoint(args.out / "best.pt", policy, "ppo", hparams, {"winRateVsScripted10": score, "update": update, "warming": warming})
                 policy.train()
-                batch = env.reset(groups)
-                roles = Roles(batch.slots, assignments)
-                opponents = snapshot_policies(league, roles, device, cache)
+                # `play` builds and tears down its own BunVectorEnv, so the
+                # training env was never touched and `batch` is still the live
+                # observation. Resetting here used to throw away every match in
+                # flight: a match needs about 65 updates to finish and the eval
+                # landed every 50, so most matches never reached a terminal +/-1
+                # and the league was never told who won — the same failure the
+                # `--refresh` note warns about, re-entered through the eval.
+            if args.keep_every and update % args.keep_every == 0 and not warming:
+                save_checkpoint(args.out / f"ckpt{update}.pt", policy, "ppo", hparams, {"update": update})
             save_checkpoint(args.out / "last.pt", policy, "ppo", hparams, {"update": update})
             log.write(json.dumps(record) + "\n")
             log.flush()
