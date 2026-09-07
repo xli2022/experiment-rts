@@ -7,8 +7,10 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { loadAnimatedModel, type AnimatedModel } from '../src/render/models/animated.js';
 import {
   galleryAnimationAt,
+  galleryTapAt,
   previewGroundOffset,
   proportionalPreviewScale,
+  type GalleryTapClip,
 } from '../src/render/unitGallery.js';
 
 if (typeof ProgressEvent === 'undefined') {
@@ -138,37 +140,72 @@ describe('unit gallery proportional scale', () => {
   });
 });
 
-describe('unit gallery attack playback', () => {
-  it('plays an attack once from frame zero before returning to the run loop', () => {
-    expect(galleryAnimationAt(1.2, 10, 10)).toEqual({
+describe('unit gallery tap playback', () => {
+  it('gives each tap the next animation in turn, then starts the list over', () => {
+    // The whole of the interaction: one control per card, and every animation
+    // the unit has behind it.
+    const taps: readonly GalleryTapClip[] = ['attack', 'die'];
+    let cursor = 0;
+    const played: string[] = [];
+    for (let tap = 0; tap < 5; tap++) {
+      const next = galleryTapAt(taps, cursor)!;
+      played.push(next.clip);
+      cursor = next.nextTap;
+    }
+    expect(played).toEqual(['attack', 'die', 'attack', 'die', 'attack']);
+  });
+
+  it('leaves a model that baked no tappable clip idling', () => {
+    expect(galleryTapAt([], 0)).toBeNull();
+  });
+
+  it('plays a tapped clip once from frame zero before returning to the idle loop', () => {
+    const attack = { clip: 'attack', startedAt: 10 } as const;
+    expect(galleryAnimationAt(attack, 1.2, 10)).toEqual({
       clip: 'attack',
       time: 0,
       loop: false,
       finished: false,
     });
-    expect(galleryAnimationAt(1.2, 10, 10.75)).toMatchObject({
+    expect(galleryAnimationAt(attack, 1.2, 10.75)).toMatchObject({
       clip: 'attack',
       time: 0.75,
       loop: false,
     });
-    expect(galleryAnimationAt(1.2, 10, 11.2)).toMatchObject({
+    expect(galleryAnimationAt(attack, 1.2, 11.2)).toMatchObject({
       clip: 'run',
       loop: true,
       finished: true,
     });
   });
 
-  it('restarts an in-progress attack on every click timestamp', () => {
-    expect(galleryAnimationAt(1.2, 4, 4.5).time).toBeCloseTo(0.5);
-    expect(galleryAnimationAt(1.2, 4.5, 4.5)).toMatchObject({
+  it('plays whichever clip the tap chose, not only the attack', () => {
+    // The second tap on a card plays its death, and it is a one-shot on the
+    // same terms: play it through once, then back to idling.
+    const die = { clip: 'die', startedAt: 3 } as const;
+    const midway = galleryAnimationAt(die, 0.9, 3.4);
+    expect(midway).toMatchObject({ clip: 'die', loop: false, finished: false });
+    expect(midway.time).toBeCloseTo(0.4);
+    expect(galleryAnimationAt(die, 0.9, 3.9)).toMatchObject({ clip: 'run', finished: true });
+  });
+
+  it('restarts an in-progress clip on every tap timestamp', () => {
+    expect(galleryAnimationAt({ clip: 'attack', startedAt: 4 }, 1.2, 4.5).time).toBeCloseTo(0.5);
+    expect(galleryAnimationAt({ clip: 'attack', startedAt: 4.5 }, 1.2, 4.5)).toMatchObject({
       clip: 'attack',
       time: 0,
       loop: false,
     });
   });
 
-  it('gracefully keeps running when a model has no attack clip', () => {
-    expect(galleryAnimationAt(undefined, 2, 3)).toEqual({
+  it('gracefully keeps idling when nothing is playing, or the clip was never baked', () => {
+    expect(galleryAnimationAt(null, undefined, 3)).toEqual({
+      clip: 'run',
+      time: 3,
+      loop: true,
+      finished: false,
+    });
+    expect(galleryAnimationAt({ clip: 'die', startedAt: 2 }, undefined, 3)).toEqual({
       clip: 'run',
       time: 3,
       loop: true,

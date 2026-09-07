@@ -35,19 +35,54 @@ interface CatalogModel {
   runGroundY?: number;
 }
 
+/**
+ * The clip a card rests in between taps.
+ *
+ * No unit has an authored idle, so the run cycle stands in for one — it is the
+ * only clip that reads as a unit waiting rather than a unit doing something.
+ */
+const IDLE_CLIP = 'run';
+
+/**
+ * The clips a tap plays, one per tap, wrapping back to the first.
+ *
+ * Deliberately not every clip the model has. The run is already what the card
+ * is doing, so a tap that played it would look like a tap that did nothing —
+ * the animations worth reaching are the ones the idle loop never shows.
+ */
+const TAP_CLIPS = ['attack', 'die'] as const;
+
+export type GalleryTapClip = (typeof TAP_CLIPS)[number];
+
+/** What each tap clip is called out loud; `die` reads badly as a noun. */
+const TAP_CLIP_NAMES: Readonly<Record<GalleryTapClip, string>> = {
+  attack: 'attack',
+  die: 'death',
+};
+
+/** A one-shot in progress: which clip, and when the tap started it. */
+export interface GalleryPlayback {
+  clip: GalleryTapClip;
+  startedAt: number;
+}
+
 interface GalleryPreview {
   scene: THREE.Scene;
   camera: THREE.OrthographicCamera;
   pool: AnimatedUnitPool;
   model: AnimatedModel;
-  attackStartedAt: number | null;
+  /** The tap clips this model actually baked, in tap order. */
+  taps: readonly GalleryTapClip[];
+  /** Which of them the next tap plays. */
+  nextTap: number;
+  playing: GalleryPlayback | null;
   texture: THREE.Texture | null;
   guide: THREE.GridHelper;
   matrix: THREE.Matrix4;
 }
 
 export interface GalleryAnimation {
-  clip: 'run' | 'attack';
+  clip: typeof IDLE_CLIP | GalleryTapClip;
   time: number;
   loop: boolean;
   finished: boolean;
@@ -213,11 +248,11 @@ export class UnitGallery {
         preview.camera.updateProjectionMatrix();
 
         const animation = galleryAnimationAt(
-          preview.model.clips.get('attack')?.duration,
-          preview.attackStartedAt,
+          preview.playing,
+          preview.playing && preview.model.clips.get(preview.playing.clip)?.duration,
           elapsedSeconds,
         );
-        if (animation.finished) preview.attackStartedAt = null;
+        if (animation.finished) preview.playing = null;
         const frame = AnimatedUnitPool.framePairFor(
           preview.model,
           animation.clip,
@@ -401,11 +436,14 @@ export class UnitGallery {
       button.className = 'unit-gallery-card-button';
       button.type = 'button';
       button.disabled = true;
+      // Kept whole on the element so the label can be rebuilt as the tap cycle
+      // advances without the card entry being in scope.
+      button.dataset.previewLabel = `${entry.unit}, ${entry.faction} faction model preview.`;
       button.setAttribute(
         'aria-label',
-        `${entry.unit}, ${entry.faction} faction model preview. Play attack animation`,
+        `${button.dataset.previewLabel} Play ${TAP_CLIP_NAMES[TAP_CLIPS[0]]} animation`,
       );
-      button.addEventListener('click', () => this.playAttack(index));
+      button.addEventListener('click', () => this.playNext(index));
 
       const slot = document.createElement('div');
       slot.className = 'unit-gallery-preview';
@@ -441,8 +479,10 @@ export class UnitGallery {
     let texture: THREE.Texture | null = null;
     try {
       model = await loadAnimatedModel(modelAssetUrl(entry.file), {
-        clips: ['run', 'attack'],
-        boundsClip: 'run',
+        clips: [IDLE_CLIP, ...TAP_CLIPS],
+        // Still the run: adding clips a tap can reach must not let a death
+        // sprawl or an overhead swing decide how the card is framed.
+        boundsClip: IDLE_CLIP,
       });
       if (session.cancelled) return;
 
@@ -463,6 +503,7 @@ export class UnitGallery {
       const button = this.buttons[index];
       card?.classList.add('loaded');
       if (button) button.disabled = false;
+      this.describeNextTap(index);
     } catch (error) {
       session.failed++;
       if (!session.cancelled) {
@@ -500,12 +541,34 @@ export class UnitGallery {
     this.status.textContent = notes.join(' · ');
   }
 
-  private playAttack(index: number): void {
+  /**
+   * Play the next of this unit's animations, then fall back to the idle loop.
+   *
+   * Each tap takes the next clip in turn and wraps around, so every animation a
+   * unit has is reachable without a second control on the card.
+   */
+  private playNext(index: number): void {
     const preview = this.previews.get(index);
-    if (!preview?.model.clips.has('attack')) return;
-    // Assigning on every click intentionally restarts the clip from frame zero,
-    // including when the previous one-shot is still in progress.
-    preview.attackStartedAt = this.elapsedSeconds;
+    const tap = preview && galleryTapAt(preview.taps, preview.nextTap);
+    if (!preview || !tap) return;
+    // Assigning on every tap intentionally restarts from frame zero, including
+    // when the previous one-shot is still in progress.
+    preview.playing = { clip: tap.clip, startedAt: this.elapsedSeconds };
+    preview.nextTap = tap.nextTap;
+    this.describeNextTap(index);
+  }
+
+  /** Name the animation the next tap will play, for a screen reader. */
+  private describeNextTap(index: number): void {
+    const button = this.buttons[index];
+    const preview = this.previews.get(index);
+    if (!button) return;
+    const prefix = button.dataset.previewLabel ?? '';
+    const next = preview && galleryTapAt(preview.taps, preview.nextTap);
+    button.setAttribute(
+      'aria-label',
+      next ? `${prefix} Play ${TAP_CLIP_NAMES[next.clip]} animation` : prefix,
+    );
   }
 }
 
@@ -569,38 +632,66 @@ function createPreview(
     camera,
     pool,
     model,
-    attackStartedAt: null,
+    taps: TAP_CLIPS.filter((clip) => model.clips.has(clip)),
+    nextTap: 0,
+    playing: null,
     texture,
     guide,
     matrix,
   };
 }
 
-/** Choose the gallery clip without allowing an attack to loop. */
+/**
+ * The clip a tap plays, and the cursor the tap after it should use.
+ *
+ * Wrapping rather than stopping at the end is what makes one control enough:
+ * a card with two animations alternates between them for as long as it is
+ * tapped, and there is never a tap that does nothing.
+ *
+ * Returns null for a model that baked none of them, whose card then only ever
+ * idles.
+ */
+export function galleryTapAt(
+  taps: readonly GalleryTapClip[],
+  nextTap: number,
+): { clip: GalleryTapClip; nextTap: number } | null {
+  if (taps.length === 0) return null;
+  const index = nextTap % taps.length;
+  return { clip: taps[index]!, nextTap: (index + 1) % taps.length };
+}
+
+/**
+ * Choose the clip a card is showing, without letting a one-shot loop.
+ *
+ * `finished` is how the caller learns to drop the playback and let the idle
+ * loop take over: the clip has already been swapped back here, so a card that
+ * is never rendered — scrolled out of view, or the gallery closed — simply
+ * resumes idling whenever it is drawn again.
+ */
 export function galleryAnimationAt(
-  attackDuration: number | undefined,
-  attackStartedAt: number | null,
+  playing: GalleryPlayback | null,
+  duration: number | undefined | null,
   elapsedSeconds: number,
 ): GalleryAnimation {
-  if (attackDuration !== undefined && attackStartedAt !== null) {
-    const attackTime = Math.max(0, elapsedSeconds - attackStartedAt);
-    if (attackTime < attackDuration - Number.EPSILON * 16) {
+  if (playing !== null && duration !== undefined && duration !== null) {
+    const time = Math.max(0, elapsedSeconds - playing.startedAt);
+    if (time < duration - Number.EPSILON * 16) {
       return {
-        clip: 'attack',
-        time: attackTime,
+        clip: playing.clip,
+        time,
         loop: false,
         finished: false,
       };
     }
     return {
-      clip: 'run',
+      clip: IDLE_CLIP,
       time: elapsedSeconds,
       loop: true,
       finished: true,
     };
   }
   return {
-    clip: 'run',
+    clip: IDLE_CLIP,
     time: elapsedSeconds,
     loop: true,
     finished: false,
