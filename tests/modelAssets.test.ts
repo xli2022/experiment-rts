@@ -5,6 +5,7 @@
  * procedural fallback as proof that an import worked.
  */
 
+import { readFileSync } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -376,6 +377,40 @@ describe('Athena2 authored model catalog', () => {
       }
     }
     expect(misframed).toEqual([]);
+  });
+
+  it('lays the Footman out when it dies, rather than sliding it upright', () => {
+    // Kevin's rig is animated twice over in every source file: a skinned
+    // skeleton and a control rig that shadows its bone names. The loader
+    // flattens tracks by name, so the two arrive as duplicates of one track and
+    // the importer has to choose. It used to choose per property, and the death
+    // came out with its waist rotation from one layer and its waist translation
+    // from the other — the footman slid eighty units backwards along the ground
+    // still standing bolt upright, because only half of the fall was chosen.
+    //
+    // The waist ending the clip a long way round from where it started is what
+    // says both halves came from the same layer. A death that merely sank or
+    // staggered would not need this test; this one falls over.
+    const model = catalog.models.find((candidate) => candidate.unit === 'Footman');
+    expect(model).toBeDefined();
+    const buffer = readFileSync(join(MODEL_ROOT, model!.file));
+    const json = glbJson(buffer);
+    const binary = glbBinary(buffer);
+    const die = json.animations?.find((animation) => animation.name === 'die');
+    const waist = json.nodes?.findIndex((node) => node.name === 'Waist');
+    const channel = die?.channels?.find(
+      (candidate) => candidate.target?.node === waist && candidate.target?.path === 'rotation',
+    );
+    const keys = quaternionKeys(
+      json,
+      binary,
+      die?.samplers?.[channel?.sampler ?? -1]?.output ?? -1,
+    );
+    expect(keys.length, 'Footman die waist rotation keys').toBeGreaterThan(1);
+    expect(
+      degreesBetween(keys[0]!, keys[keys.length - 1]!),
+      'Footman waist rotation across its death',
+    ).toBeGreaterThan(60);
   });
 
   it('ships FireDragon as a compact Unity-sampled skeletal GLB', async () => {

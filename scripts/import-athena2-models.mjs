@@ -1396,6 +1396,76 @@ function namedClip(scene, clip, name, spec, timing, sourceScene, options = {}) {
   return copy;
 }
 
+/**
+ * Pick one authored layer per node, for nodes whose tracks are duplicated.
+ *
+ * Several source rigs animate the same skeleton twice over — a skinned
+ * hierarchy and a shadowing control rig of the same bone names — and the loader
+ * flattens tracks by name, so both arrive as duplicates of one track. The two
+ * are not interchangeable: one expresses the motion relative to the rig, the
+ * other in absolute terms, and a node has to be read entirely from one or
+ * entirely from the other.
+ *
+ * Resolving each *property* on its own does not guarantee that. The Footman's
+ * death took its waist rotation from one layer and its waist translation from
+ * the other, and the two disagreed about where the fall lived: the body slid
+ * eighty units backwards along the ground while standing bolt upright, because
+ * the layer that rotates it over was only half chosen.
+ *
+ * The layers are duplicated in a consistent order across a node's properties,
+ * so the k-th candidate of every property is the same layer. Each property that
+ * can tell its candidates apart votes for the one nearest the rig's rest pose,
+ * and the node takes the layer with the most votes — an exactly tied property
+ * abstains rather than voting for whichever came first. Nodes whose properties
+ * do not have matching candidate counts have no k to agree on and are left to
+ * the caller to resolve one track at a time.
+ */
+function duplicateLayerByNode(groups, scene, sourceTime, weightedBones) {
+  // How much closer a candidate has to be before it counts as the better
+  // match. Two curves holding the same value at the sampled instant say
+  // nothing about which belongs to the rig — where they differ is later in the
+  // clip, which is the very thing being decided — so an exact tie abstains
+  // rather than falling back to the order the tracks happen to sit in.
+  const margin = 1e-6;
+  const byNode = new Map();
+  for (const [trackName, candidates] of groups) {
+    if (candidates.length < 2) continue;
+    const parsed = THREE.PropertyBinding.parseTrackName(trackName);
+    const properties = byNode.get(parsed.nodeName) ?? [];
+    properties.push({ property: parsed.propertyName, candidates });
+    byNode.set(parsed.nodeName, properties);
+  }
+
+  const chosen = new Map();
+  for (const [nodeName, properties] of byNode) {
+    const target = weightedBones.get(nodeName) ?? THREE.PropertyBinding.findNode(scene, nodeName);
+    if (!target) continue;
+    const count = properties[0].candidates.length;
+    if (properties.some((entry) => entry.candidates.length !== count)) continue;
+
+    const votes = new Array(count).fill(0);
+    for (const { property, candidates } of properties) {
+      const rest = target[property];
+      if (!rest?.toArray) continue;
+      const restValue = rest.toArray();
+      const distances = candidates.map((candidate) =>
+        transformDistance(
+          candidate.createInterpolant().evaluate(sourceTime),
+          restValue,
+          property === 'quaternion',
+        ),
+      );
+      const nearest = Math.min(...distances);
+      const tied = distances.filter((distance) => distance <= nearest + margin);
+      if (tied.length === 1) votes[distances.indexOf(nearest)]++;
+    }
+
+    const most = Math.max(...votes);
+    if (most > 0) chosen.set(nodeName, votes.indexOf(most));
+  }
+  return chosen;
+}
+
 function canonicalizeDuplicateTracks(tracks, scene, sourceTime, spec, clipName) {
   const groups = new Map();
   for (const track of tracks) {
@@ -1405,6 +1475,7 @@ function canonicalizeDuplicateTracks(tracks, scene, sourceTime, spec, clipName) 
   }
   const weightedBones = weightedBonesByName(scene);
   const weightedBoneSet = new Set(weightedBones.values());
+  const layers = duplicateLayerByNode(groups, scene, sourceTime, weightedBones);
   const canonical = [];
   let resolved = 0;
   let droppedHelpers = 0;
@@ -1423,6 +1494,15 @@ function canonicalizeDuplicateTracks(tracks, scene, sourceTime, spec, clipName) 
     }
     if (!affectsWeightedBones(target, weightedBoneSet)) {
       droppedHelpers += candidates.length;
+      continue;
+    }
+    // One layer for the whole node, whenever the node's own tracks could agree
+    // on one. Deciding each property on its own is what tore the Footman's
+    // death in half.
+    const layer = layers.get(parsed.nodeName);
+    if (layer !== undefined) {
+      canonical.push(candidates[layer]);
+      resolved += candidates.length - 1;
       continue;
     }
     const rest = target[parsed.propertyName];
