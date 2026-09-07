@@ -289,6 +289,8 @@ export function mirrorCommand(world: World, cmd: Command, twins: Int32Array): Co
       return { type: cmd.type, player, building: twinId(cmd.building), unit: cmd.unit };
     case CommandType.CancelTrain:
       return { type: cmd.type, player, building: twinId(cmd.building), slot: cmd.slot };
+    case CommandType.CancelBuild:
+      return { type: cmd.type, player, building: twinId(cmd.building) };
     case CommandType.SetRally:
       return {
         type: cmd.type,

@@ -133,6 +133,10 @@ export function executeCommand(world: World, cmd: Command): void {
       executeCancelTrain(world, cmd.building, cmd.slot, player);
       break;
 
+    case CommandType.CancelBuild:
+      executeCancelBuild(world, cmd.building, player);
+      break;
+
     case CommandType.SetRally: {
       // Only your own finished production building, and only somewhere on the
       // map. Validated here rather than in the UI like every other command.
@@ -418,7 +422,8 @@ function executeBuild(
   if (!world.map.canPlace(tileX, tileY, def.footprint)) return;
 
   // Charge immediately, like StarCraft: the cost is committed when the site is
-  // placed, and refunded only if the site is cancelled or destroyed unfinished.
+  // placed, and given back only if the player cancels it. A site destroyed
+  // before it finishes refunds nothing — losing it is the enemy's reward.
   ps.minerals -= def.mineralCost;
 
   const siteId = world.placeBuilding(building, player, tileX, tileY);
@@ -469,6 +474,55 @@ function findWorkableAt(world: World, player: PlayerId, tileX: number, tileY: nu
     if (pool.buildState[i] !== BuildState.Complete) return pool.idAt(i);
   }
   return NO_ENTITY;
+}
+
+/**
+ * Abandon an unfinished structure: refund it, free its ground, remove it.
+ *
+ * The cost was committed the moment the site was placed, so without this a
+ * misplaced foundation is minerals the player never sees again — the only way
+ * out was to let an enemy knock it down, and nothing does that to a site in
+ * your own base. A full refund, like a cancelled production slot: charging for
+ * progress would be a rule the player cannot see, since nothing on screen says
+ * how far along a site is in minerals.
+ *
+ * Finished buildings are deliberately not cancellable. Selling a structure back
+ * is a different feature with different balance consequences, and the cheerful
+ * reading of a stray keypress on a Command Post is not one anybody wants.
+ */
+function executeCancelBuild(world: World, buildingId: EntityId, player: PlayerId): void {
+  const pool = world.pool;
+  if (!pool.isAlive(buildingId)) return;
+  const bi = idIndex(buildingId);
+  if (pool.owner[bi] !== player) return;
+
+  const type = pool.type[bi]! as EntityType;
+  const def = defOf(type);
+  if (!def.isBuilding || type === EntityType.MineralPatch) return;
+  if (pool.buildState[bi] === BuildState.Complete) return;
+
+  world.player(player).minerals += def.mineralCost;
+
+  // Same two steps `reapDead` performs for a building that is killed: give the
+  // ground back, then free the entity. Done here rather than by queueing a
+  // death because a cancelled site did not die — a death is watched for by the
+  // renderer and the audio, and a player who cancelled a foundation should not
+  // be told an explosion happened where they clicked.
+  world.map.setOccupied(pool.tileX[bi]!, pool.tileY[bi]!, def.footprint, 0);
+  pool.destroy(buildingId);
+
+  // Release whoever was building it, now rather than a tick later. The
+  // construction system drops an order whose site has gone, but only after
+  // movement has already run, so the crew would take one more step towards a
+  // building that no longer exists.
+  for (let i = 0; i < pool.count; i++) {
+    if (pool.alive[i] !== 1) continue;
+    if (pool.order[i] !== Order.Build) continue;
+    if (pool.orderTarget[i] !== buildingId) continue;
+    pool.order[i] = Order.None;
+    pool.orderTarget[i] = NO_ENTITY;
+    pool.clearPath(i);
+  }
 }
 
 function executeTrain(

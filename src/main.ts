@@ -1032,6 +1032,28 @@ class Game {
       }
     }
 
+    // An unfinished structure offers to be abandoned. Same key as cancelling
+    // production, because it is the same thought — the two never appear
+    // together, since a site cannot produce anything.
+    if (
+      single >= 0 &&
+      world.pool.owner[single] === this.localPlayer &&
+      world.pool.buildState[single] !== BuildState.Complete &&
+      defOf(world.pool.type[single]! as EntityType).isBuilding
+    ) {
+      buttons.push({
+        key: 'X',
+        label: 'Cancel',
+        enabled: true,
+        onClick: () =>
+          this.issue({
+            type: CommandType.CancelBuild,
+            player: this.localPlayer,
+            building: world.pool.idAt(single),
+          }),
+      });
+    }
+
     // Workers offer the build menu.
     if (this.findSelectedWorker() !== NO_ENTITY) {
       for (const entry of BUILD_MENU) {

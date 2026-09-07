@@ -44,6 +44,7 @@ export enum CommandType {
   CancelTrain = 8,
   Surrender = 9,
   SetRally = 10,
+  CancelBuild = 11,
 }
 
 interface Base {
@@ -116,6 +117,19 @@ export interface CancelTrainCommand extends Base {
   slot: number;
 }
 
+/**
+ * Abandon a structure that has not finished going up, refunding what it cost.
+ *
+ * Names the site itself rather than the worker on it, because the two are not
+ * the same thing: a site can outlive the worker that placed it, and the whole
+ * point of cancelling is usually that there is no longer anyone coming to
+ * finish it.
+ */
+export interface CancelBuildCommand extends Base {
+  type: CommandType.CancelBuild;
+  building: EntityId;
+}
+
 export interface SurrenderCommand extends Base {
   type: CommandType.Surrender;
 }
@@ -130,6 +144,7 @@ export type Command =
   | HoldCommand
   | TrainCommand
   | CancelTrainCommand
+  | CancelBuildCommand
   | SurrenderCommand
   | SetRallyCommand;
 
@@ -178,6 +193,7 @@ function firstUnitId(c: Command): number {
     case CommandType.Train:
     case CommandType.CancelTrain:
     case CommandType.SetRally:
+    case CommandType.CancelBuild:
       return c.building;
     case CommandType.Surrender:
       return -1;
