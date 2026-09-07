@@ -98,11 +98,17 @@ interface Catalog {
 interface GlbJson {
   asset?: { version?: string };
   accessors?: {
+    bufferView?: number;
+    byteOffset?: number;
     componentType?: number;
     count?: number;
+    type?: string;
     min?: number[];
     max?: number[];
   }[];
+  bufferViews?: { byteOffset?: number; byteLength?: number; byteStride?: number }[];
+  scene?: number;
+  scenes?: { nodes?: number[] }[];
   meshes?: {
     weights?: number[];
     primitives?: {
@@ -113,6 +119,7 @@ interface GlbJson {
   }[];
   nodes?: {
     name?: string;
+    children?: number[];
     mesh?: number;
     extras?: {
       animationFormat?: string;
@@ -125,6 +132,7 @@ interface GlbJson {
   animations?: {
     name?: string;
     channels?: {
+      sampler?: number;
       target?: { node?: number; path?: string };
     }[];
     samplers?: { input?: number; output?: number }[];
@@ -167,6 +175,24 @@ const UNITY_SAMPLED_SIZE_LIMITS = {
   Succubus: 445_000,
   Wolf: 250_000,
 } as const;
+
+/**
+ * How much a rig root may wander inside one clip and still count as held.
+ *
+ * Float32 keyframes of a 45-degree quaternion wobble by about 0.03 degrees, so
+ * this is quantization noise and nothing else. A hip or a waist that is really
+ * animating moves by whole degrees.
+ */
+const HELD_STILL = 0.5;
+
+/**
+ * How far two clips' held rig roots may sit apart before it is a wrong frame.
+ *
+ * The defect this catches is always a right angle — it is a disagreement about
+ * which axis is up, not a pose — so anything in between is a margin rather than
+ * a judgement call.
+ */
+const FRAME_DISAGREEMENT = 5;
 
 describe('Athena2 authored model catalog', () => {
   it('contains unique complete entries', () => {
@@ -290,6 +316,66 @@ describe('Athena2 authored model catalog', () => {
     expect([...animatedJoints].sort(), 'Treant animated skin joints').toEqual(
       [...jointNames].sort(),
     );
+  });
+
+  it('gives every clip of a unit the same rig frame', async () => {
+    // An FBX declares its own up axis and the loader answers with a rotation
+    // above the whole rig, but only one scene node survives export and all
+    // three clips then play beneath it. A clip lifted out of a file that
+    // disagrees — an attack authored Z-up against a Y-up run, or one file of
+    // the three re-exported by the normalization pass — used to arrive rotated
+    // by exactly that difference: the alligator ran upright and attacked lying
+    // on its side, and the knight attacked and died face-down.
+    //
+    // Nothing downstream can notice. The clip is well-formed, its bones are
+    // all present, its timing matches the authored asset, and it is only wrong
+    // in a way you have to look at the unit to see.
+    //
+    // Checked on rig roots that hold still for a whole clip, where a
+    // difference between clips can only be the file's convention and never a
+    // pose. A root that is animated is a hip or a waist doing its job.
+    const misframed: string[] = [];
+    for (const model of catalog.models) {
+      const buffer = await readFile(join(MODEL_ROOT, model.file));
+      const json = glbJson(buffer);
+      const binary = glbBinary(buffer);
+      const rigRoots = new Set(
+        (json.scenes?.[json.scene ?? 0]?.nodes ?? []).flatMap(
+          (root) => json.nodes?.[root]?.children ?? [],
+        ),
+      );
+
+      const held = new Map<number, Map<string, number[]>>();
+      for (const animation of json.animations ?? []) {
+        for (const channel of animation.channels ?? []) {
+          const node = channel.target?.node;
+          if (node === undefined || !rigRoots.has(node)) continue;
+          if (channel.target?.path !== 'rotation') continue;
+          const output = animation.samplers?.[channel.sampler ?? -1]?.output;
+          const keys = quaternionKeys(json, binary, output ?? -1);
+          if (keys.length === 0 || keys.some((key) => degreesBetween(keys[0]!, key) > HELD_STILL)) {
+            continue;
+          }
+          const perClip = held.get(node) ?? new Map<string, number[]>();
+          perClip.set(animation.name ?? '?', keys[0]!);
+          held.set(node, perClip);
+        }
+      }
+
+      for (const [node, perClip] of held) {
+        const clips = [...perClip];
+        for (const [name, rotation] of clips.slice(1)) {
+          const degrees = degreesBetween(clips[0]![1], rotation);
+          if (degrees > FRAME_DISAGREEMENT) {
+            misframed.push(
+              `${model.unit} ${json.nodes?.[node]?.name}: ${name} is ${degrees.toFixed(0)} ` +
+                `degrees from ${clips[0]![0]}`,
+            );
+          }
+        }
+      }
+    }
+    expect(misframed).toEqual([]);
   });
 
   it('ships FireDragon as a compact Unity-sampled skeletal GLB', async () => {
@@ -473,6 +559,43 @@ function glbJson(buffer: Buffer): GlbJson {
     offset += 8 + length;
   }
   throw new Error('GLB has no JSON chunk');
+}
+
+function glbBinary(buffer: Buffer): Buffer {
+  let offset = 12;
+  while (offset + 8 <= buffer.byteLength) {
+    const length = buffer.readUInt32LE(offset);
+    const type = buffer.readUInt32LE(offset + 4);
+    if (type === 0x004e4942) return buffer.subarray(offset + 8, offset + 8 + length);
+    offset += 8 + length;
+  }
+  throw new Error('GLB has no binary chunk');
+}
+
+/** Every keyframe of a rotation sampler, as xyzw quaternions. */
+function quaternionKeys(json: GlbJson, binary: Buffer, accessorIndex: number): number[][] {
+  const accessor = json.accessors?.[accessorIndex];
+  if (!accessor) return [];
+  // Rotation samplers the exporter writes are always float VEC4; anything else
+  // is a file this test has no business guessing at.
+  expect(accessor.componentType, 'rotation sampler component type').toBe(5126);
+  expect(accessor.type, 'rotation sampler element type').toBe('VEC4');
+  const view = json.bufferViews?.[accessor.bufferView ?? -1];
+  if (!view) return [];
+  const start = (view.byteOffset ?? 0) + (accessor.byteOffset ?? 0);
+  const stride = view.byteStride ?? 16;
+  const keys: number[][] = [];
+  for (let key = 0; key < (accessor.count ?? 0); key++) {
+    const at = start + key * stride;
+    keys.push([0, 4, 8, 12].map((lane) => binary.readFloatLE(at + lane)));
+  }
+  return keys;
+}
+
+/** Angle between two rotations, in degrees. Sign-insensitive: q and -q agree. */
+function degreesBetween(left: number[], right: number[]): number {
+  const dot = Math.abs(left.reduce((sum, value, lane) => sum + value * right[lane]!, 0));
+  return (2 * Math.acos(Math.min(1, dot)) * 180) / Math.PI;
 }
 
 function ktx2Info(buffer: Buffer): Ktx2Info {

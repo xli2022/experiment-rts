@@ -318,6 +318,16 @@ async function importModel(
     renameConflictingAnimationHelpers(runScene, spec);
   }
 
+  // Each clip is lifted from its own FBX, and each FBX states its own up axis.
+  // Bring the ones that disagree onto the run clip's, before the exported scene
+  // node makes all three look like they were authored together. Computed here,
+  // ahead of the manifest correction below, because it is a disagreement
+  // between the *source* files rather than anything this game asked for.
+  const rebases = {
+    attack: clipSceneRebase(runAnimationScene, attackScene, spec, 'attack', timings.attack),
+    die: clipSceneRebase(runAnimationScene, dieScene, spec, 'die', timings.die),
+  };
+
   // A few source FBXs omit the up-axis or facing transform that Athena2 applies
   // above the renderer. Keep the geometry, skin, and animation data untouched
   // and carry that manifest correction on the exported model node instead.
@@ -348,6 +358,7 @@ async function importModel(
     namedClip(runScene, attackSourceClip, 'attack', spec, timings.attack, attackScene, {
       completeRestPose: geometryParts.length > 0,
       corrections: geometryCorrections.get('attack'),
+      rebase: rebases.attack,
       takeWindow: takeWindowForClip(
         takeWindows.attack,
         attackSourceClip,
@@ -360,6 +371,7 @@ async function importModel(
     namedClip(runScene, dieSourceClip, 'die', spec, timings.die, dieScene, {
       completeRestPose: geometryParts.length > 0,
       corrections: geometryCorrections.get('die'),
+      rebase: rebases.die,
       takeWindow: takeWindowForClip(
         takeWindows.die,
         dieSourceClip,
@@ -1195,9 +1207,138 @@ function validateClipTargets(scene, clips, spec) {
   }
 }
 
+/**
+ * The rotation that carries one source FBX's rig frame onto the run clip's.
+ *
+ * An FBX states its own up axis, and the loader answers by rotating the scene
+ * node it hands back: an asset authored Z-up arrives with 90 degrees about X
+ * sitting above the entire rig. The three files of one unit do not have to
+ * agree about this, and several do not. The alligator's attack is authored
+ * Z-up while its run and death are Y-up, and Unity's normalization pass
+ * re-exports the files it repairs with its own convention, so a unit whose run
+ * was repaired and whose attack was left alone ends up with two files that
+ * disagree.
+ *
+ * Only one scene node is exported, and every clip then plays beneath it. A
+ * clip lifted out of a file with a different convention loses its own answer
+ * and silently inherits that one, which is what left the alligator running
+ * upright and attacking on its side, and the knight attacking and dying
+ * face-down. The manifest's `rotateX` cannot fix it: one rotation on the model
+ * node moves all three clips together, so it can only choose which clip is
+ * wrong.
+ *
+ * The run clip is the frame everything else is brought onto, rather than the
+ * geometry file's. It is the clip the model's manifest rotation and derived
+ * ground height were tuned against and the one the player watches cross the
+ * map, so it is the orientation already known to be right — and a unit whose
+ * geometry file merely disagrees with all three of its clips (a Blender join
+ * re-exports with its own convention) is not broken and must not be moved.
+ *
+ * Returns null when the two files agree, which is the usual case.
+ */
+function clipSceneRebase(target, source, spec, clipName, timing) {
+  if (source === target) return null;
+  // A static pose is synthesized from the geometry rig's own bind pose, so it
+  // is already in the target frame. No published unit has one — a slot with a
+  // single baked frame excludes the whole unit — but the two cases would be
+  // indistinguishable here, and rebasing a pose twice is not recoverable.
+  if (timing.static) return null;
+
+  const delta = target.quaternion.clone().invert().multiply(source.quaternion);
+  const degrees = (2 * Math.acos(Math.min(1, Math.abs(delta.w))) * 180) / Math.PI;
+  if (degrees < 1e-3) return null;
+
+  // Rotation is the only part of a parent frame this knows how to move a clip
+  // through. A difference in origin or scale would misplace it instead of
+  // rotating it, and a clip that is quietly in the wrong place is the failure
+  // this whole function exists to stop, so refuse rather than guess.
+  if (source.position.distanceTo(target.position) > 1e-6) {
+    throw new Error(
+      `${spec.unit} ${clipName}: source and run FBX scene origins differ; ` +
+        'the clip cannot be rebased by rotation alone',
+    );
+  }
+  if (source.scale.distanceTo(target.scale) > 1e-6) {
+    throw new Error(
+      `${spec.unit} ${clipName}: source and run FBX scene scales differ ` +
+        `(${source.scale.toArray().join(', ')} against ${target.scale.toArray().join(', ')})`,
+    );
+  }
+
+  console.log(
+    `${spec.unit} ${clipName}: rebasing clip by ${degrees.toFixed(1)} degrees ` +
+      "onto the run FBX's up axis",
+  );
+  return delta;
+}
+
+/**
+ * Move a clip's tracks onto the run clip's frame.
+ *
+ * The correction goes exactly where the scene node it stands in for sat: on
+ * the rig's own roots, the nodes directly beneath the scene being exported.
+ * Everything deeper is authored relative to its parent and rides along
+ * unchanged, which is what keeps this from being a retarget — the pose is
+ * untouched, only the frame it is read in changes. A rebased clip's envelope
+ * comes out as the old one rotated, axis for axis.
+ *
+ * A clip with nothing to correct at that level cannot be rebased at all, and
+ * would export as visibly wrong as it does today, so that is an error rather
+ * than a warning.
+ */
+function rebaseClipTracks(clip, scene, rebase, spec, clipName) {
+  if (!rebase) return;
+  const quaternion = new THREE.Quaternion();
+  const vector = new THREE.Vector3();
+  let rebased = 0;
+  for (const track of clip.tracks) {
+    const parsed = THREE.PropertyBinding.parseTrackName(track.name);
+    const node = THREE.PropertyBinding.findNode(scene, parsed.nodeName);
+    if (!node || node.parent !== scene) continue;
+    if (parsed.propertyName === 'quaternion') {
+      for (let i = 0; i < track.values.length; i += 4) {
+        quaternion.fromArray(track.values, i).premultiply(rebase);
+        quaternion.toArray(track.values, i);
+      }
+      rebased++;
+    } else if (parsed.propertyName === 'position') {
+      for (let i = 0; i < track.values.length; i += 3) {
+        vector.fromArray(track.values, i).applyQuaternion(rebase);
+        vector.toArray(track.values, i);
+      }
+      rebased++;
+    } else if (parsed.propertyName === 'scale') {
+      // A rotation commutes with a uniform scale and permutes the axes of one
+      // that is not, which would need the scale rewritten rather than carried.
+      // No source rig does that; say so out loud rather than exporting a model
+      // stretched along the wrong axis.
+      for (let i = 0; i < track.values.length; i += 3) {
+        const [x, y, z] = [track.values[i], track.values[i + 1], track.values[i + 2]];
+        if (Math.abs(x - y) > 1e-4 || Math.abs(x - z) > 1e-4) {
+          throw new Error(
+            `${spec.unit} ${clipName}: ${parsed.nodeName} scales non-uniformly at the ` +
+              'rig root, which cannot be rebased by rotation',
+          );
+        }
+      }
+    }
+  }
+  if (rebased === 0) {
+    throw new Error(
+      `${spec.unit} ${clipName}: clip needs rebasing onto the run FBX's up axis ` +
+        'but animates nothing at the rig root',
+    );
+  }
+}
+
 function namedClip(scene, clip, name, spec, timing, sourceScene, options = {}) {
   const copy = clip.clone();
   copy.name = name;
+  // First, so that everything below reads and compares track values in the
+  // frame they will be played in — duplicate resolution and the missing-joint
+  // fill both measure a track against the geometry rig's rest pose, and a
+  // track still in another file's frame is not comparable to it.
+  rebaseClipTracks(copy, scene, options.rebase, spec, name);
   copy.tracks = copy.tracks.map(strictlyIncreasingTrack);
   copy.tracks = canonicalizeDuplicateTracks(
     copy.tracks,
