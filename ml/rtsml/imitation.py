@@ -49,25 +49,49 @@ STORED = (
 )
 
 
-def teacher_configs(procs: int, envs: int, seed0: int, max_ticks: int = 24_000) -> list[list[EnvConfig]]:
-    """Teacher matches in four patterns: either seat against the bot, teacher against teacher, and Quarters."""
+# Teacher match patterns per layout. `None` is the historical mix — three
+# quarters Lanes, one quarter Quarters — which is what trained a clone that
+# played Lanes at 25% and Quarters at 0%: a quarter of the gradient and none of
+# the checkpoint selection is not enough to learn a mode the policy is told it
+# is in. A model is now trained per layout, so a run names one.
+LANES_PATTERNS = (
+    [slot("teacher"), slot("scripted", 10)],
+    [slot("scripted", 10), slot("teacher")],
+    [slot("teacher"), slot("teacher")],
+)
+# Both orders of the team a teacher sits on, and — unlike the mix, where a
+# teacher always had a scripted ally — a pattern where the teacher plays *both*
+# slots of its team, which is how `rtsml-eval` and the browser use it. Training
+# only alongside a scripted partner teaches the student a game it will not be
+# asked to play.
+QUARTERS_PATTERNS = (
+    [slot("teacher"), slot("scripted", 10), slot("scripted", 10), slot("teacher")],
+    [slot("scripted", 10), slot("teacher"), slot("teacher"), slot("scripted", 10)],
+    [slot("teacher"), slot("teacher"), slot("scripted", 10), slot("scripted", 10)],
+    [slot("scripted", 10), slot("scripted", 10), slot("teacher"), slot("teacher")],
+)
+
+
+def teacher_configs(
+    procs: int, envs: int, seed0: int, max_ticks: int = 24_000, layout: str | None = None
+) -> list[list[EnvConfig]]:
+    """Teacher matches for one layout, or the historical mix when `layout` is None."""
     groups: list[list[EnvConfig]] = []
     i = 0
     for _ in range(procs):
         group: list[EnvConfig] = []
         for _ in range(envs):
-            pattern = i % 4
-            if pattern == 0:
-                layout, slots = LANES, [slot("teacher"), slot("scripted", 10)]
-            elif pattern == 1:
-                layout, slots = LANES, [slot("scripted", 10), slot("teacher")]
-            elif pattern == 2:
-                layout, slots = LANES, [slot("teacher"), slot("teacher")]
-            elif (i // 4) % 2 == 0:
-                layout, slots = QUARTERS, [slot("teacher"), slot("scripted", 10), slot("scripted", 10), slot("teacher")]
+            if layout == "lanes":
+                lay, slots = LANES, LANES_PATTERNS[i % len(LANES_PATTERNS)]
+            elif layout == "quarters":
+                lay, slots = QUARTERS, QUARTERS_PATTERNS[i % len(QUARTERS_PATTERNS)]
             else:
-                layout, slots = QUARTERS, [slot("scripted", 10), slot("teacher"), slot("teacher"), slot("scripted", 10)]
-            group.append(EnvConfig(seed=seed0 + i * SEED_STRIDE, layout=layout, slots=slots, max_ticks=max_ticks))
+                pattern = i % 4
+                if pattern < 3:
+                    lay, slots = LANES, LANES_PATTERNS[pattern]
+                else:
+                    lay, slots = QUARTERS, QUARTERS_PATTERNS[(i // 4) % 2]
+            group.append(EnvConfig(seed=seed0 + i * SEED_STRIDE, layout=lay, slots=list(slots), max_ticks=max_ticks))
             i += 1
         groups.append(group)
     return groups
@@ -243,8 +267,21 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--val-labels", type=int, default=512)
     parser.add_argument("--val-every", type=int, default=5, help="buffers between validations")
+    parser.add_argument(
+        "--keep-every",
+        type=float,
+        default=0,
+        help="also write ckpt<labels>.pt every N labels; 0 disables. Validation does not say which "
+        "clone plays: screen these against the scripted bot and pick on win rate",
+    )
     parser.add_argument("--seed0", type=int, default=0)
     parser.add_argument("--max-ticks", type=int, default=24_000)
+    parser.add_argument(
+        "--layout",
+        choices=["lanes", "quarters", "mix"],
+        default="lanes",
+        help="which map to clone the teacher on; a model is trained per layout",
+    )
     parser.add_argument("--init", type=Path, help="continue from a checkpoint")
     parser.add_argument("--out", type=Path, default=Path("runs/bc"))
     parser.add_argument("--device")
@@ -260,21 +297,31 @@ def main(argv: list[str] | None = None) -> int:
     set_seed(args.seed)
     rng = np.random.default_rng(args.seed)
     device = pick_device(args.device)
-    hparams = {"model": model_hparams(args), "lr": args.lr, "noopKeep": args.noop_keep, "buffer": args.buffer, "batch": args.batch}
+    layout = None if args.layout == "mix" else args.layout
+    hparams = {
+        "model": model_hparams(args),
+        "lr": args.lr,
+        "noopKeep": args.noop_keep,
+        "buffer": args.buffer,
+        "batch": args.batch,
+        # Recorded so a checkpoint says which map it is for; a Lanes model and a
+        # Quarters model are different files with the same shape.
+        "layout": args.layout,
+    }
     policy = Policy(**hparams["model"]).to(device)
     if args.init:
         policy.load_state_dict(load_checkpoint(args.init, device)["model"])
     opt = torch.optim.Adam(policy.parameters(), lr=args.lr)
     print(f"policy: {parameter_count(policy)} parameters on {device}")
 
-    val_env = BunVectorEnv(teacher_configs(1, max(1, min(4, args.envs)), VAL_SEED0, args.max_ticks))
+    val_env = BunVectorEnv(teacher_configs(1, max(1, min(4, args.envs)), VAL_SEED0, args.max_ticks, layout))
     try:
         val = collect_labels(val_env, args.val_labels, rng, args.noop_keep)
     finally:
         val_env.close()
     print(f"validation: {len(val['label'])} labels")
 
-    env = BunVectorEnv(teacher_configs(args.procs, args.envs, args.seed0, args.max_ticks))
+    env = BunVectorEnv(teacher_configs(args.procs, args.envs, args.seed0, args.max_ticks, layout))
     args.out.mkdir(parents=True, exist_ok=True)
     log = (args.out / "log.jsonl").open("a")
     best = math.inf
@@ -296,6 +343,7 @@ def main(argv: list[str] | None = None) -> int:
             best = score
             save_checkpoint(args.out / "best.pt", policy, "bc", hparams, metrics)
     labels = 0
+    kept = 0
     rounds = 0
     buffer = LabelBuffer()
     t0 = time.time()
@@ -311,6 +359,15 @@ def main(argv: list[str] | None = None) -> int:
             loss = train_on(policy, opt, buffer.materialise(), args.batch, args.epochs, device, rng, args.ent)
             buffer.clear()
             rounds += 1
+            # Validation is not the gate, and on a single layout it is actively
+            # misleading: cloning one map is an easier fit than cloning the mix,
+            # so nll runs down to 0.11 while entropy collapses to 0.12, and the
+            # clone that wins on `nll - ent * entropy` is a policy that issues a
+            # third of the teacher's commands and wins nothing. Keep the run's
+            # intermediates and choose between them on win rate.
+            if args.keep_every and labels >= (kept + 1) * args.keep_every:
+                kept = int(labels // args.keep_every)
+                save_checkpoint(args.out / f"ckpt{kept}.pt", policy, "bc", hparams, {"labels": labels})
             record: dict[str, Any] = {"round": rounds, "labels": labels, "loss": loss, "seconds": round(time.time() - t0, 1)}
             if rounds % args.val_every == 0:
                 metrics = validate(policy, val, device)

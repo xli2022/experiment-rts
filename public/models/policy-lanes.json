@@ -1,6 +1,6 @@
 {
   "specVersion": 1,
-  "model": "policy.onnx",
+  "model": "policy-lanes.onnx",
   "sha256": "ecab322adedb0e8d1c00b28725aea3c879b2e8fc11c06ecd7ca9774f4258bd50",
   "bytes": 5896728,
   "parameters": 1504126,
@@ -132,7 +132,7 @@
     "length": 2116,
     "distribution": "gumbel"
   },
-  "exportedAt": "2026-09-07T13:59:35Z",
+  "exportedAt": "2026-09-07T17:38:40Z",
   "parity": {
     "samples": 200,
     "agree": 200,
@@ -141,6 +141,7 @@
   "quantized": false,
   "checkpoint": "runs\\champions\\gen4.pt",
   "training": "ppo",
+  "layout": "lanes",
   "evaluation": {
     "layout": "lanes",
     "seeds": 48,

@@ -21,6 +21,7 @@ import { SoloTransport } from './net/localTransport.js';
 import { CommandType, type Command } from './sim/commands.js';
 import { fromFloat, toFloat } from './sim/fixed.js';
 import { coopMatch, duelMatch, isSoloMatch, withSeed, hostedBy } from './sim/match.js';
+import { MapLayout } from './sim/types.js';
 import { Simulation } from './sim/tick.js';
 import {
   BotKind,
@@ -1262,7 +1263,11 @@ async function boot(): Promise<void> {
         agentDeps = random();
       } else {
         try {
-          const runtime = await loadNeuralRuntime();
+          // `?skip=neural` is the skirmish and so always the duel map — the
+          // compiler proves it, having narrowed `skip` to 'neural' here. A
+          // co-op boot (`?skip=coop`) fills its AI slots from the scripted bot
+          // and asks for no model at all.
+          const runtime = await loadNeuralRuntime(MapLayout.Lanes);
           agentDeps = { neural: () => new NeuralAgent(runtime) };
         } catch (error) {
           console.warn('neural model unavailable, using the random stand-in:', error);

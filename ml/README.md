@@ -11,12 +11,17 @@ cd ml && pip install -e '.[dev]' && pytest      # Python 3.10+; needs bun on PAT
 
 ## The loop
 
-| step     | command                                                                | writes                               |
-| -------- | ---------------------------------------------------------------------- | ------------------------------------ |
-| imitate  | `rtsml-imitate --procs 16 --envs 8 --steps 5e6`                        | `runs/bc/{best,last}.pt`, log.jsonl  |
-| PPO      | `rtsml-ppo --init runs/bc/best.pt --procs 16 --envs 8 --updates 2000`  | `runs/ppo/{best,last}.pt`, league.pt |
-| evaluate | `rtsml-eval --ckpt runs/ppo/best.pt --seeds 64 --out eval.json`        | a table, `eval.json`                 |
-| export   | `rtsml-export --ckpt runs/ppo/best.pt --evaluation eval.json [--int8]` | `public/models/policy.{onnx,json}`   |
+**One model per map.** Every step takes `--layout lanes` or `--layout quarters`
+and the loop is run once for each; the export names the file for it. The table
+below is the Lanes pass.
+
+| step     | command                                                                          | writes                                    |
+| -------- | -------------------------------------------------------------------------------- | ----------------------------------------- |
+| imitate  | `rtsml-imitate --layout lanes --procs 16 --envs 8 --steps 5e6`                   | `runs/bc/{best,last}.pt`, log.jsonl       |
+| PPO      | `rtsml-ppo --layout lanes --init runs/bc/best.pt --minibatch 1024 --keep-every 25` | `runs/ppo/{ckpt*,best,last}.pt`, league.pt |
+| screen   | `python screen.py runs/ppo/ckpt*.pt --layout lanes --seeds 24 --seed0 1200000`    | a ranking; verify the top on two ranges   |
+| evaluate | `rtsml-eval --ckpt <winner> --layout lanes --seeds 48 --out eval.json`            | a table, `eval.json`                      |
+| export   | `rtsml-export --ckpt <winner> --layout lanes --evaluation eval.json`             | `public/models/policy-lanes.{onnx,json}`  |
 
 Every script takes `--smoke` (imitate, ppo) or small `--seeds` (eval) for a
 run that finishes in seconds; `tests/test_training.py` runs exactly those.
@@ -196,12 +201,54 @@ results. `--refresh 0` auto-sizes to one full match.
 | PPO     | ≥ 70% versus `scripted@10` from both seats on 64 hold-out seeds, seat bias within ±5%; ≥ 55% versus the previous snapshot                                                    |
 | export  | fp32 parity exact; `npm test` green with the new `policy.json`; see the size note below                                                                                      |
 
-**Where the gates actually stand.** The model in `public/models` is a PPO
-checkpoint six generations on from the imitation clone. Over 48 hold-out seeds
-from both seats it beats `scripted@10` 85.4%, `scripted@20` 83.3% and
+**Where the gates actually stand — on Lanes.** The model in `public/models` is
+a PPO checkpoint six generations on from the imitation clone. Over 48 hold-out
+seeds from both seats it beats `scripted@10` 85.4%, `scripted@20` 83.3% and
 `scripted@40` 77.1%, with a seat bias of 0.0 on every rung — the first time the
 ≥70% gate has been met. Against the clone's 24.0% that is 278 wins in 336
 matches across five independent seed ranges, versus 46 in 192.
+
+Every one of those numbers is the 1v1 map. `rtsml-eval` defaults to
+`--layout lanes`, the in-run eval hardcodes `LANES`, and so did the screening
+that picked all six champions.
+
+**On Quarters the same model wins 3%.** Measured over 64 matches against
+`scripted@10`: the clone 0/64, generation 1 2/64, the champion 2/64. Six
+generations moved the 1v1 rate sixty points and left the 2v2 rate at zero.
+
+This is not interference — the clone was already at zero before any of the
+tuning, and the supervision is sound: teacher labels on Quarters are 98.3% valid
+against 98.0% on Lanes, with the same 14% non-Noop share, so the encoding, the
+masks and the one-decision-late reporting all work there. It is simply a mode
+that got a quarter of the gradient (`--quarters-share 0.25`) and none of the
+selection pressure, in a network that is *told* which layout it is in — the
+scalars carry a `layout:Lanes`/`layout:Quarters` one-hot, plus `allies` and
+`seatInHalf`, and the critic gets its own layout bit. Nothing forces one policy
+to be the other, so neglecting one is free.
+
+**So a model is now trained per layout.** `rtsml-imitate`, `rtsml-ppo` and
+`rtsml-export` each take `--layout lanes|quarters`, a checkpoint records which
+map it is for, and the export names the file after it —
+`public/models/policy-lanes.{onnx,json}` and `policy-quarters.{onnx,json}`. The
+browser asks for the model belonging to the map it is about to play
+(`modelStem` in `src/ai/neural/browser.ts`), keeps one worker per layout rather
+than one per page, and the lobby's Neural chip is live per map: Co-op offers it
+only when a Quarters model is present. `rtsml-export` refuses a checkpoint that
+does not say which map it plays, because a Lanes model served as the Quarters
+one is a 3% bot that looks like it loaded correctly.
+
+The cost is honest: two downloads of 5.9 MB where the 4 MB budget already could
+not be met by one, and each is fetched only when a match on that map starts.
+What it buys is that neither map can be neglected by a run scored on the other,
+which is the failure above.
+
+Two details the split brought out. The Quarters teacher patterns now include the
+teacher playing *both* slots of its team, which is how `rtsml-eval` and the
+browser use the model — the old mix only ever paired a teacher with a scripted
+ally, so the student was cloned on a game it would never be asked to play. And
+the export's parity check runs on the map the model is for: the layouts are
+different sizes, 128 tiles against 152, so a Lanes match exercises neither the
+scalars nor the region of the cell head a Quarters model uses.
 
 **Iterating past the first PPO model took six generations, and four of them
 failed.** The log is worth keeping because the failures are more informative
@@ -248,6 +295,57 @@ their matches, so McNemar buys almost nothing over the two-proportion test.
 input and the browser passes 1. Measured at 0.8 and 0.6 the champion of the day
 scored 0.542 and 0.625 against 0.635 at 1.0 — neutral at best. The entropy the
 bonus leaves behind is not the kind that greedier sampling recovers.
+
+**The Lanes model was not improved by training it Lanes-only.** With the split
+in place the whole loop was rerun for Lanes: a fresh clone, then PPO, and
+separately PPO continued from the existing champion on 100% Lanes rather than
+75%. Neither beat it — from scratch 0.417, continued 0.833, the incumbent 0.917
+on the same 48 matches. That is the right result rather than a disappointing
+one: Lanes already had three quarters of the data *and* all of the checkpoint
+selection, so there was nothing for the split to give back. It also shows what
+the champion actually is — four generations of accumulated iteration, not one
+invocation of the pipeline. Regenerating it from scratch means budgeting for the
+generations, not the run.
+
+**Quarters is winnable, and PPO still cannot learn it.** Worth stating in that
+order, because the first half was checked before the second was believed: the
+teacher slot *is* the scripted bot, so `[teacher, teacher]` against
+`[scripted@10, scripted@10]` is the bot playing itself, and team 0 takes 8 of 12.
+The mode is balanced, the seats are right, and the labels are sound (98.3% valid
+against 98.0% on Lanes).
+
+What fails is the reinforcement step, and the log says exactly how. Over 450
+updates the learner finished 1,148 matches and won **4** — and the breakdown by
+opponent is the finding:
+
+| opponent      | learner's record |
+| ------------- | ---------------- |
+| `scripted@10` | 0 / 364          |
+| `scripted@20` | 0 / 362          |
+| `scripted@40` | 0 / 306          |
+| `imitation`   | 4 / 76           |
+| `ppo75`       | 0 / 28           |
+| `ppo150`      | 0 / 12           |
+
+It loses to the checkpoint it started from and to its own earlier selves. PPO is
+not failing to improve the policy here; it is making it worse.
+
+The reason is that a terminal reward nobody ever earns is a constant, and a
+constant has no gradient. On Lanes the clone wins a quarter of its matches, so
+±1 varies and the outcome is in the objective beside the shaping. On Quarters
+the clone wins none, so every episode ends −1 and the only thing left to
+optimise is the potential — and optimising board presence alone, measured
+against held-out opponents, makes the policy worse. This is the banked-potential
+failure in another dress: not failing, succeeding at the wrong objective. The
+diagnostics that would normally catch it all look healthy, which is the point
+worth remembering — `advStd` sits at 1.7e-2 against a 1e-3 floor, the critic's
+`explainedVariance` is 0.995, and the updates run their full sixty minibatches.
+
+So nothing ships for Quarters, and the Co-op Neural chip stays disabled: a bot
+that loses every match is worse than an honestly greyed-out button. The way in
+is a curriculum that lets the learner win *something* first — its own imitation
+snapshot is the obvious first rung, since 5% is not zero — so that the terminal
+signal has variance before the ladder is asked for.
 
 **Selection F1 is not the gate it looks like.** The scripted teacher names
 exactly one unit per command — 336 of 336 sampled multi-select labels, never

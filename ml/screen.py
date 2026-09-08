@@ -5,7 +5,7 @@
 import argparse, json, math, time
 from pathlib import Path
 import torch
-from rtsml.env import LANES, slot
+from rtsml.env import LANES, QUARTERS, slot
 from rtsml.evaluate import play, summarise
 from rtsml.model import Policy
 from rtsml.util import load_checkpoint, pick_device
@@ -18,10 +18,12 @@ ap.add_argument("--procs", type=int, default=20)
 ap.add_argument("--rung", type=int, default=10)
 ap.add_argument("--out", type=Path)
 ap.add_argument("--temperature", type=float, default=1.0)
+ap.add_argument("--layout", choices=["lanes","quarters"], default="lanes")
 a = ap.parse_args()
 
 dev = pick_device()
 seeds = list(range(a.seed0, a.seed0 + a.seeds))
+layout = QUARTERS if a.layout == "quarters" else LANES
 rows = []
 for path in a.ckpts:
     ck = load_checkpoint(path, dev)
@@ -29,7 +31,7 @@ for path in a.ckpts:
     pol.load_state_dict(ck["model"]); pol.eval()
     t0 = time.time(); wins = 0; n = 0; ticks = []; cpm = []; outcomes = {}
     for seat in (0, 1):
-        res = play(pol, slot("scripted", a.rung), seeds, LANES, seat, a.procs, dev, a.temperature, 24000)
+        res = play(pol, slot("scripted", a.rung), seeds, layout, seat, a.procs, dev, a.temperature, 24000)
         # Per-match outcomes keyed by (seed, seat): the same key across checkpoints
         # is the same map from the same side, so candidates can be compared pairwise
         # rather than as two independent rates. McNemar on the disagreements is far

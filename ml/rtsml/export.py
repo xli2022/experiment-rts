@@ -1,13 +1,15 @@
 """Export the act graph to ONNX for the browser, and prove it says the same thing.
 
-    rtsml-export --ckpt runs/ppo/best.pt --out ../public/models [--int8]
+    rtsml-export --ckpt runs/ppo/best.pt --layout lanes [--int8]
 
 Sampling lives inside the graph and its noise is an input, so parity between
 torch and onnxruntime is an exact comparison of the integers each returns
-for the same observation and the same noise. The result is `policy.onnx` and
-a `policy.json` beside it naming the spec version the model was trained
-against, its inputs and outputs, its hash and, if `--evaluate` ran, how it
-plays; the browser refuses a model whose spec version is not its own.
+for the same observation and the same noise. The result is
+`policy-<layout>.onnx` and a `policy-<layout>.json` beside it naming the spec
+version the model was trained against, its inputs and outputs, its hash and, if
+`--evaluate` ran, how it plays; the browser refuses a model whose spec version
+is not its own. One model per map: the layout is part of the observation, so a
+network is free to learn one map and neglect the other, and a shared one did.
 """
 
 from __future__ import annotations
@@ -113,11 +115,11 @@ def quantize_int8(onnx_bytes: bytes) -> bytes:
         return dst.read_bytes()
 
 
-def manifest(onnx_bytes: bytes, policy: Policy, extra: dict[str, Any]) -> dict[str, Any]:
+def manifest(onnx_bytes: bytes, policy: Policy, extra: dict[str, Any], model_file: str = "policy.onnx") -> dict[str, Any]:
     shapes = act_input_shapes(batch=1)
     return {
         "specVersion": SPEC.version,
-        "model": "policy.onnx",
+        "model": model_file,
         "sha256": hashlib.sha256(onnx_bytes).hexdigest(),
         "bytes": len(onnx_bytes),
         "parameters": parameter_count(policy),
@@ -130,12 +132,22 @@ def manifest(onnx_bytes: bytes, policy: Policy, extra: dict[str, Any]) -> dict[s
     }
 
 
-def live_samples(n: int, seed: int = 1) -> list[dict[str, torch.Tensor]]:
-    """Observations from a real match against the scripted bot, for a parity check that means something."""
-    from .env import LANES, BunVectorEnv, EnvConfig, noop_actions, slot
+def live_samples(n: int, seed: int = 1, layout: str = "lanes") -> list[dict[str, torch.Tensor]]:
+    """Observations from a real match against the scripted bot, for a parity check that means something.
+
+    On the map the model is for. The observation carries a `layout:*` one-hot and
+    the two maps are different sizes — 128 tiles against 152 — so a Lanes parity
+    check exercises neither the scalars nor the cells a Quarters model uses.
+    """
+    from .env import LANES, QUARTERS, BunVectorEnv, EnvConfig, noop_actions, slot
     from .util import to_torch
 
-    env = BunVectorEnv([[EnvConfig(seed=seed, layout=LANES, slots=[slot("policy"), slot("scripted", 10)])]])
+    if layout == "quarters":
+        slots = [slot("policy"), slot("policy"), slot("scripted", 10), slot("scripted", 10)]
+        cfg = EnvConfig(seed=seed, layout=QUARTERS, slots=slots)
+    else:
+        cfg = EnvConfig(seed=seed, layout=LANES, slots=[slot("policy"), slot("scripted", 10)])
+    env = BunVectorEnv([[cfg]])
     generator = torch.Generator().manual_seed(seed)
     out: list[dict[str, torch.Tensor]] = []
     try:
@@ -160,17 +172,29 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--int8", action="store_true", help="dynamic int8 weights (parity is then approximate)")
     parser.add_argument("--parity-samples", type=int, default=200)
     parser.add_argument("--synthetic", action="store_true", help="parity on random inputs rather than a live match")
-    parser.add_argument("--evaluation", type=Path, help="a JSON file from rtsml-eval to embed in policy.json")
+    parser.add_argument("--evaluation", type=Path, help="a JSON file from rtsml-eval to embed in the manifest")
+    parser.add_argument(
+        "--layout",
+        choices=["lanes", "quarters"],
+        help="which map this model plays; defaults to what the checkpoint recorded",
+    )
     args = parser.parse_args(argv)
 
     ckpt = load_checkpoint(args.ckpt, pick_device("cpu"))
+    # A model is per layout and its file is named for it. Trust the checkpoint,
+    # and refuse to guess when it does not say: a Lanes model served as the
+    # Quarters one is a 3%-win-rate bot that looks like it loaded correctly.
+    layout = args.layout or ckpt.get("hparams", {}).get("layout")
+    if layout not in ("lanes", "quarters"):
+        print(f"checkpoint records layout {layout!r}; pass --layout lanes|quarters to say which map this model is for")
+        return 1
     policy = Policy(**ckpt["hparams"].get("model", {}))
     policy.load_state_dict(ckpt["model"])
     policy.eval()
 
     fp32 = export_onnx(policy)
     generator = torch.Generator().manual_seed(0)
-    samples = [example_inputs(1, generator) for _ in range(args.parity_samples)] if args.synthetic else live_samples(args.parity_samples)
+    samples = [example_inputs(1, generator) for _ in range(args.parity_samples)] if args.synthetic else live_samples(args.parity_samples, layout=layout)
     report = parity(policy, fp32, samples)
     print(f"fp32 parity: {report['agree']}/{report['samples']}")
     if report["agree"] != report["samples"]:
@@ -178,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     final = fp32
-    extra: dict[str, Any] = {"parity": report, "quantized": False, "checkpoint": str(args.ckpt), "training": ckpt.get("kind")}
+    extra: dict[str, Any] = {"parity": report, "quantized": False, "checkpoint": str(args.ckpt), "training": ckpt.get("kind"), "layout": layout}
     if args.int8:
         final = quantize_int8(fp32)
         q = parity(policy, final, samples)
@@ -188,9 +212,10 @@ def main(argv: list[str] | None = None) -> int:
         extra["evaluation"] = json.loads(args.evaluation.read_text())
 
     args.out.mkdir(parents=True, exist_ok=True)
-    (args.out / "policy.onnx").write_bytes(final)
-    (args.out / "policy.json").write_text(json.dumps(manifest(final, policy, extra), indent=2) + "\n")
-    print(f"wrote {args.out / 'policy.onnx'} ({len(final) / 1e6:.2f} MB) and policy.json")
+    stem = f"policy-{layout}"
+    (args.out / f"{stem}.onnx").write_bytes(final)
+    (args.out / f"{stem}.json").write_text(json.dumps(manifest(final, policy, extra, f"{stem}.onnx"), indent=2) + "\n")
+    print(f"wrote {args.out / (stem + '.onnx')} ({len(final) / 1e6:.2f} MB) and {stem}.json")
     return 0
 
 

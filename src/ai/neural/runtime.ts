@@ -17,7 +17,7 @@ import { SPEC } from './spec.js';
 import type { ActRequest, NeuralRuntime, NeuralRuntimeStats } from './agent.js';
 import type { ActMessage, FromWorker, InitMessage, ToWorker } from './messages.js';
 
-/** `public/models/policy.json`, written by `rtsml-export`. */
+/** `public/models/policy-<layout>.json`, written by `rtsml-export`. */
 export interface PolicyManifest {
   readonly specVersion: number;
   /** File name beside the manifest. */

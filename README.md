@@ -201,12 +201,14 @@ cd ml && pip install -e '.[dev]' && pytest
 rtsml-imitate --procs 16 --envs 8 --steps 5e6
 rtsml-ppo --init runs/bc/best.pt --procs 16 --envs 8
 rtsml-eval --ckpt runs/ppo/best.pt --seeds 64 --out eval.json
-rtsml-export --ckpt runs/ppo/best.pt --evaluation eval.json --int8
+rtsml-export --ckpt runs/ppo/best.pt --layout lanes --evaluation eval.json
 ```
 
 See `ml/README.md` for what each step is and the gates between them. The
-export writes `public/models/policy.onnx` and `policy.json`; a build that has
-them offers the Neural chip, and
+export writes `public/models/policy-<layout>.onnx` and `policy-<layout>.json` —
+one model per map, since the layout is part of what the policy observes and a
+shared model learned Lanes and neglected Quarters. A build that has the pair for
+a map offers the Neural chip on that map's modes, and
 
 ```sh
 npm run build && npm run smoke:neural
@@ -1013,7 +1015,7 @@ Things about the packaging that were arrived at the hard way:
   only when a neural slot is about to be played: the lobby loads the model
   _before_ connecting, so a peer that cannot run it never leaves the other
   waiting on a match that will not start.
-- **A model names the codec it was trained for.** `public/models/policy.json`
+- **A model names the codec it was trained for.** `public/models/policy-<layout>.json`
   carries `specVersion`, and `WorkerRuntime.load` refuses any other than
   `SPEC.version`: a model trained against another feature layout would run
   happily and play nonsense. The Neural chip is live only when the manifest

@@ -34,6 +34,7 @@ import { NeuralAgent } from '../ai/neural/agent.js';
 import { loadNeuralRuntime, probeNeuralModel } from '../ai/neural/browser.js';
 import type { WorkerRuntime } from '../ai/neural/runtime.js';
 import { coopMatch, duelMatch } from '../sim/match.js';
+import { MapLayout } from '../sim/types.js';
 import { BotKind, type MatchConfig } from '../sim/types.js';
 import { audio } from '../audio/audio.js';
 
@@ -77,6 +78,16 @@ const BOT_KINDS = Object.keys(BOT_LABELS).map(Number) as BotKind[];
  */
 function needsNeuralModel(mode: LobbyMode): boolean {
   return mode.kind !== 'versus' && mode.bot === BotKind.Neural;
+}
+
+/**
+ * The map a mode is played on, and so which neural model it needs. Kept beside
+ * `configFor`, which is the other place the same mapping is made — a mode that
+ * builds a `coopMatch` here and asks for the Lanes model there would load a
+ * model that plays the wrong map at 3%.
+ */
+function layoutFor(mode: LobbyMode): MapLayout {
+  return mode.kind === 'coop' ? MapLayout.Quarters : MapLayout.Lanes;
 }
 
 /** Turn a choice plus an agreed seed into the match every peer will run. */
@@ -188,30 +199,34 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
      * for a slot nothing can play. A mode screen open when the answer arrives
      * is redrawn so the chip comes alive without a click.
      */
-    let neuralAvailable: boolean | null = null;
+    const neuralAvailable = new Map<MapLayout, boolean>();
     let redrawMode: (() => void) | null = null;
-    void probeNeuralModel().then((manifest) => {
-      neuralAvailable = manifest !== null;
-      redrawMode?.();
-    });
+    for (const layout of [MapLayout.Lanes, MapLayout.Quarters]) {
+      void probeNeuralModel(layout).then((manifest) => {
+        neuralAvailable.set(layout, manifest !== null);
+        redrawMode?.();
+      });
+    }
 
     /**
      * The model, loaded once per page and shared by every neural slot this
      * peer hosts. Loaded *before* connecting, so a peer that cannot run the
      * model never leaves the other waiting on a match that will not start.
      */
-    let runtimeLoading: Promise<WorkerRuntime> | null = null;
-    const ensureRuntime = (): Promise<WorkerRuntime> => {
-      if (runtimeLoading === null) {
-        runtimeLoading = loadNeuralRuntime().catch((error: unknown) => {
-          runtimeLoading = null;
+    const runtimeLoading = new Map<MapLayout, Promise<WorkerRuntime>>();
+    const ensureRuntime = (layout: MapLayout): Promise<WorkerRuntime> => {
+      let loading = runtimeLoading.get(layout);
+      if (loading === undefined) {
+        loading = loadNeuralRuntime(layout).catch((error: unknown) => {
+          runtimeLoading.delete(layout);
           throw error;
         });
+        runtimeLoading.set(layout, loading);
       }
-      return runtimeLoading.then((runtime) => {
+      return loading.then((runtime) => {
         if (!runtime.disposed) return runtime;
-        runtimeLoading = null;
-        return ensureRuntime();
+        runtimeLoading.delete(layout);
+        return ensureRuntime(layout);
       });
     };
 
@@ -245,7 +260,7 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
         return;
       }
       // Already loaded by `withModel` on the way here; this only unwraps it.
-      void ensureRuntime().then((runtime) => {
+      void ensureRuntime(layoutFor(mode)).then((runtime) => {
         overlay.remove();
         resolve({ transport, config, agentDeps: { neural: () => new NeuralAgent(runtime) } });
       });
@@ -261,7 +276,7 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
         <h1>Loading the neural bot…</h1>
         <p>Fetching the model and starting its worker. This happens once.</p>
       `);
-      ensureRuntime()
+      ensureRuntime(layoutFor(mode))
         .then(then)
         .catch((error: unknown) => {
           showError(error instanceof Error ? error.message : String(error), back);
@@ -295,18 +310,21 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
       blurb: string;
       /** Show the bot picker. True exactly when the mode has an AI in it. */
       hasBots: boolean;
+      /** The map this mode plays, so the Neural chip reflects that map's model. */
+      layout: MapLayout;
       actions: ModeAction[];
       back: () => void;
     }): void => {
       const chips = spec.hasBots
         ? `<div id="difficulty-row" role="group" aria-label="AI opponent">
              ${BOT_KINDS.map((k) => {
-               const off = k === BotKind.Neural && neuralAvailable !== true;
+               const known = neuralAvailable.get(spec.layout);
+               const off = k === BotKind.Neural && known !== true;
                const title = !off
                  ? ''
-                 : neuralAvailable === null
+                 : known === undefined
                    ? ' title="Checking whether this build ships a model…"'
-                   : ' title="This build ships no neural model. See ml/README.md for how to train and export one."';
+                   : ' title="This build ships no neural model for this map. See ml/README.md for how to train and export one."';
                return `<button class="chip" data-bot="${k}"${off ? ' disabled' : ''}${title}>${BOT_LABELS[k]}</button>`;
              }).join('')}
            </div>`
@@ -358,6 +376,7 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
                 Neural is a learned player that sees only what you would. Neither
                 gets bonus income or extra units.`,
         hasBots: true,
+        layout: MapLayout.Lanes,
         actions: [
           {
             label: 'Start match',
@@ -385,6 +404,7 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
                 other's scouting, and win or lose together — a side is only
                 beaten once every structure on it is gone.`,
         hasBots: true,
+        layout: MapLayout.Quarters,
         actions: [
           {
             label: 'Play online with a friend',
@@ -413,6 +433,7 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
                 online with a room code, or against a second tab on this
                 computer with no network at all.`,
         hasBots: false,
+        layout: MapLayout.Lanes,
         actions: [
           { label: 'Play online', primary: true, run: () => online({ kind: 'versus' }, versus) },
           {

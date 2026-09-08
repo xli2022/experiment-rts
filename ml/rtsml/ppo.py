@@ -138,7 +138,12 @@ def build_configs(league: League, procs: int, envs: int, rng: np.random.Generato
         group: list[EnvConfig] = []
         assigned: list[Assignment] = []
         for _ in range(envs):
-            layout = QUARTERS if rng.random() < args.quarters_share else LANES
+            if args.layout == "lanes":
+                layout = LANES
+            elif args.layout == "quarters":
+                layout = QUARTERS
+            else:
+                layout = QUARTERS if rng.random() < args.quarters_share else LANES
             seat = i % 2
             cfg = match_config(seed_base + i * SEED_STRIDE, layout, seat, members[i].slot(), args.max_ticks)
             cfg.shaping, cfg.time_cost, cfg.gamma = args.shaping, args.time_cost, args.gamma
@@ -232,6 +237,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--time-cost", type=float, default=2e-5)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--ladder", default="10,20,40")
+    parser.add_argument(
+        "--layout",
+        choices=["lanes", "quarters", "mix"],
+        default="lanes",
+        help="which map to train and evaluate on; a model is trained per layout",
+    )
+    # Only consulted for `--layout mix`. The mixed run is what shipped a model
+    # that played Lanes at 85% and Quarters at 3%: the policy is *told* its
+    # layout by a one-hot scalar, so it can neglect the quarter of the data it
+    # is scored on least, and the in-run eval scored only Lanes.
     parser.add_argument("--quarters-share", type=float, default=0.25)
     parser.add_argument(
         "--refresh",
@@ -298,6 +313,10 @@ def main(argv: list[str] | None = None) -> int:
             f"({match_updates} would cover the {args.max_ticks}-tick cap)."
         )
 
+    # A mixed run has no single map to score, so it is scored on the one the
+    # game ships most of; a per-layout run is scored on its own.
+    eval_layout = QUARTERS if args.layout == "quarters" else LANES
+
     set_seed(args.seed)
     rng = np.random.default_rng(args.seed)
     generator = torch.Generator().manual_seed(args.seed)
@@ -315,6 +334,10 @@ def main(argv: list[str] | None = None) -> int:
         policy = Policy(**hparams["model"]).to(device)
         reference = None
     hparams.update({"ppo": {k: v for k, v in vars(args).items() if not isinstance(v, Path)}})
+    # Top level too, beside the model shape: `rtsml-export` reads it to name the
+    # file, and a checkpoint that does not say which map it plays is a checkpoint
+    # someone will ship to the wrong one.
+    hparams["layout"] = args.layout
     opt = torch.optim.Adam(policy.parameters(), lr=args.lr, eps=1e-5)
     critic_params = {id(q) for q in (*policy.critic_mlp.parameters(), *policy.value_head.parameters())}
     trunk = [q for q in policy.parameters() if id(q) not in critic_params]
@@ -561,7 +584,7 @@ def main(argv: list[str] | None = None) -> int:
                 policy.eval()
                 rates = []
                 for seat in (0, 1):
-                    rates.append(summarise(play(policy, slot("scripted", 10), seeds, LANES, seat, args.procs, device, args.temperature, args.max_ticks))["winRate"])
+                    rates.append(summarise(play(policy, slot("scripted", 10), seeds, eval_layout, seat, args.procs, device, args.temperature, args.max_ticks))["winRate"])
                 record["eval"] = {"seat0": rates[0], "seat1": rates[1]}
                 score = sum(rates) / 2
                 if score > best:
