@@ -27,7 +27,7 @@ import {
   defOf,
   reachSlackFor,
 } from '../../config/rules.js';
-import type { FlowFieldCache } from '../pathing/flowfield.js';
+import type { FlowField, FlowFieldCache } from '../pathing/flowfield.js';
 import { ARRIVE_BEST_NONE, ENTITY_CAPACITY, idIndex, MAX_PATH } from '../entities.js';
 import {
   FIX_HALF,
@@ -43,6 +43,7 @@ import {
   type Fix,
 } from '../fixed.js';
 import { AStar, nearestWalkable } from '../pathing/astar.js';
+import { lineOfSightClear, smoothPath, tileCentreX, tileCentreY } from '../pathing/los.js';
 import { approachPoint } from './economy.js';
 import type { EntityDef } from '../../config/rules.js';
 import { EntityType, NO_ENTITY, Order } from '../types.js';
@@ -398,12 +399,101 @@ function followFlowFields(world: World, fields: FlowFieldCache): void {
       tx = pool.orderX[i]!;
       ty = pool.orderY[i]!;
     } else {
-      tx = fromInt(world.map.tileXOf(next)) + FIX_HALF;
-      ty = fromInt(world.map.tileYOf(next)) + FIX_HALF;
+      // Not at the next tile: at the furthest tile down the field this unit can
+      // still walk to in a straight line. See `lookAhead`.
+      lookAhead(world, field, i, next, flip, aimOut);
+      tx = aimOut.x;
+      ty = aimOut.y;
     }
 
     stepToward(world, i, tx, ty, def.speedPerTick, def.turnPerTick);
   }
+}
+
+/**
+ * How many tiles down the flow field to look for something to walk at.
+ *
+ * Far enough that a leg spans the longest straight a unit meets in a corridor,
+ * short enough that the visibility tests stay cheap: this runs per unit per
+ * tick, and the scan stops early the moment sight breaks, so an army in broken
+ * ground pays for two or three tests rather than eight.
+ */
+const FLOW_LOOKAHEAD = 8;
+
+/** Where `lookAhead` puts its answer. Scratch; never read across calls. */
+const aimOut = { x: 0 as Fix, y: 0 as Fix };
+
+/** The tiles `lookAhead` is considering. Scratch; never read across calls. */
+const probe = new Int32Array(FLOW_LOOKAHEAD);
+
+/**
+ * The furthest point down the flow field a unit can walk to in a straight line.
+ *
+ * Steering at the *next* tile is what made flow-field movement zig-zag, and it
+ * is worth being precise about why, because the obvious answer — that eight
+ * neighbours can only express eight headings — is only half of it.
+ *
+ * A unit aims at the centre of the adjacent tile but never arrives there: it
+ * crosses into that tile at the corner nearest it and the field immediately
+ * names a new target, so every leg begins from a tile corner while every leg
+ * ends at a tile centre. Walking a shallow diagonal, the heading came out 45
+ * degrees, then 18, then 38, then 18 again, tile after tile, and `turnPerTick`
+ * dutifully rotated the model into each one. That is the wobble.
+ *
+ * Aiming eight tiles out instead makes crossing a boundary a small correction
+ * rather than a new direction, and on open ground the unit simply walks the
+ * straight line it should always have walked. The field is still consulted
+ * every tick from where the unit actually stands, so units still flow around
+ * each other and around a building that went up a moment ago — nothing is
+ * cached and nothing goes stale.
+ *
+ * The first step is taken on the field's word alone, exactly as before, so this
+ * can only ever improve on the old behaviour: the flow field has already
+ * applied the corner rule to that step. Every step after it has to survive
+ * `lineOfSightClear`, which applies the same rule to the whole segment.
+ */
+function lookAhead(
+  world: World,
+  field: FlowField,
+  index: number,
+  next: number,
+  flip: boolean,
+  out: { x: Fix; y: Fix },
+): void {
+  const pool = world.pool;
+  const px = pool.posX[index]!;
+  const py = pool.posY[index]!;
+
+  // Where the field leads over the next few tiles. Probing from each tile's
+  // centre rather than from the unit, which is what `stepFrom` does when given
+  // no position: past the first step the unit is nowhere near, and feeding it a
+  // position a corridor away would break ties toward tiles behind it.
+  probe[0] = next;
+  let n = 1;
+  let cur = next;
+  while (n < FLOW_LOOKAHEAD) {
+    const ahead = field.stepFromCentre(world.map, cur, flip);
+    if (ahead < 0) break;
+    probe[n++] = ahead;
+    cur = ahead;
+  }
+
+  // Furthest first, so open ground — where the whole lookahead is visible and
+  // this is most worth doing — costs one visibility test rather than one per
+  // tile. A test that fails gives up at the blocking tile, so the walk back is
+  // cheap too.
+  for (let k = n - 1; k > 0; k--) {
+    const cx = tileCentreX(world.map, probe[k]!);
+    const cy = tileCentreY(world.map, probe[k]!);
+    if (!lineOfSightClear(world.map, px, py, cx, cy, flip)) continue;
+    out.x = cx;
+    out.y = cy;
+    return;
+  }
+
+  // Nothing further is visible: the next tile, exactly as before.
+  out.x = tileCentreX(world.map, next);
+  out.y = tileCentreY(world.map, next);
 }
 
 /** Move `index` toward (tx, ty) by at most `speed`, turning to face the way. */
@@ -448,21 +538,37 @@ function stepToward(
 }
 
 /**
- * Roughly how far this unit still has to travel along its path.
+ * How far this unit still has to travel along its path.
  *
- * Straight-line to the last waypoint plus a tile per waypoint after the next,
- * which overestimates a winding route and underestimates nothing — and only
- * matters near the end, where the path is short and the estimate is tight. A
- * unit needs this to know when to start easing off, not to navigate by.
+ * The true length of the remaining polyline: the unit to its next waypoint,
+ * then waypoint to waypoint. A unit needs this to know when to start easing
+ * off, not to navigate by.
+ *
+ * This used to be the straight line to the final waypoint plus a tile for each
+ * waypoint in between, which was a fair estimate while a waypoint meant a tile
+ * and consecutive ones were a tile apart. Now that paths are string-pulled the
+ * waypoints are corners, two of them can be forty tiles apart, and that
+ * estimate reads a route around a headland as very nearly the straight line
+ * across it — so a unit braked to a crawl the moment it started one. Summing
+ * the segments costs a handful of distances against a path that smoothing has
+ * already made short.
  */
 function distanceLeft(world: World, index: number, len: number, cursor: number): Fix {
   const pool = world.pool;
-  const last = pool.pathNode(index, len - 1);
-  const lx = fromInt(world.map.tileXOf(last)) + FIX_HALF;
-  const ly = fromInt(world.map.tileYOf(last)) + FIX_HALF;
-  const direct = vecDist(pool.posX[index]!, pool.posY[index]!, lx, ly);
-  const corners = len - cursor - 1;
-  return corners > 0 ? direct + fromInt(corners) : direct;
+  let px = pool.posX[index]!;
+  let py = pool.posY[index]!;
+  let total = 0;
+
+  for (let k = cursor; k < len; k++) {
+    const tile = pool.pathNode(index, k);
+    const wx = tileCentreX(world.map, tile);
+    const wy = tileCentreY(world.map, tile);
+    total += vecDist(px, py, wx, wy);
+    px = wx;
+    py = wy;
+  }
+
+  return total;
 }
 
 /**
@@ -599,7 +705,7 @@ function servePathRequest(world: World, astar: AStar, i: number): void {
     pool.clearPath(i);
     return;
   }
-  const path = astar.find(world.map, startTile, goalTile, [], flip);
+  const path = astar.find(world.map, startTile, goalTile, pathScratch, flip);
   if (path.length === 0) {
     // No route. Drop the order so the unit does not spin re-requesting, and
     // back off before trying again — a failed search costs the full expansion
@@ -611,9 +717,25 @@ function servePathRequest(world: World, astar: AStar, i: number): void {
       pool.order[i] = Order.None;
     }
   } else {
-    pool.setPath(i, path);
+    // Store the corners, not the tiles. A* answers one node per tile, and a
+    // unit walking that literally can only head in the eight directions the
+    // grid offers, so it staircases across open ground. String-pulling drops
+    // every node the unit can already see past: a straight run becomes one
+    // leg, and what is left is the turns it genuinely has to make.
+    //
+    // It also buys back the route length that `MAX_PATH` used to cost. A path
+    // longer than 48 tiles was truncated and the unit stopped partway to ask
+    // again; 48 *corners* is further than any route on any map here.
+    pool.setPath(i, smoothPath(world.map, path, pool.posX[i]!, pool.posY[i]!, flip, smoothScratch));
   }
 }
+
+/**
+ * Reused buffers for the two stages of a path request. One search runs at a
+ * time, and neither array outlives the call that fills it.
+ */
+const pathScratch: number[] = [];
+const smoothScratch: number[] = [];
 
 /**
  * How far past its weapon range a unit will walk to reach something.

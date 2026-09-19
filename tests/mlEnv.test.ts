@@ -5,12 +5,15 @@
  * a decision executes exactly when the browser would execute it; every
  * decision the masks allow is taken; and the teacher's labels are decisions
  * the student could have made from the same observation.
+ *
+ * "From the same observation" is load-bearing in that last one: a label is
+ * checked against the masks it was encoded with, never against a later world.
  */
 
 import { describe, expect, it } from 'vitest';
 import { DECISION_TICKS } from '../src/ai/cadence.js';
 import { executeTickFor } from '../src/ai/headless.js';
-import { actionToInts, allocAction, decode } from '../src/ai/neural/actions.js';
+import { actionToInts, allocAction, legalise } from '../src/ai/neural/actions.js';
 import { sampleUniform } from '../src/ai/neural/random.js';
 import { ACTION_INTS, ActionType } from '../src/ai/neural/spec.js';
 import { idIndex } from '../src/sim/entities.js';
@@ -150,7 +153,14 @@ describe('the training environment', () => {
         action.cell = slot.label[3]!;
         action.sub = slot.label[4]!;
         for (let k = 0; k < action.selection.length; k++) action.selection[k] = slot.label[5 + k]!;
-        expect(decode(action, world, slot.frame)).not.toBeNull();
+        // Against the masks the label shipped with, which is the whole of what
+        // `writeLabel` promises. Decoding it against the *live* world instead
+        // looks stricter and is in fact wrong: a teacher slot is reported one
+        // decision behind, so by the time the label surfaces the command has
+        // already executed — and a Build whose site its own foundation now
+        // occupies no longer decodes, through no fault of the label. That is a
+        // real match, four ticks after the frame the label was encoded against.
+        expect(legalise(action, slot.masks)).toBe(true);
         expect(slot.masks.type[action.type]).toBe(1);
       }
       env.step(new Map());

@@ -2,11 +2,22 @@
  * Bots are players, and there is one scripted bot.
  *
  * Easy, Normal and Hard used to be three tunings of the scripted bot; Hard is
- * the one that survives, and the merge has to be provably behaviour-preserving.
- * The fixtures under `tests/fixtures/` were recorded from the pre-merge build:
- * every command the Hard bot decided on every think of two whole matches, plus
- * the entity pool's checksum after every tick. Replaying them here and asking
- * the merged bot the same questions on the same worlds pins the logic exactly.
+ * the one that survives, and the merge had to be provably behaviour-preserving.
+ * The fixtures under `tests/fixtures/` are how: every command the bot decided on
+ * every think of two whole matches, plus the entity pool's checksum after every
+ * tick. Replaying them here and asking the live bot the same questions on the
+ * same worlds pins both the bot's decisions and the simulation to the byte.
+ *
+ * A golden master only holds while the thing it mastered holds still, and these
+ * were first recorded from the pre-merge build. A recorded think is comparable
+ * only while the replayed world still matches the world it was recorded on, so
+ * the first deliberate change to how units move — path smoothing, which put
+ * every unit somewhere slightly different — ended that. They were re-recorded
+ * then, and the pre-merge comparison they were made for lives on in the commit
+ * that introduced them. What they pin from here is regression: the bot is a
+ * deterministic function of world state, and replaying its commands reproduces
+ * this exact checksum chain. `scripts/record-bot-fixtures.ts` re-records them,
+ * and says when that is and is not the right thing to do.
  *
  * The rest covers the interface every bot shares — the driver, the cadence
  * wrapper, the unit cap — and the fact that the simulation runs no bot itself.

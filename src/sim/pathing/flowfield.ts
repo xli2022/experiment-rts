@@ -39,6 +39,14 @@ const COST_DIAGONAL = 14;
 /** Distance value meaning "no route to the goal from here". */
 export const UNREACHABLE = 0x7fffffff;
 
+/**
+ * Cache slot meaning "not worked out yet".
+ *
+ * Distinct from -1, which `stepFrom` returns for a tile with nowhere better to
+ * go and which is worth remembering like any other answer.
+ */
+const UNCACHED = -2;
+
 const NEIGHBOURS: readonly (readonly [number, number, number])[] = [
   [1, 0, COST_STRAIGHT],
   [-1, 0, COST_STRAIGHT],
@@ -92,6 +100,10 @@ export class FlowField {
    */
   private readonly buckets: number[][] = Array.from({ length: BUCKET_COUNT }, () => []);
 
+  /** Memoised `stepFromCentre` answers, per frame. See that method. */
+  private centreStep: Int32Array | null = null;
+  private centreStepFlipped: Int32Array | null = null;
+
   constructor(tileCount: number) {
     this.dist = new Int32Array(tileCount);
   }
@@ -101,6 +113,8 @@ export class FlowField {
     this.goalTile = goalTile;
     this.builtVersion = map.occupancyVersion;
     this.dist.fill(UNREACHABLE);
+    this.centreStep?.fill(UNCACHED);
+    this.centreStepFlipped?.fill(UNCACHED);
     for (let b = 0; b < BUCKET_COUNT; b++) this.buckets[b]!.length = 0;
 
     if (goalTile < 0) return;
@@ -247,6 +261,42 @@ export class FlowField {
     }
 
     return bestTile;
+  }
+
+  /**
+   * `stepFrom` asked from a tile's own centre, memoised.
+   *
+   * Steering looks several tiles down the field every tick, and every unit on a
+   * tile gets the same answer for every step past the first — the question
+   * depends on the tile, not on who is asking. Without this, an army of 120
+   * marching units re-derived the same handful of answers some 800 times a
+   * tick, which was most of what looking ahead cost.
+   *
+   * One cache per frame: `flip` decides the order equally good neighbours are
+   * compared in, so the two halves of the map genuinely have different answers.
+   * The flipped half's cache is allocated only if something asks for it, which
+   * in an ordinary match is never — two players share a field only when they
+   * order moves onto the very same tile.
+   *
+   * Scratch, like the field itself: derived from the map and the goal, and
+   * excluded from the world checksum along with the rest of the cache.
+   */
+  stepFromCentre(map: GameMap, tile: number, flip: boolean): number {
+    let cache = flip ? this.centreStepFlipped : this.centreStep;
+    if (cache === null) {
+      cache = new Int32Array(this.dist.length).fill(UNCACHED);
+      if (flip) this.centreStepFlipped = cache;
+      else this.centreStep = cache;
+    }
+    // Same guard `stepFrom` keeps on `dist`: an out-of-range tile has no answer
+    // to remember, and reading one out of the cache would hand back undefined
+    // where the caller is promised a tile index or -1.
+    if (tile < 0 || tile >= cache.length) return this.stepFrom(map, tile, flip);
+    const hit = cache[tile]!;
+    if (hit !== UNCACHED) return hit;
+    const step = this.stepFrom(map, tile, flip);
+    cache[tile] = step;
+    return step;
   }
 
   /** True when this tile has no route to the goal. */
