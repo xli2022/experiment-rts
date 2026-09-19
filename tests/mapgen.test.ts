@@ -22,6 +22,7 @@ import { PATCHES_PER_BASE, PATCHES_PER_EXPANSION, defOf } from '../src/config/ru
 import { GameMap, MAP_SIZE, generateMap, mirrorTile } from '../src/sim/map.js';
 import { buildLayout, mirror, mirroredHalf, nearestOn, pointAt } from '../src/sim/mapgen.js';
 import { Simulation } from '../src/sim/tick.js';
+import { MIN_PATCH_CLEARANCE } from '../src/sim/world.js';
 import { EntityType, Tile } from '../src/sim/types.js';
 
 const SEEDS = [0x51ce7a11, 0, 1, 7, 99, 0x7fffffff, 0xdecafbad | 0];
@@ -63,6 +64,13 @@ function startsConnected(map: GameMap, blocks: { x: number; y: number; r: number
     }
   }
   return false;
+}
+
+/** A footprint on the tile grid: top-left corner and side length. */
+interface Box {
+  x: number;
+  y: number;
+  size: number;
 }
 
 /** Mineral patches belonging to the base site at `at`. */
@@ -144,6 +152,61 @@ describe('map generation', () => {
       for (const start of map.starts) {
         expect(patchesAround(sim, start)).toBe(PATCHES_PER_BASE);
       }
+    }
+  });
+
+  it('leaves a lane between every base and its own minerals', () => {
+    // Both shapes are squares, so the clearance is the open ground between
+    // their nearest faces — which is what a worker leaving the Command Post
+    // walks through, and what a Supply Depot has to fit in. Measured from
+    // centres instead, a patch tucked against a corner reads as further away
+    // than one squarely in front of a face, when it is the corner one that is
+    // in the way.
+    const clearance = (a: Box, b: Box): number => {
+      const dx = Math.max(0, a.x - (b.x + b.size), b.x - (a.x + a.size));
+      const dy = Math.max(0, a.y - (b.y + b.size), b.y - (a.y + a.size));
+      return Math.hypot(dx, dy);
+    };
+
+    const hqSize = defOf(EntityType.CommandPost).footprint;
+    const patchSize = defOf(EntityType.MineralPatch).footprint;
+    const half = hqSize >> 1;
+
+    for (const seed of SEEDS) {
+      const sim = new Simulation(seed);
+      const { map, pool } = sim.world;
+
+      // Every base a Command Post stands on or is meant to be planted on: the
+      // openings, and every expansion, whose line comes off the same table.
+      const bases: { hq: Box; want: number; patches: number }[] = [];
+      for (let i = 0; i < pool.count; i++) {
+        if (pool.alive[i] !== 1 || pool.type[i] !== EntityType.CommandPost) continue;
+        const hq = { x: pool.tileX[i]!, y: pool.tileY[i]!, size: hqSize };
+        bases.push({ hq, want: PATCHES_PER_BASE, patches: 0 });
+      }
+      for (let e = 0; e < map.expansions.length; e++) {
+        const { canonical, flip } = mirroredHalf(e, map.expansions.length);
+        const site = map.expansions[canonical]!;
+        const x = flip ? mirrorTile(map.width, site.tileX - half, hqSize) : site.tileX - half;
+        const y = flip ? mirrorTile(map.height, site.tileY - half, hqSize) : site.tileY - half;
+        bases.push({ hq: { x, y, size: hqSize }, want: PATCHES_PER_EXPANSION, patches: 0 });
+      }
+
+      for (let i = 0; i < pool.count; i++) {
+        if (pool.alive[i] !== 1 || pool.type[i] !== EntityType.MineralPatch) continue;
+        const patch: Box = { x: pool.tileX[i]!, y: pool.tileY[i]!, size: patchSize };
+        for (const base of bases) {
+          const gap = clearance(base.hq, patch);
+          if (gap > 14) continue; // another base's line
+          expect(`seed ${seed} gap ${gap.toFixed(2)}`).toBe(
+            `seed ${seed} gap ${Math.max(gap, MIN_PATCH_CLEARANCE).toFixed(2)}`,
+          );
+          base.patches++;
+        }
+      }
+
+      // And the clearance was not won by losing patches: every line is whole.
+      for (const base of bases) expect(base.patches).toBe(base.want);
     }
   });
 

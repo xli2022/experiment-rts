@@ -34,7 +34,7 @@ import {
 import { EntityRenderer } from './render/entities.js';
 import { RtsCamera } from './render/camera.js';
 import { TerrainRenderer } from './render/terrain.js';
-import { ProceduralModelProvider } from './render/models/procedural.js';
+import { ProceduralModelProvider, RESOURCE_COLOUR } from './render/models/procedural.js';
 import { ProjectileRenderer } from './render/projectiles.js';
 import { FogRenderer } from './render/fog.js';
 import { UnitGallery } from './render/unitGallery.js';
@@ -582,7 +582,7 @@ class Game {
         this.projectiles.spawnClickMarker(
           toFloat(world.pool.posX[hit]!),
           toFloat(world.pool.posY[hit]!),
-          0x54e0c8,
+          RESOURCE_COLOUR,
         );
         audio.play('order', 0.9);
         this.issue({

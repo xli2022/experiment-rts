@@ -6,7 +6,7 @@
   --muted: #8a97ab;
   --accent: #4a9eff;
   --enemy: #ff5a4a;
-  --mineral: #54e0c8;
+  --mineral: #b45cff; /* RESOURCE_COLOUR in procedural.ts — keep the two in step */
   --warn: #ffb648;
   --danger: #ff5a4a;
   --ok: #7dff9b;

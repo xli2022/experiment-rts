@@ -328,22 +328,42 @@ export class World {
 }
 
 /**
+ * Open tiles every patch leaves between itself and the Command Post footprint.
+ *
+ * Two, because two is the smallest building: at one tile — where two patches of
+ * the old line sat, with a third a diagonal further out — the gap between a
+ * base and its own minerals was a strip nothing could be built in, not even a
+ * Supply Depot. It is also the band the opening's traffic lives in, six workers
+ * crossing it twice a trip from the first tick of the match, and a lane one
+ * tile wide is not one.
+ *
+ * Read as a Chebyshev-style box gap: patch and Command Post are both squares,
+ * so it is the clear ground between their nearest faces, not a centre-to-centre
+ * distance. `tests/mapgen.test.ts` holds the authored line to it.
+ */
+export const MIN_PATCH_CLEARANCE = 2;
+
+/**
  * Offsets of each mineral patch from a base's centre tile, as top-left corners.
  *
  * Distance here is the single biggest lever on the pace of the whole game.
  * Patches scattered even a few tiles too far leave workers walking instead of
- * mining and the economy never gets going, so these sit just clear of the
- * Command Post footprint.
+ * mining and the economy never gets going, so the line still wraps the base as
+ * tightly as `MIN_PATCH_CLEARANCE` allows: a column two tiles clear of the left
+ * face, a row two clear of the top one, and one patch bridging the corner
+ * between them. Every patch is therefore exactly that two tiles out, the corner
+ * one a diagonal further, so no part of the line is the obviously worse one to
+ * mine and no worker's trip is longer than its neighbour's.
  */
 const PATCH_OFFSETS: readonly (readonly [number, number])[] = [
   [-6, -2],
   [-6, 0],
   [-6, 2],
-  [-5, -4],
-  [-3, -5],
+  [-6, -4],
+  [-5, -6],
+  [-3, -6],
   [-1, -6],
   [1, -6],
-  [3, -5],
 ];
 
 /**

@@ -396,12 +396,22 @@ export const MAX_PRODUCTION_QUEUE = 5;
  * Slack added to the two radii when deciding whether a worker can reach a
  * *construction site*.
  *
- * Radii are circles but building footprints are squares, so a worker standing
- * against the corner of a 3x3 barracks is further from its centre than the
- * radius suggests. Too tight a value leaves workers hovering one step outside
- * build range, unable to work and unable to path closer.
+ * This is not only a range test: movement clears a worker's path the tick the
+ * test passes, so the slack *is* the standoff — a worker stops up to
+ * `radius + slack` clear of the near face and builds from there. At 1.7 that
+ * measured a gap of 0.7 to 1.5 units of open ground between a worker and the
+ * wall it was supposedly raising, which is a worker's own width or two, and far
+ * enough that the pair did not read as related. At 0.7 the same builds park it
+ * against the wall, 0.0 to 0.5 out, arm first.
+ *
+ * The floor is the corner. Radii are circles but footprints are squares, and
+ * movement measures the approach centre-to-centre, so a worker against the
+ * corner of a 4x4 Command Post stands sqrt(2) x 2.0 = 2.83 from its centre
+ * where the face is 2.0 away. Any slack below (sqrt(2) - 1) x 2.0 - 0.32, about
+ * 0.51, leaves that worker counted as still walking with nowhere left to walk:
+ * it slides along the face instead of settling. 0.7 keeps that margin.
  */
-export const BUILD_REACH = fromFloat(1.7);
+export const BUILD_REACH = fromFloat(0.7);
 
 /**
  * Slack for mining a patch and for delivering to a drop-off.

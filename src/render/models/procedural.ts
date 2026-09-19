@@ -204,7 +204,18 @@ function part(
 export const PLAYER_COLOURS = [0x4a9eff, 0x35d6bd, 0xff5a4a, 0xffa93d] as const;
 export const ACCENT_COLOURS = [0xa8d4ff, 0x9ff0e4, 0xffb0a4, 0xffd9a0] as const;
 export const DARK_COLOUR = 0x2a3140;
-export const RESOURCE_COLOUR = 0x54e0c8;
+/**
+ * Neutral resources: mineral crystals, everywhere they are drawn.
+ *
+ * Purple, and deliberately nowhere near a team hue. It was teal, one shade off
+ * the second player colour above, and a mineral line behind a teal army read as
+ * more army — a patch, a worker and a tracer all the same colour is the one
+ * thing the palette has to avoid, because "may I shoot that" is answered by
+ * hue. Violet sits a clear 60 degrees off the blue end of the cool family and
+ * on the far side of every warm one, so it belongs to nobody at any player
+ * count, at minimap scale as much as up close.
+ */
+export const RESOURCE_COLOUR = 0xb45cff;
 
 /**
  * Which palette entry a player's colour comes from.
@@ -214,9 +225,9 @@ export const RESOURCE_COLOUR = 0x54e0c8;
  * happens to read straight off the player id and a *duel does not*. Indexing a
  * duel by raw id paints the lone opponent in the local player's own hue family:
  * measured, the enemy's buildings, workers, tracers and minimap dots all went
- * teal, one shade from your own blue and a hair from the mineral colour, while
- * their combat units still wore the red team skin. Mapping through the side is
- * what keeps blue against red at two players and changes nothing at four.
+ * teal, one shade from your own blue, while their combat units still wore the
+ * red team skin. Mapping through the side is what keeps blue against red at two
+ * players and changes nothing at four.
  */
 export function colourSlotFor(owner: number, playerCount: number): number {
   const half = Math.max(1, playerCount >> 1);
