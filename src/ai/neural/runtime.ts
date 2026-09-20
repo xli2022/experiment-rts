@@ -26,12 +26,21 @@ export interface PolicyManifest {
   readonly bytes?: number;
   readonly quantized?: boolean;
   readonly evaluation?: unknown;
+  /** Omitted by legacy exports, which sample at temperature 1. */
+  readonly defaultTemperature?: number;
 }
 
 export function isPolicyManifest(value: unknown): value is PolicyManifest {
   if (typeof value !== 'object' || value === null) return false;
   const v = value as Record<string, unknown>;
-  return typeof v.specVersion === 'number' && typeof v.model === 'string';
+  return (
+    typeof v.specVersion === 'number' &&
+    typeof v.model === 'string' &&
+    (v.defaultTemperature === undefined ||
+      (typeof v.defaultTemperature === 'number' &&
+        Number.isFinite(v.defaultTemperature) &&
+        v.defaultTemperature > 0))
+  );
 }
 
 /** The part of `Worker` the runtime uses, so a test can stand one in. */
@@ -93,6 +102,12 @@ export class WorkerRuntime implements NeuralRuntime {
     manifest: PolicyManifest,
     options: WorkerRuntimeOptions = {},
   ): Promise<WorkerRuntime> {
+    if (!isPolicyManifest(manifest)) {
+      worker.terminate();
+      return Promise.reject(
+        new Error('The neural model manifest has an invalid sampling temperature or format.'),
+      );
+    }
     if (manifest.specVersion !== SPEC.version) {
       worker.terminate();
       return Promise.reject(
@@ -127,6 +142,10 @@ export class WorkerRuntime implements NeuralRuntime {
 
   get disposed(): boolean {
     return this.terminated;
+  }
+
+  get defaultTemperature(): number {
+    return this.manifest.defaultTemperature ?? 1;
   }
 
   act(request: ActRequest): Promise<Int32Array> {
