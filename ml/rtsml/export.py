@@ -7,8 +7,9 @@ torch and onnxruntime is an exact comparison of the integers each returns
 for the same observation and the same noise. The result is
 `policy-<layout>.onnx` and a `policy-<layout>.json` beside it naming the spec
 version the model was trained against, its inputs and outputs, its hash and, if
-`--evaluate` ran, how it plays; the browser refuses a model whose spec version
-is not its own. One model per map: the layout is part of the observation, so a
+`--evaluation` is provided, how it plays. The browser uses the recorded sampling
+temperature and refuses a model whose spec version is not its own. One model
+per map: the layout is part of the observation, so a
 network is free to learn one map and neglect the other, and a shared one did.
 """
 
@@ -18,6 +19,7 @@ import argparse
 import hashlib
 import io
 import json
+import math
 import time
 from pathlib import Path
 from typing import Any
@@ -51,14 +53,18 @@ def export_onnx(policy: Policy, opset: int = OPSET) -> bytes:
     return buf.getvalue()
 
 
-def example_inputs(batch: int, generator: torch.Generator | None = None) -> dict[str, torch.Tensor]:
+def valid_temperature(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
+
+
+def example_inputs(batch: int, generator: torch.Generator | None = None, temperature: float = 1.0) -> dict[str, torch.Tensor]:
     """Random inputs of the right shapes; masks a coin flip each, Noop always legal."""
     out: dict[str, torch.Tensor] = {}
     for name, (shape, dtype) in act_input_shapes(batch=batch).items():
         if name == "noise":
             out[name] = gumbel_noise(batch, generator)
         elif name == "temperature":
-            out[name] = torch.ones(shape)
+            out[name] = torch.full(shape, temperature, dtype=torch.float32)
         elif dtype == "float32":
             out[name] = torch.randn(shape, generator=generator)
         else:
@@ -115,7 +121,9 @@ def quantize_int8(onnx_bytes: bytes) -> bytes:
         return dst.read_bytes()
 
 
-def manifest(onnx_bytes: bytes, policy: Policy, extra: dict[str, Any], model_file: str = "policy.onnx") -> dict[str, Any]:
+def manifest(onnx_bytes: bytes, policy: Policy, extra: dict[str, Any], model_file: str = "policy.onnx", default_temperature: float = 1.0) -> dict[str, Any]:
+    if not valid_temperature(default_temperature):
+        raise ValueError("default temperature must be finite and positive")
     shapes = act_input_shapes(batch=1)
     return {
         "specVersion": SPEC.version,
@@ -129,10 +137,11 @@ def manifest(onnx_bytes: bytes, policy: Policy, extra: dict[str, Any], model_fil
         "noise": {"length": SPEC.noise_len, "distribution": "gumbel"},
         "exportedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         **extra,
+        "defaultTemperature": default_temperature,
     }
 
 
-def live_samples(n: int, seed: int = 1, layout: str = "lanes") -> list[dict[str, torch.Tensor]]:
+def live_samples(n: int, seed: int = 1, layout: str = "lanes", temperature: float = 1.0) -> list[dict[str, torch.Tensor]]:
     """Observations from a real match against the scripted bot, for a parity check that means something.
 
     On the map the model is for. The observation carries a `layout:*` one-hot and
@@ -161,7 +170,7 @@ def live_samples(n: int, seed: int = 1, layout: str = "lanes") -> list[dict[str,
             for row in range(len(batch)):
                 sample = {name: obs[name][row : row + 1] for name in ACT_INPUTS if name in obs}
                 sample["noise"] = gumbel_noise(1, generator)
-                sample["temperature"] = torch.ones(1)
+                sample["temperature"] = torch.full((1,), temperature, dtype=torch.float32)
                 out.append(sample)
                 if len(out) == n:
                     break
@@ -178,6 +187,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--parity-samples", type=int, default=200)
     parser.add_argument("--synthetic", action="store_true", help="parity on random inputs rather than a live match")
     parser.add_argument("--evaluation", type=Path, help="a JSON file from rtsml-eval to embed in the manifest")
+    parser.add_argument("--temperature", type=float, help="browser sampling temperature; defaults to the evaluation temperature, or 1")
     parser.add_argument(
         "--layout",
         choices=["lanes", "quarters"],
@@ -185,7 +195,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    if args.parity_samples <= 0:
+        print("parity-samples must be positive")
+        return 1
+    checkpoint_sha256 = hashlib.sha256(args.ckpt.read_bytes()).hexdigest()
     ckpt = load_checkpoint(args.ckpt, pick_device("cpu"))
+    if hashlib.sha256(args.ckpt.read_bytes()).hexdigest() != checkpoint_sha256:
+        print("checkpoint changed while loading; export a frozen checkpoint copy")
+        return 1
     recorded_layout = ckpt.get("hparams", {}).get("layout")
     if args.layout and recorded_layout in ("lanes", "quarters") and args.layout != recorded_layout:
         print(f"checkpoint was trained for {recorded_layout}; cannot export it as {args.layout}")
@@ -197,13 +214,41 @@ def main(argv: list[str] | None = None) -> int:
     if layout not in ("lanes", "quarters"):
         print(f"checkpoint records layout {layout!r}; pass --layout lanes|quarters to say which map this model is for")
         return 1
+    evaluation: dict[str, Any] | None = None
+    if args.evaluation:
+        try:
+            evaluation = json.loads(args.evaluation.read_text())
+        except (OSError, json.JSONDecodeError) as error:
+            print(f"cannot read evaluation: {error}")
+            return 1
+        if not isinstance(evaluation, dict):
+            print("evaluation must be a JSON object")
+            return 1
+        if "state" in evaluation and evaluation["state"] != "completed":
+            print("evaluation must be completed before it can be exported")
+            return 1
+        for field, expected in (("layout", layout), ("checkpointSha256", checkpoint_sha256), ("specVersion", SPEC.version)):
+            if field in evaluation and evaluation[field] != expected:
+                print(f"evaluation {field} does not match the checkpoint being exported")
+                return 1
+        if "temperature" in evaluation and not valid_temperature(evaluation["temperature"]):
+            print("evaluation temperature must be finite and positive")
+            return 1
+    evaluated_temperature = evaluation.get("temperature") if evaluation is not None else None
+    temperature = args.temperature if args.temperature is not None else evaluated_temperature if evaluated_temperature is not None else 1.0
+    if not valid_temperature(temperature):
+        print("temperature must be finite and positive")
+        return 1
+    if args.temperature is not None and evaluated_temperature is not None and args.temperature != evaluated_temperature:
+        print("requested temperature does not match the provided evaluation temperature")
+        return 1
     policy = Policy(**ckpt["hparams"].get("model", {}))
     policy.load_state_dict(ckpt["model"])
     policy.eval()
 
     fp32 = export_onnx(policy)
     generator = torch.Generator().manual_seed(0)
-    samples = [example_inputs(1, generator) for _ in range(args.parity_samples)] if args.synthetic else live_samples(args.parity_samples, layout=layout)
+    samples = [example_inputs(1, generator, temperature) for _ in range(args.parity_samples)] if args.synthetic else live_samples(args.parity_samples, layout=layout, temperature=temperature)
     report = parity(policy, fp32, samples)
     print(f"fp32 parity: {report['agree']}/{report['samples']}")
     if report["agree"] != report["samples"]:
@@ -211,19 +256,19 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     final = fp32
-    extra: dict[str, Any] = {"parity": report, "quantized": False, "checkpoint": str(args.ckpt), "training": ckpt.get("kind"), "layout": layout}
+    extra: dict[str, Any] = {"parity": report, "quantized": False, "checkpoint": str(args.ckpt), "checkpointSha256": checkpoint_sha256, "training": ckpt.get("kind"), "layout": layout}
     if args.int8:
         final = quantize_int8(fp32)
         q = parity(policy, final, samples)
         print(f"int8 parity: {q['agree']}/{q['samples']} ({len(final) / 1e6:.2f} MB)")
         extra.update({"quantized": True, "int8Parity": q})
-    if args.evaluation:
-        extra["evaluation"] = json.loads(args.evaluation.read_text())
+    if evaluation is not None:
+        extra["evaluation"] = evaluation
 
     args.out.mkdir(parents=True, exist_ok=True)
     stem = f"policy-{layout}"
     (args.out / f"{stem}.onnx").write_bytes(final)
-    (args.out / f"{stem}.json").write_text(json.dumps(manifest(final, policy, extra, f"{stem}.onnx"), indent=2) + "\n")
+    (args.out / f"{stem}.json").write_text(json.dumps(manifest(final, policy, extra, f"{stem}.onnx", temperature), indent=2) + "\n")
     print(f"wrote {args.out / (stem + '.onnx')} ({len(final) / 1e6:.2f} MB) and {stem}.json")
     return 0
 

@@ -112,7 +112,34 @@ describe('loading', () => {
     expect(isPolicyManifest(manifest)).toBe(true);
     expect(isPolicyManifest({ model: 'x' })).toBe(false);
     expect(isPolicyManifest(null)).toBe(false);
+    expect(isPolicyManifest({ ...manifest, defaultTemperature: 0.5 })).toBe(true);
+    for (const defaultTemperature of [0, -1, NaN, Infinity, null, '0.5'])
+      expect(isPolicyManifest({ ...manifest, defaultTemperature })).toBe(false);
   });
+
+  it('retains evaluated temperature and defaults legacy models to one', async () => {
+    const worker = new FakeWorker();
+    const loading = WorkerRuntime.load(worker, init, { ...manifest, defaultTemperature: 0.5 });
+    worker.reply({ type: 'ready', warmupMs: 0 });
+    const runtime = await loading;
+    expect(runtime.defaultTemperature).toBe(0.5);
+    runtime.dispose();
+    const legacy = await loaded();
+    expect(legacy.runtime.defaultTemperature).toBe(1);
+    legacy.runtime.dispose();
+  });
+
+  it.each([0, -1, NaN, Infinity])(
+    'refuses a model with temperature %s before loading',
+    async (defaultTemperature) => {
+      const worker = new FakeWorker();
+      await expect(
+        WorkerRuntime.load(worker, init, { ...manifest, defaultTemperature }),
+      ).rejects.toThrow(/temperature/);
+      expect(worker.posted).toHaveLength(0);
+      expect(worker.terminated).toBe(true);
+    },
+  );
 });
 
 describe('acting', () => {

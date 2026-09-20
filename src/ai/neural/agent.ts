@@ -65,10 +65,12 @@ export interface NeuralRuntime {
   act(request: ActRequest): Promise<Int32Array>;
   dispose?(): void;
   readonly stats?: NeuralRuntimeStats;
+  /** Evaluated sampling temperature recorded by the model's manifest. */
+  readonly defaultTemperature?: number;
 }
 
 export interface NeuralOptions {
-  /** Sampling temperature. One is the policy as trained; lower is greedier. */
+  /** Overrides the model's sampling temperature; lower values are greedier. */
   readonly temperature?: number;
 }
 
@@ -117,7 +119,9 @@ export class NeuralAgent implements Agent {
     options: NeuralOptions = {},
     private readonly now: () => number = () => Date.now(),
   ) {
-    this.temperature = options.temperature ?? 1;
+    this.temperature = options.temperature ?? runtime.defaultTemperature ?? 1;
+    if (!Number.isFinite(this.temperature) || this.temperature <= 0)
+      throw new Error('The neural sampling temperature must be finite and positive.');
   }
 
   act(world: World, player: PlayerId): Command[] {

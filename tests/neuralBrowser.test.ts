@@ -20,10 +20,24 @@ describe('neural model availability', () => {
   );
 
   it('offers a model trained for the current production and upgrade vocabulary', async () => {
-    const manifest = { specVersion: SPEC.version, model: 'policy-quarters.onnx' };
+    const manifest = {
+      specVersion: SPEC.version,
+      model: 'policy-quarters.onnx',
+      defaultTemperature: 0.5,
+    };
     const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => manifest });
     vi.stubGlobal('fetch', fetch);
     expect(await probeNeuralModel(MapLayout.Quarters)).toEqual(manifest);
     expect(fetch).toHaveBeenCalledWith('/models/policy-quarters.json', { cache: 'no-cache' });
+  });
+
+  it('keeps a model with invalid sampling temperature unavailable', async () => {
+    const manifest = {
+      specVersion: SPEC.version,
+      model: 'policy-lanes.onnx',
+      defaultTemperature: 0,
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => manifest }));
+    expect(await probeNeuralModel(MapLayout.Lanes)).toBeNull();
   });
 });

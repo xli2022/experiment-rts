@@ -93,6 +93,28 @@ function stage(agent: Agent) {
 }
 
 describe('the neural agent', () => {
+  it.each([
+    [undefined, undefined, 1],
+    [0.5, undefined, 0.5],
+    [0.5, 0.8, 0.8],
+  ])(
+    'uses model temperature %s with optional override %s',
+    (defaultTemperature, temperature, expected) => {
+      const runtime = Object.assign(new FakeRuntime(), { defaultTemperature });
+      const agent = new NeuralAgent(runtime, { temperature });
+      const { tick } = stage(agent);
+      for (let t = 0; t < DECISION_TICKS; t++) tick();
+      expect(runtime.requests[0]!.temperature).toBe(expected);
+      agent.dispose();
+    },
+  );
+
+  it.each([0, -1, NaN, Infinity])('rejects invalid sampling temperature %s', (temperature) => {
+    expect(() => new NeuralAgent(new FakeRuntime(), { temperature })).toThrow(/temperature/);
+    const runtime = Object.assign(new FakeRuntime(), { defaultTemperature: temperature });
+    expect(() => new NeuralAgent(runtime)).toThrow(/temperature/);
+  });
+
   it('asks once per decision boundary and skips boundaries while an answer is outstanding', async () => {
     const runtime = new FakeRuntime();
     const agent = new NeuralAgent(runtime);

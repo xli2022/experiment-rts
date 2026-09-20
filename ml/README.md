@@ -51,6 +51,19 @@ below is the Lanes pass.
 | evaluate | `rtsml-eval --ckpt <winner> --layout lanes --seeds 48 --out eval.json`             | a table, `eval.json`                       |
 | export   | `rtsml-export --ckpt <winner> --layout lanes --evaluation eval.json`               | `public/models/policy-lanes.{onnx,json}`   |
 
+Evaluation JSON records the checkpoint SHA-256, exact map seeds, action-sampling
+seed, temperature, time limit, and each match outcome. The CLI saves progress
+after each seat and marks interrupted or failed runs as failed; partial results
+do not establish a completed evaluation. Use immutable checkpoint files when
+comparing candidates.
+
+Export retains the evaluation's sampling temperature in the model manifest,
+and the browser uses that temperature by default. An explicit `--temperature`
+must agree with a supplied evaluation. The exporter also rejects evaluation
+metadata identifying another checkpoint, layout or codec. Reports from older
+versions without these fields remain readable, but new qualification runs
+should use the complete provenance format.
+
 Every script takes `--smoke` (imitate, ppo) or small `--seeds` (eval) for a
 run that finishes in seconds; `tests/test_training.py` runs exactly those.
 `--procs` is the number of Bun processes and is what the throughput scales
