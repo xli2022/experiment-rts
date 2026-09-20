@@ -148,6 +148,89 @@ class Rollout:
         return adv, adv + self.value
 
 
+def train_minibatch(
+    policy: Policy,
+    reference: Policy | None,
+    opt: torch.optim.Optimizer,
+    rollout: Rollout,
+    index: np.ndarray,
+    advantages: np.ndarray,
+    returns: np.ndarray,
+    device: torch.device,
+    *,
+    temperature: float,
+    clip: float,
+    vf_coef: float,
+    ent_coef: float,
+    beta: float,
+    warming: bool,
+    microbatch: int = 0,
+) -> dict[str, float] | None:
+    """One logical optimiser step, optionally accumulated from smaller forwards.
+
+    Weight every chunk by its row count, including an uneven final chunk, so
+    losses, gradients and trust-region metrics match the unsplit minibatch.
+    A non-finite chunk discards the entire logical step without updating Adam.
+    """
+    assert rollout.obs is not None
+    count = len(index)
+    chunk_size = microbatch or count
+    if count == 0 or chunk_size <= 0:
+        raise ValueError("a logical minibatch must be nonempty and microbatch nonnegative")
+    old_logp = rollout.logp.reshape(-1)
+    old_value = rollout.value.reshape(-1)
+    stats = {key: 0.0 for key in ("pg", "vf", "ent", "kl", "clip", "approxKl")}
+    opt.zero_grad(set_to_none=True)
+    for start in range(0, count, chunk_size):
+        idx = index[start : start + chunk_size]
+        weight = len(idx) / count
+        obs = to_torch(rollout.obs, device, idx)
+        actions = torch.from_numpy(rollout.actions[idx].astype(np.int64)).to(device)
+        selection_scores = torch.from_numpy(rollout.selection_scores[idx]).to(device)
+        out = policy.evaluate(obs, actions, temperature, selection_scores)
+        logp = out["logp"]
+        lp_old = torch.from_numpy(old_logp[idx]).to(device)
+        a = torch.from_numpy(advantages[idx]).to(device)
+        # Bound exp's input, keeping the existing joint importance-ratio guard.
+        ratio = torch.exp(torch.clamp(logp - lp_old, -LOG_RATIO_CLAMP, LOG_RATIO_CLAMP))
+        pg = torch.max(-a * ratio, -a * torch.clamp(ratio, 1 - clip, 1 + clip)).mean()
+        v_old = torch.from_numpy(old_value[idx]).to(device)
+        ret = torch.from_numpy(returns[idx]).to(device)
+        v_clipped = v_old + torch.clamp(out["value"] - v_old, -clip, clip)
+        vf = 0.5 * torch.max((out["value"] - ret) ** 2, (v_clipped - ret) ** 2).mean()
+        ent = out["entropy"].mean()
+        loss = vf if warming else pg + vf_coef * vf - ent_coef * ent
+        kl = torch.zeros((), device=device)
+        if reference is not None and not warming:
+            with torch.no_grad():
+                lp_ref = reference.evaluate(obs, actions, temperature, selection_scores)["logp"]
+            kl = reference_penalty(logp, lp_ref)
+            loss = loss + beta * kl
+        if not torch.isfinite(loss):
+            opt.zero_grad(set_to_none=True)
+            return None
+        (weight * loss).backward()
+        with torch.no_grad():
+            # The same nonnegative mean-square log-ratio used by early stopping
+            # before accumulation; compute it across the whole logical batch.
+            r_kl = (logp - lp_old).clamp(-LOG_RATIO_CLAMP, LOG_RATIO_CLAMP)
+            values = {
+                "pg": pg, "vf": vf, "ent": ent, "kl": kl,
+                "clip": ((ratio - 1).abs() > clip).float().mean(),
+                "approxKl": 0.5 * (r_kl * r_kl).mean(),
+            }
+            for key, value in values.items():
+                stats[key] += weight * float(value.detach())
+    # Clip once, after the full logical gradient exists. A failed backward must
+    # not apply earlier chunks' otherwise-finite gradients as a partial step.
+    norm = torch.nn.utils.clip_grad_norm_(policy.parameters(), 0.5)
+    if not torch.isfinite(norm):
+        opt.zero_grad(set_to_none=True)
+        return None
+    opt.step()
+    return stats
+
+
 def build_configs(league: League, procs: int, envs: int, rng: np.random.Generator, seed_base: int, args: argparse.Namespace) -> tuple[list[list[EnvConfig]], list[list[Assignment]]]:
     members = league.sample(procs * envs)
     groups: list[list[EnvConfig]] = []
@@ -198,6 +281,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--updates", type=int, default=1000)
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--minibatch", type=int, default=256)
+    parser.add_argument("--microbatch", type=int, default=0,
+                        help="rows per forward/backward inside a logical minibatch; 0 disables accumulation")
     # 2.5e-4 trips `--target-kl` after a few minibatches of sixty, so most of a
     # rollout is collected and thrown away, and it is still the right number.
     # 1e-4 spends the whole update inside the trust region and gets a policy
@@ -301,6 +386,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--eval-every", type=int, default=50, help="0 disables")
     parser.add_argument("--eval-seeds", type=int, default=16)
+    parser.add_argument("--eval-seed0", type=int, default=EVAL_SEED0, help="first development evaluation map seed")
     parser.add_argument("--max-ticks", type=int, default=24_000)
     parser.add_argument("--seed0", type=int, default=100_000)
     parser.add_argument("--out", type=Path, default=Path("runs/ppo"))
@@ -309,6 +395,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--smoke", action="store_true", help="a tiny run that exercises everything")
     add_model_args(parser)
     args = parser.parse_args(argv)
+    if args.microbatch < 0:
+        parser.error("microbatch must be nonnegative")
     if args.smoke:
         args.procs, args.envs, args.rollout, args.updates, args.epochs, args.minibatch = 1, 2, 4, 2, 1, 4
         args.refresh, args.snapshot_every, args.eval_every, args.max_ticks = 1, 1, 0, 400
@@ -427,7 +515,6 @@ def main(argv: list[str] | None = None) -> int:
             adv, returns = rollout.advantages(next_value, args.gamma, args.lam)
             adv = adv.reshape(-1)
             returns = returns.reshape(-1)
-            old_logp = rollout.logp.reshape(-1)
             old_value = rollout.value.reshape(-1)
             # How much of the return the critic actually explains. Near zero means
             # the advantages are noise, and PPO will sharpen the policy onto that
@@ -485,82 +572,18 @@ def main(argv: list[str] | None = None) -> int:
                 order = rng.permutation(n)
                 for start in range(0, n, args.minibatch):
                     idx = order[start : start + args.minibatch]
-                    obs = to_torch(rollout.obs, device, idx)
-                    actions = torch.from_numpy(rollout.actions[idx].astype(np.int64)).to(device)
-                    selection_scores = torch.from_numpy(rollout.selection_scores[idx]).to(device)
-                    out = policy.evaluate(obs, actions, args.temperature, selection_scores)
-                    logp = out["logp"]
-                    lp_old = torch.from_numpy(old_logp[idx]).to(device)
-                    a = torch.from_numpy(adv[idx]).to(device)
-                    # The summed per-head log-probability has a wide dynamic range
-                    # (the selection head alone sums up to N_ENT Bernoulli terms), so
-                    # the log-ratio is clamped before it is exponentiated: float32
-                    # exp overflows to inf above ~88, and one inf here poisons every
-                    # gradient in the batch.
-                    ratio = torch.exp(torch.clamp(logp - lp_old, -LOG_RATIO_CLAMP, LOG_RATIO_CLAMP))
-                    pg = torch.max(-a * ratio, -a * torch.clamp(ratio, 1 - args.clip, 1 + args.clip)).mean()
-                    v_old = torch.from_numpy(old_value[idx]).to(device)
-                    ret = torch.from_numpy(returns[idx]).to(device)
-                    v_clipped = v_old + torch.clamp(out["value"] - v_old, -args.clip, args.clip)
-                    vf = 0.5 * torch.max((out["value"] - ret) ** 2, (v_clipped - ret) ** 2).mean()
-                    ent = out["entropy"].mean()
-                    loss = vf if warming else pg + args.vf * vf - ent_coef * ent
-                    kl = torch.zeros((), device=device)
-                    if reference is not None and not warming:
-                        with torch.no_grad():
-                            lp_ref = reference.evaluate(obs, actions, args.temperature, selection_scores)["logp"]
-                        # A Huber penalty on the log-ratio, not the k3 KL estimator.
-                        # k3's gradient is exp(r) - 1, and `logp` here is a joint
-                        # log-probability summed over six heads and up to N_ENT
-                        # selection rows, so r sits in the tens rather than near
-                        # zero: at r = 20 that is a gradient multiplier of 5e8, and
-                        # the leash drowns out the policy gradient entirely
-                        # (measured: kl ~ 1e6 against pg ~ 0.1). Huber is quadratic
-                        # near zero and linear beyond, so the pull is bounded by
-                        # beta however far the policy has drifted.
-                        kl = reference_penalty(logp, lp_ref)
-                        loss = loss + beta * kl
-                    if not torch.isfinite(loss):
+                    result = train_minibatch(
+                        policy, reference, opt, rollout, idx, adv, returns, device,
+                        temperature=args.temperature, clip=args.clip, vf_coef=args.vf,
+                        ent_coef=ent_coef, beta=beta, warming=warming, microbatch=args.microbatch,
+                    )
+                    if result is None:
                         skipped += 1
                         continue
-                    opt.zero_grad(set_to_none=True)
-                    loss.backward()
-                    # clip_grad_norm_ scales by 1/total_norm, so a NaN norm makes
-                    # every gradient NaN rather than stopping it: a single bad
-                    # minibatch would otherwise write NaN into all 81 tensors and
-                    # the run would train on happily for hours.
-                    norm = torch.nn.utils.clip_grad_norm_(policy.parameters(), 0.5)
-                    if not torch.isfinite(norm):
-                        skipped += 1
-                        opt.zero_grad(set_to_none=True)
-                        continue
-                    opt.step()
-                    stats["pg"].append(float(pg.detach()))
-                    stats["vf"].append(float(vf.detach()))
-                    stats["ent"].append(float(ent.detach()))
-                    stats["kl"].append(float(kl.detach()))
-                    stats["clip"].append(float(((ratio - 1).abs() > args.clip).float().mean()))
-                    # Half the mean square log-ratio: non-negative per row, so
-                    # unlike the plain mean of (lp_old - logp) it cannot cancel.
-                    # That signed mean is why the early stop never fired — the
-                    # logs record it reaching -524, having passed the 0.5 target
-                    # thousands of updates earlier, because rows that had run one
-                    # way offset rows that had run the other.
-                    #
-                    # Not the more usual k3, exp(-r) - 1 + r, whose exponential
-                    # makes it a tail statistic: `logp` here reaches -12.5 on an
-                    # unlikely joint decision, and a couple of such rows drove k3
-                    # to 17 in a minibatch whose clip fraction was 0.06 and whose
-                    # pg was 0.03 — a policy that had barely moved, reported as a
-                    # catastrophe, stopping every update after one step.
-                    with torch.no_grad():
-                        r_kl = (logp - lp_old).clamp(-LOG_RATIO_CLAMP, LOG_RATIO_CLAMP)
-                        stats["approxKl"].append(float(0.5 * (r_kl * r_kl).mean()))
-                    # PPO's trust region is only enforced through the ratio clip,
-                    # which stops bounding anything once the policy has moved far:
-                    # measured, approxKl runs 0.07-0.35 while the run is healthy and
-                    # then climbs through 2, 6, 8 as it destroys itself. Abandon the
-                    # rest of an update that has already moved too far.
+                    for key, value in result.items():
+                        stats[key].append(value)
+                    # Early stopping is checked after one complete logical step,
+                    # exactly as when that minibatch fits in one forward pass.
                     if not warming and args.target_kl > 0 and stats["approxKl"][-1] > args.target_kl:
                         stopped = True
                         break
@@ -600,7 +623,7 @@ def main(argv: list[str] | None = None) -> int:
                 league.add_snapshot(f"ppo{update}", policy, hparams)
                 league.save(args.out / "league.pt")
             if args.eval_every and update % args.eval_every == 0:
-                seeds = list(range(EVAL_SEED0, EVAL_SEED0 + args.eval_seeds))
+                seeds = list(range(args.eval_seed0, args.eval_seed0 + args.eval_seeds))
                 policy.eval()
                 rates = []
                 for seat in (0, 1):

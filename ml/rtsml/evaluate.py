@@ -177,6 +177,25 @@ def print_table(report: dict[str, Any]) -> None:
         print(f"{name:<14}{s0['winRate']:>8.2f}{s1['winRate']:>8.2f}{draws:>7}{ticks:>8.0f}{cpm:>9.1f}")
 
 
+def write_report(path: Path, report: dict[str, Any]) -> None:
+    """Publish atomically, tolerating short Windows reader locks on the target.
+
+    Retry only replacement permission failures. Persistent failure leaves both
+    the previous report and the complete temporary artifact for recovery.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(report, indent=2) + "\n")
+    for attempt in range(10):
+        try:
+            temporary.replace(path)
+            return
+        except PermissionError:
+            if attempt == 9:
+                raise
+            time.sleep(min(0.05 * (attempt + 1), 0.25))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--ckpt", type=Path, required=True)
@@ -226,10 +245,7 @@ def main(argv: list[str] | None = None) -> int:
         latest = report
         report.update(metadata, seconds=round(time.time() - t0, 1))
         if args.out:
-            args.out.parent.mkdir(parents=True, exist_ok=True)
-            temporary = args.out.with_suffix(args.out.suffix + ".tmp")
-            temporary.write_text(json.dumps(report, indent=2) + "\n")
-            temporary.replace(args.out)
+            write_report(args.out, report)
         if report["state"] == "running" and report["rungs"]:
             name, rung = next(reversed(report["rungs"].items()))
             seat = "seat1" if "seat1" in rung else "seat0"
