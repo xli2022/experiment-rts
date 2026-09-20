@@ -169,4 +169,19 @@ describe('vectors', () => {
     expect(Math.abs(fy - FIX_ONE)).toBeLessThan(1024);
     expect(Math.abs(fx)).toBeLessThan(1024);
   });
+
+  it('turns around instead of remaining stuck facing exactly away from its target', () => {
+    for (const sign of [1, -1]) {
+      let fx = 0;
+      let fy = sign * FIX_ONE;
+      for (let step = 0; step < 40; step++) {
+        const r = vecRotateToward(fx, fy, 0, -sign * FIX_ONE, fromFloat(0.2));
+        fx = r.x;
+        fy = r.y;
+        expect(Math.abs(vecLen(fx, fy) - FIX_ONE)).toBeLessThan(256);
+      }
+      expect(Math.abs(fx)).toBeLessThan(1024);
+      expect(Math.abs(fy + sign * FIX_ONE)).toBeLessThan(1024);
+    }
+  });
 });

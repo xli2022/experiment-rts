@@ -5,6 +5,18 @@ The TypeScript side decides what the bot sees and what it can say
 to say the right things and exports it to ONNX for the browser. Matches are
 served by Bun processes running `tools/ml/serve.ts`; Python never simulates.
 
+The current codec is **version 3**. Factory/Airport production and building
+upgrades add entity, observation and action dimensions. Version 1 and 2
+checkpoints and ONNX exports are incompatible and are rejected; retrain and
+export both layout policies using the current `spec.json`. Upgrade state is
+available only on the viewer's own building rows, and legal training masks
+depend on each building's level and whether it is upgrading.
+
+The bundled Lanes model predates this codec and the lobby disables it. The
+win rates and training experiments below are historical results, not evidence
+for the current production tree, fog-aware teacher or gameplay balance. A new
+model needs fresh imitation, gameplay evaluation and export before deployment.
+
 ```sh
 cd ml && pip install -e '.[dev]' && pytest      # Python 3.10+; needs bun on PATH for the env tests
 ```
@@ -15,18 +27,48 @@ cd ml && pip install -e '.[dev]' && pytest      # Python 3.10+; needs bun on PAT
 and the loop is run once for each; the export names the file for it. The table
 below is the Lanes pass.
 
-| step     | command                                                                          | writes                                    |
-| -------- | -------------------------------------------------------------------------------- | ----------------------------------------- |
-| imitate  | `rtsml-imitate --layout lanes --procs 16 --envs 8 --steps 5e6`                   | `runs/bc/{best,last}.pt`, log.jsonl       |
+| step     | command                                                                            | writes                                     |
+| -------- | ---------------------------------------------------------------------------------- | ------------------------------------------ |
+| imitate  | `rtsml-imitate --layout lanes --procs 16 --envs 8 --steps 5e6`                     | `runs/bc/{best,last}.pt`, log.jsonl        |
 | PPO      | `rtsml-ppo --layout lanes --init runs/bc/best.pt --minibatch 1024 --keep-every 25` | `runs/ppo/{ckpt*,best,last}.pt`, league.pt |
-| screen   | `python screen.py runs/ppo/ckpt*.pt --layout lanes --seeds 24 --seed0 1200000`    | a ranking; verify the top on two ranges   |
-| evaluate | `rtsml-eval --ckpt <winner> --layout lanes --seeds 48 --out eval.json`            | a table, `eval.json`                      |
-| export   | `rtsml-export --ckpt <winner> --layout lanes --evaluation eval.json`             | `public/models/policy-lanes.{onnx,json}`  |
+| screen   | `python screen.py runs/ppo/ckpt*.pt --layout lanes --seeds 24 --seed0 1200000`     | a ranking; verify the top on two ranges    |
+| evaluate | `rtsml-eval --ckpt <winner> --layout lanes --seeds 48 --out eval.json`             | a table, `eval.json`                       |
+| export   | `rtsml-export --ckpt <winner> --layout lanes --evaluation eval.json`               | `public/models/policy-lanes.{onnx,json}`   |
 
 Every script takes `--smoke` (imitate, ppo) or small `--seeds` (eval) for a
 run that finishes in seconds; `tests/test_training.py` runs exactly those.
 `--procs` is the number of Bun processes and is what the throughput scales
 with — the model is a small part of the wall time.
+
+For a bounded pipeline check, run these from `ml/` (repeat with `quarters`):
+
+```sh
+python -m rtsml.imitation --smoke --layout lanes --out ../runs/training-readiness/bc-lanes
+python -m rtsml.export --ckpt ../runs/training-readiness/bc-lanes/best.pt --out ../runs/training-readiness/export-lanes --parity-samples 8
+```
+
+These outputs stay outside `public/models`. A smoke checkpoint proves the
+training and export interfaces work; it is not a playable trained bot. A
+starting imitation run is `rtsml-imitate --layout lanes --procs 4 --envs 4
+--steps 200000 --buffer 2048 --keep-every 25000 --out runs/bc-lanes`. The final
+partial buffer is trained even if `--steps` is smaller than `--buffer`. Keep
+checkpoints for match-based selection; label accuracy alone is not a promotion
+gate. Train and evaluate Quarters separately with `--layout quarters`.
+
+Before a longer run, inspect the teacher without allocating a dataset (from
+the repository root): `bun run tools/ml/teacher-probe.ts 2 600`. Each JSON line
+reports one seeded match, valid/non-Noop/dropped decisions, action types,
+Build labels (including resumes), upgrades and trained unit labels. The probe rotates the
+teacher's team, uses both teammates on Quarters, and checks each accepted
+label against the masks captured with it.
+
+`npm run ml:record -- --layout lanes --matches 4 --out ml/data/validation-lanes`
+records fixed validation matches one frame at a time, so memory does not grow
+with match length. It defaults to Lanes; `quarters` and `mix` are explicit
+options. Seats rotate within each layout. Shard metadata distinguishes valid
+non-Noop labels, Noops and dropped labels; frame ticks describe the labelled
+observation. Terminal unissued decisions are excluded, as in the live Python
+bridge.
 
 ## What the pieces are
 
@@ -60,25 +102,40 @@ generator, the browser fills the noise from `crypto.getRandomValues`, and
 parity between torch and onnxruntime is an exact comparison of integers
 (`tests/test_export.py`).
 
-**The teacher sees everything; the label is what the student could have
-said.** A teacher slot is the scripted bot at the student's cadence, and each
+**PPO scores the draws before selection is capped or forced nonempty.** The
+final unit set is not an independent Bernoulli sample: when all draws fail it
+still names one unit, and when more than 24 pass it drops some. PPO therefore
+stores `X = selection logits / T + GumbelA` alongside each rollout action and
+scores its location-Gumbel density at every update. The selection is a fixed
+projection of `X` and independent `GumbelB`, whose density cancels in the
+likelihood ratio. This covers both the cap and the fallback without changing
+the action tensors or the exported model interface. Latent Gumbel entropy is
+constant with respect to the logits; imitation continues to use Bernoulli
+membership supervision for teacher labels. Every PPO head is scored at the
+same temperature used for sampling. Historical training scores here do not
+establish the win rate of a model trained with this corrected objective.
+
+**The teacher uses visible threats and public scouting locations.** A teacher
+slot is the scripted bot at the student's cadence, and each
 command it releases is encoded against the student's own frame and masks. A
 label the student could not express — a Train the bank no longer covers, a
-Build in fog — arrives as type −1 and is skipped. Noop is most of what any
+Build in fog, or a later formation chunk with an offset absent from the action
+vocabulary — arrives as type −1 and is skipped. Noop is most of what any
 player does between commands and is kept at `--noop-keep` of its natural
 rate.
 
-**A teacher slot is reported one decision late, and has to be.** The command
-the teacher takes from an observation is only known once the world has been
-stepped, and a label's selection and target are row indices into the frame it
-was encoded against — so the pair can only be sent after the fact. `MatchEnv`
-holds each teacher observation back and reports it once its answer is known.
-Reporting the live observation with the last command instead teaches the
-student to reply with the _previous_ state's move, which scores 1.00 on every
-validation head — the shifted task is self-consistent — and then stands
-perfectly still in a real match, because a student that does nothing never
-advances its own world. That bug cost a full pipeline: 0.0 commands per
-minute, and a PPO run that could only ever be 0%.
+Build preserves the teacher's exact site: an owned unfinished structure can
+be resumed with no mineral charge, and a completed or destroyed resume target
+does not turn into a new nearby foundation when inference arrives late.
+
+**Teacher labels and observations describe the exact same decision tick.**
+At each four-tick boundary, `MatchEnv` captures current visibility, the frame,
+the masks and the teacher's released command together. The teacher issues that
+command on the next tick, matching the neural policy's issue delay. Recent
+action features are updated after capture so they describe the previous
+decision. Tick zero has no teacher label. Pairing a command chosen on tick 4
+with an observation from tick 0 is wrong even when its rows and masks happen
+to remain legal; the timing regression checks the actual source tick.
 
 **Rewards and the critic see everything; the policy does not.** Terminal ±1
 for the slot's team, potential shaping on the mineral value each side has
@@ -117,14 +174,14 @@ against a win worth 0.12, so the clock was nearly as loud as the result.
 **Advantage normalisation turns a signal-free window into noise, at full
 strength.** `(adv - mean) / (std + 1e-8)` is the standard line and it is a trap
 here. Measured on a real rollout, the first 32-decision window of a match has a
-reward that is *exactly* constant — one unique value across every row and every
+reward that is _exactly_ constant — one unique value across every row and every
 step, std 0.0 — because neither side has committed anything to the board yet and
 the potential has not moved. The critic fits that constant trivially,
 `explainedVariance` reaches 0.994, the advantages are float32 rounding, and
 dividing by their own std rescales that rounding to unit variance and hands it
 to PPO for three epochs. Entropy collapsed to 2e-5, the ratio ran away, `pg`
 reached 4e7, and the win rate went to zero and stayed there. `--adv-floor`
-divides by the std *or* the floor, whichever is larger: a healthy window is
+divides by the std _or_ the floor, whichever is larger: a healthy window is
 untouched, a signal-free one becomes the near-no-op it should always have been.
 
 **The evaluation used to reset every environment.** `--eval-every` called
@@ -137,13 +194,13 @@ describes, re-entered through a different door.
 
 **The joint log-ratio is an ordinary log-ratio.** A note here used to claim that
 `logp`, summed over six heads plus up to `N_ENT` Bernoulli selection rows, sat
-in the tens *by construction* and so had broken PPO's clip. Measured from the
+in the tens _by construction_ and so had broken PPO's clip. Measured from the
 clone, it does not: `logp` is −2.4 on average with a minimum of −12.5, the
 selection head contributes −2.3 of that because a decision has about five legal
 rows rather than 160, and one Adam step moves the log-ratio by 0.05. Log-ratios
 in the tens were a symptom of the runaway above, not its cause, and the ±20
 clamp that was meant to contain them permitted a ratio of 4.8e8. What the joint
-*does* do is make the tail heavy, which is why the early stop reads half the
+_does_ do is make the tail heavy, which is why the early stop reads half the
 mean square log-ratio rather than the usual `exp(-r) - 1 + r`: two unlikely rows
 drove that estimator to 17 in a minibatch whose clip fraction was 0.06, stopping
 every update after a single step.
@@ -165,7 +222,7 @@ Two things follow. `beta` anneals over `--updates`, in fractions of the run
 rather than in updates, so a long run holds the leash tight for far longer per
 update than a short one — `--updates 2000` left it near 0.9 where `--updates
 160` had reached 0.55 by the same update. And the first evaluation of a run
-lands *during* `--value-warmup` if `--eval-every` divides into it, which scores
+lands _during_ `--value-warmup` if `--eval-every` divides into it, which scores
 the frozen clone and anchors `best` to it; every earlier run in this repo did
 exactly that, which is why every `runs/*/best.pt` was the clone with a trained
 critic and nothing else.
@@ -219,9 +276,9 @@ generations moved the 1v1 rate sixty points and left the 2v2 rate at zero.
 This is not interference — the clone was already at zero before any of the
 tuning, and the supervision is sound: teacher labels on Quarters are 98.3% valid
 against 98.0% on Lanes, with the same 14% non-Noop share, so the encoding, the
-masks and the one-decision-late reporting all work there. It is simply a mode
+masks and label reporting worked there. It is simply a mode
 that got a quarter of the gradient (`--quarters-share 0.25`) and none of the
-selection pressure, in a network that is *told* which layout it is in — the
+selection pressure, in a network that is _told_ which layout it is in — the
 scalars carry a `layout:Lanes`/`layout:Quarters` one-hot, plus `allies` and
 `seatInHalf`, and the critic gets its own layout bit. Nothing forces one policy
 to be the other, so neglecting one is free.
@@ -243,7 +300,7 @@ What it buys is that neither map can be neglected by a run scored on the other,
 which is the failure above.
 
 Two details the split brought out. The Quarters teacher patterns now include the
-teacher playing *both* slots of its team, which is how `rtsml-eval` and the
+teacher playing _both_ slots of its team, which is how `rtsml-eval` and the
 browser use the model — the old mix only ever paired a teacher with a scripted
 ally, so the student was cloned on a game it would never be asked to play. And
 the export's parity check runs on the map the model is for: the layouts are
@@ -254,14 +311,14 @@ scalars nor the region of the cell head a Quarters model uses.
 failed.** The log is worth keeping because the failures are more informative
 than the successes.
 
-| gen | change from the previous champion            | outcome                          |
-| --- | -------------------------------------------- | -------------------------------- |
-| 1   | the fixes above, from `bc5`                   | 0.240 → 0.646, decisive          |
-| 2   | `--ent-end`, annealing the entropy bonus      | 0.688, z = 1.26 — not established |
-| 3   | `--rollout` 32 → 64                           | failed; most checkpoints 0/48    |
-| 4   | `--minibatch` 1024, `--lr` 2e-4               | 0.875, z = +5.26 — decisive      |
-| 5   | generation 4's recipe again                   | failed                           |
-| 6   | gentler still: `--lr` 8e-5, `--ent` 1e-3      | 0.802, below the champion        |
+| gen | change from the previous champion        | outcome                           |
+| --- | ---------------------------------------- | --------------------------------- |
+| 1   | the fixes above, from `bc5`              | 0.240 → 0.646, decisive           |
+| 2   | `--ent-end`, annealing the entropy bonus | 0.688, z = 1.26 — not established |
+| 3   | `--rollout` 32 → 64                      | failed; most checkpoints 0/48     |
+| 4   | `--minibatch` 1024, `--lr` 2e-4          | 0.875, z = +5.26 — decisive       |
+| 5   | generation 4's recipe again              | failed                            |
+| 6   | gentler still: `--lr` 8e-5, `--ent` 1e-3 | 0.802, below the champion         |
 
 What moved it was **the minibatch, not the rollout or the learning rate**. At
 `--minibatch 256` an update abandoned after two of its sixty minibatches —
@@ -286,7 +343,7 @@ fresh one: generation 2's `ckpt180` screened 0.792 and verified 0.562,
 generation 6's `ckpt140` screened 0.875 and verified 0.802. Picking the maximum
 of nine noisy estimates is biased upward by roughly the amount that matters. So
 `--keep-every` writes checkpoints, a screen ranks them with the current champion
-included *in the same run* as a control, and nothing is promoted until it holds
+included _in the same run_ as a control, and nothing is promoted until it holds
 up on the two established ranges. Pairing does not rescue a small evaluation
 either — on identical seeds and seats two checkpoints disagree on about half
 their matches, so McNemar buys almost nothing over the two-proportion test.
@@ -301,7 +358,7 @@ in place the whole loop was rerun for Lanes: a fresh clone, then PPO, and
 separately PPO continued from the existing champion on 100% Lanes rather than
 75%. Neither beat it — from scratch 0.417, continued 0.833, the incumbent 0.917
 on the same 48 matches. That is the right result rather than a disappointing
-one: Lanes already had three quarters of the data *and* all of the checkpoint
+one: Lanes already had three quarters of the data _and_ all of the checkpoint
 selection, so there was nothing for the split to give back. It also shows what
 the champion actually is — four generations of accumulated iteration, not one
 invocation of the pipeline. Regenerating it from scratch means budgeting for the
@@ -309,7 +366,7 @@ generations, not the run.
 
 **Quarters is winnable, and PPO still cannot learn it.** Worth stating in that
 order, because the first half was checked before the second was believed: the
-teacher slot *is* the scripted bot, so `[teacher, teacher]` against
+teacher slot _is_ the scripted bot, so `[teacher, teacher]` against
 `[scripted@10, scripted@10]` is the bot playing itself, and team 0 takes 8 of 12.
 The mode is balanced, the seats are right, and the labels are sound (98.3% valid
 against 98.0% on Lanes).
@@ -343,7 +400,7 @@ worth remembering — `advStd` sits at 1.7e-2 against a 1e-3 floor, the critic's
 
 So nothing ships for Quarters, and the Co-op Neural chip stays disabled: a bot
 that loses every match is worse than an honestly greyed-out button. The way in
-is a curriculum that lets the learner win *something* first — its own imitation
+is a curriculum that lets the learner win _something_ first — its own imitation
 snapshot is the obvious first rung, since 5% is not zero — so that the terminal
 signal has variance before the ladder is asked for.
 

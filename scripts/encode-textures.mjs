@@ -20,6 +20,7 @@ import { join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 import { encodeToKTX2 } from 'ktx2-encoder';
+import { generateTeamTextures } from './tint-team-textures.mjs';
 
 // `URL.pathname` is `/C:/...` on Windows; resolving that as a filesystem path
 // produces `C:\C:\...`. Convert file URLs with the platform-aware helper.
@@ -113,3 +114,8 @@ if (before > 0) {
       `(-${(100 * (1 - after / before)).toFixed(1)}%)`,
   );
 }
+
+// Derive only after all base skins have been written. Independent PNG shards
+// can split a blue/red pair, so their caller performs this final step once.
+if (shardArg < 0) await generateTeamTextures();
+else console.log('After every PNG shard finishes, run `npm run textures:teams`.');

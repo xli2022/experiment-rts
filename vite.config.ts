@@ -14,7 +14,8 @@ import { defineConfig } from 'vitest/config';
 function basePath(isBuild: boolean): string {
   if (!isBuild) return '/';
   const fromEnv = process.env.BASE_PATH;
-  if (!fromEnv) return '/experiment-rts/';
+  // Pages reports an empty base_path for a custom domain or root site.
+  if (fromEnv === undefined) return '/experiment-rts/';
   return fromEnv.endsWith('/') ? fromEnv : `${fromEnv}/`;
 }
 

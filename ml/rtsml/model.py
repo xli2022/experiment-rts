@@ -221,10 +221,13 @@ class Policy(nn.Module):
 
     # --- scoring given decisions ------------------------------------------------------------------
 
-    def evaluate(self, obs: dict[str, torch.Tensor], actions: torch.Tensor) -> dict[str, torch.Tensor]:
-        """Log-probability and entropy of `actions` [B, ACTION_INTS] under the policy, plus the value.
+    def evaluate(self, obs: dict[str, torch.Tensor], actions: torch.Tensor, temperature: float = 1.0, selection_scores: torch.Tensor | None = None) -> dict[str, torch.Tensor]:
+        """Score labels or sampled PPO decisions, plus the value.
 
         Every head the action's type does not use contributes zero to both.
+        PPO supplies its sampled selection latents and temperature for an exact
+        joint likelihood. Without latents, imitation uses Bernoulli membership
+        supervision for its teacher's selection labels.
         """
         spec = self.spec
         enc = self.encode(obs)
@@ -238,42 +241,47 @@ class Policy(nn.Module):
         zero = torch.zeros_like(type_, dtype=enc.torso.dtype)
 
         type_mask = obs["mask_type"].to(torch.bool)
-        tl = self.type_logits(enc)
+        tl = self.type_logits(enc) / temperature
         logp = S.categorical_logp(tl, type_mask, type_)
         entropy = S.categorical_entropy(tl, type_mask)
 
         ctx = self.context(enc, type_)
-        sel_logits = self.selection_logits(enc, ctx)
+        sel_logits = self.selection_logits(enc, ctx) / temperature
         sel_mask = self.selection_mask(obs, type_, enc.row_mask)
         membership = S.membership_of(selection, spec.n_ent)
-        lp_many = S.selection_logp(sel_logits, sel_mask, membership)
+        if selection_scores is None:
+            lp_many = S.selection_logp(sel_logits, sel_mask, membership)
+            ent_many = S.selection_entropy(sel_logits, sel_mask)
+        else:
+            lp_many = S.selection_score_logp(sel_logits, sel_mask, selection_scores)
+            ent_many = S.selection_score_entropy(sel_logits, sel_mask)
         lp_one = S.categorical_logp(sel_logits, sel_mask, selection[:, 0])
         logp = logp + torch.where(use["multi"], lp_many, torch.where(use["single"], lp_one, zero))
         entropy = entropy + torch.where(
             use["multi"],
-            S.selection_entropy(sel_logits, sel_mask),
+            ent_many,
             torch.where(use["single"], S.categorical_entropy(sel_logits, sel_mask), zero),
         )
 
         ctx2 = torch.cat([ctx, self.summary(enc, membership)], dim=1)
-        et_logits = self.entity_type_logits(ctx2)
+        et_logits = self.entity_type_logits(ctx2) / temperature
         et_mask = self.entity_type_mask(obs, use["build"], selection[:, 0])
         logp = logp + torch.where(use["entity_type"], S.categorical_logp(et_logits, et_mask, entity_type), zero)
         entropy = entropy + torch.where(use["entity_type"], S.categorical_entropy(et_logits, et_mask), zero)
 
-        tgt_logits = self.target_logits(enc, ctx2)
+        tgt_logits = self.target_logits(enc, ctx2) / temperature
         tgt_mask = self.target_mask(obs, type_)
         logp = logp + torch.where(use["target"], S.categorical_logp(tgt_logits, tgt_mask, target), zero)
         entropy = entropy + torch.where(use["target"], S.categorical_entropy(tgt_logits, tgt_mask), zero)
 
         et_vec = self.et_emb(entity_type.clamp(min=0)) * use["entity_type"].unsqueeze(-1).to(enc.torso.dtype)
         ctx3 = torch.cat([ctx2, et_vec], dim=1)
-        cell_logits = self.cell_logits(enc, ctx3)
+        cell_logits = self.cell_logits(enc, ctx3) / temperature
         cell_mask = self.cell_mask(obs, type_, use["build"], entity_type)
         logp = logp + torch.where(use["location"], S.categorical_logp(cell_logits, cell_mask, cell), zero)
         entropy = entropy + torch.where(use["location"], S.categorical_entropy(cell_logits, cell_mask), zero)
 
-        sub_logits = self.sub_logits(ctx3, cell)
+        sub_logits = self.sub_logits(ctx3, cell) / temperature
         sub_mask = torch.ones_like(sub_logits, dtype=torch.bool)
         logp = logp + torch.where(use["location"], S.categorical_logp(sub_logits, sub_mask, sub), zero)
         entropy = entropy + torch.where(use["location"], S.categorical_entropy(sub_logits, sub_mask), zero)
@@ -296,6 +304,10 @@ class Policy(nn.Module):
 
     def act(self, obs: dict[str, torch.Tensor], noise: torch.Tensor, temperature: torch.Tensor) -> torch.Tensor:
         """Draw one decision per row from supplied noise: [B, ACTION_INTS] int64, unused heads -1."""
+        return self.sample(obs, noise, temperature)[0]
+
+    def sample(self, obs: dict[str, torch.Tensor], noise: torch.Tensor, temperature: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """A decision and its training-only selection latents; export keeps only the decision."""
         spec = self.spec
         seg = S.noise_slices()
         n = spec.n_ent
@@ -309,7 +321,8 @@ class Policy(nn.Module):
         sel_logits = self.selection_logits(enc, ctx)
         sel_mask = self.selection_mask(obs, type_, enc.row_mask)
         sel_noise = noise[:, seg["selection"]]
-        many = S.select_many(sel_logits, sel_mask, sel_noise[:, :n], sel_noise[:, n:], temperature, spec.selection_max)
+        selection_scores = sel_logits / temperature.unsqueeze(-1) + sel_noise[:, :n]
+        many = S.select_many_from_scores(selection_scores, sel_mask, sel_noise[:, n:], spec.selection_max)
         one = S.select_one(sel_logits, sel_mask, sel_noise[:, :n], temperature)
         one_padded = torch.cat([one.unsqueeze(1), torch.full_like(many[:, 1:], -1)], dim=1)
         none = torch.full_like(many, -1)
@@ -334,7 +347,8 @@ class Policy(nn.Module):
         sub = S.gumbel_argmax(sub_logits, torch.ones_like(sub_logits, dtype=torch.bool), noise[:, seg["sub"]], temperature)
         sub = torch.where(use["location"], sub, minus)
 
-        return torch.cat([type_.unsqueeze(1), entity_type.unsqueeze(1), target.unsqueeze(1), cell.unsqueeze(1), sub.unsqueeze(1), selection], dim=1)
+        actions = torch.cat([type_.unsqueeze(1), entity_type.unsqueeze(1), target.unsqueeze(1), cell.unsqueeze(1), sub.unsqueeze(1), selection], dim=1)
+        return actions, selection_scores.detach()
 
 
 ACT_INPUTS = (

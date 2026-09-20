@@ -14,20 +14,24 @@
  */
 
 import * as THREE from 'three';
-import { defOf } from '../config/rules.js';
-import { MAX_COMMAND_UNITS } from '../sim/commands.js';
+import { defOf, SUPPLY_MAX } from '../config/rules.js';
 import { toFloat } from '../sim/fixed.js';
 import { idIndex } from '../sim/entities.js';
-import { EntityType, NEUTRAL, NO_ENTITY, type EntityId, type PlayerId } from '../sim/types.js';
+import {
+  EntityType,
+  NEUTRAL,
+  NO_ENTITY,
+  Order,
+  type EntityId,
+  type PlayerId,
+} from '../sim/types.js';
 import type { World } from '../sim/world.js';
 
 /**
- * Selecting more than this is unwieldy and slows command packets down.
- *
- * The same number bounds a hosted bot's commands — it lives in the simulation's
- * command module because this file imports three.js and the bots cannot.
+ * A full supply-capped army can be selected together. The command boundary
+ * chunks larger selections into the smaller per-command network budget.
  */
-export const MAX_SELECTION = MAX_COMMAND_UNITS;
+export const MAX_SELECTION = SUPPLY_MAX;
 
 /**
  * Selection ring size relative to collision radius.
@@ -57,7 +61,10 @@ export class Selection {
   private readonly handles = new Map<number, EntityId>();
   private readonly groups = new Map<number, EntityId[]>();
 
-  constructor(private readonly localPlayer: PlayerId) {}
+  constructor(
+    private readonly localPlayer: PlayerId,
+    private readonly canSelect: (index: number) => boolean = () => true,
+  ) {}
 
   clear(): void {
     this.indices.clear();
@@ -68,7 +75,7 @@ export class Selection {
   prune(world: World): void {
     for (const i of [...this.indices]) {
       const id = this.handles.get(i);
-      if (id === undefined || !world.pool.isAlive(id)) {
+      if (id === undefined || !world.pool.isAlive(id) || !this.canSelect(i)) {
         this.indices.delete(i);
         this.handles.delete(i);
       }
@@ -80,14 +87,15 @@ export class Selection {
     const out: number[] = [];
     for (const i of this.indices) {
       const id = this.handles.get(i);
-      if (id !== undefined && world.pool.isAlive(id)) out.push(id);
+      if (id !== undefined && world.pool.isAlive(id) && this.canSelect(i)) out.push(id);
     }
     return out;
   }
 
   /** True if the selection contains at least one unit we own and can order. */
   hasOwnUnits(world: World): boolean {
-    for (const i of this.indices) {
+    for (const id of this.ids(world)) {
+      const i = idIndex(id);
       if (world.pool.owner[i] === this.localPlayer && !isBuilding(world, i)) return true;
     }
     return false;
@@ -120,10 +128,55 @@ export class Selection {
   }
 
   private remember(index: number, world: World): void {
+    if (!this.canSelect(index)) return;
     const id = world.pool.idAt(index);
     if (id === NO_ENTITY) return;
     this.indices.add(index);
     this.handles.set(index, id);
+  }
+
+  /** Cycle through workers without an order or a live combat target. */
+  selectIdleWorker(world: World): boolean {
+    if (world.player(this.localPlayer).defeated) return false;
+    const pool = world.pool;
+    const start = this.single();
+    for (let offset = 1; offset <= pool.count; offset++) {
+      const i = (start + offset) % pool.count;
+      if (
+        pool.alive[i] !== 1 ||
+        pool.owner[i] !== this.localPlayer ||
+        pool.type[i] !== EntityType.Worker ||
+        pool.order[i] !== Order.None ||
+        pool.isAlive(pool.combatTarget[i]!) ||
+        !this.canSelect(i)
+      )
+        continue;
+      this.set([i], world);
+      return true;
+    }
+    return false;
+  }
+
+  /** Select every controllable army unit, including support and air units. */
+  selectArmy(world: World): 'missing' | 'selected' | 'again' {
+    if (world.player(this.localPlayer).defeated) return 'missing';
+    const pool = world.pool;
+    const army: number[] = [];
+    for (let i = 0; i < pool.count && army.length < MAX_SELECTION; i++) {
+      if (
+        pool.alive[i] === 1 &&
+        pool.owner[i] === this.localPlayer &&
+        pool.type[i] !== EntityType.Worker &&
+        !isBuilding(world, i) &&
+        this.canSelect(i)
+      )
+        army.push(i);
+    }
+    if (army.length === 0) return 'missing';
+    this.prune(world);
+    const already = army.length === this.indices.size && army.every((i) => this.indices.has(i));
+    this.set(army, world);
+    return already ? 'again' : 'selected';
   }
 
   /**
@@ -165,7 +218,10 @@ export class Selection {
     // The comparison has to be against a selection with no corpses in it, or a
     // group that lost a member reads as a different set every time.
     this.prune(world);
-    const wanted = live.map((id) => idIndex(id));
+    const wanted = live.map((id) => idIndex(id)).filter(this.canSelect);
+    // Keep the group itself: units can return to sight later. Recalling it
+    // while hidden must neither select them nor reveal their camera position.
+    if (wanted.length === 0) return 'missing';
     const already = wanted.length === this.indices.size && wanted.every((i) => this.indices.has(i));
 
     this.set(wanted, world);
@@ -220,6 +276,7 @@ export function pickAt(
   ndcX: number,
   ndcY: number,
   localPlayer: PlayerId,
+  canSelect: (index: number) => boolean = () => true,
 ): number {
   const pool = world.pool;
   const ground = groundPointAt(camera, ndcX, ndcY);
@@ -229,7 +286,7 @@ export function pickAt(
   let bestScore = Number.POSITIVE_INFINITY;
 
   for (let i = 0; i < pool.count; i++) {
-    if (pool.alive[i] !== 1) continue;
+    if (pool.alive[i] !== 1 || !canSelect(i)) continue;
     const type = pool.type[i]! as EntityType;
     const def = defOf(type);
 
@@ -283,13 +340,14 @@ export function pickInBox(
   maxX: number,
   maxY: number,
   localPlayer: PlayerId,
+  canSelect: (index: number) => boolean = () => true,
 ): number[] {
   const pool = world.pool;
   const own: number[] = [];
   const others: number[] = [];
 
   for (let i = 0; i < pool.count; i++) {
-    if (pool.alive[i] !== 1) continue;
+    if (pool.alive[i] !== 1 || !canSelect(i)) continue;
     const p = project(camera, toFloat(pool.posX[i]!), toFloat(pool.posY[i]!), scratch);
     if (!p) continue;
     if (p.x < minX || p.x > maxX || p.y < minY || p.y > maxY) continue;

@@ -111,8 +111,11 @@ export function mirroredHalf(index: number, count: number): { canonical: number;
 
 /** Where the bases sit, as a fraction in from the corner. */
 const BASE_INSET = 0.16;
-/** How far the outer lanes' corner waypoint sits from the map edge. */
-const EDGE_INSET = 0.11;
+/**
+ * The outer crossroads sit just inside the bases' axes. Flanking still takes a
+ * longer route than mid, without a long walk into an otherwise empty corner.
+ */
+const EDGE_INSET = 0.18;
 
 /** Main lanes are wide enough for an army and some building. */
 const LANE_RADIUS = 4;
@@ -271,7 +274,8 @@ export function buildLayout(size: number, layout: MapLayout = MapLayout.Lanes): 
  *     opponent directly opposite them;
  *   - two **diagonals** crossing at the centre, which is what lets a team
  *     concentrate on one opponent instead of fighting two separate 1v1s;
- *   - short **approaches** from each base to its own natural expansion.
+ *   - short **connectors** from the naturals to the flanks, so a defending army
+ *     can rotate toward the contested mineral sites without going home first.
  *
  * One spec often carves two routes: the mirrored brush means authoring the left
  * flank also cuts the right one, and the top back lane also cuts the bottom.
@@ -304,19 +308,26 @@ function quartersLayout(size: number): Layout {
   const diagonalA: LaneSpec = { points: [a0, mid, b0], radius: RIVER_RADIUS };
   const diagonalB: LaneSpec = { points: [a1, mid, b1], radius: RIVER_RADIUS };
 
-  // Naturals sit off the diagonal a third of the way toward the middle: close
+  // Naturals sit on the diagonal partway toward the middle: close
   // enough to defend from home, far enough that taking one is a commitment.
   const natural0 = pointAt([a0, mid], 0.42);
   const natural1 = pointAt([a1, mid], 0.42);
-  const approach0: LaneSpec = { points: [a0, natural0], radius: CONNECTOR_RADIUS };
-  const approach1: LaneSpec = { points: [a1, natural1], radius: CONNECTOR_RADIUS };
+  const rightFlank = flank.points.map((p) => mirror(p, size));
+  const connector0: LaneSpec = {
+    points: [natural0, nearestOn(flank.points, natural0)],
+    radius: CONNECTOR_RADIUS,
+  };
+  const connector1: LaneSpec = {
+    points: [natural1, nearestOn(rightFlank, natural1)],
+    radius: CONNECTOR_RADIUS,
+  };
 
   // The contested pair: halfway down each flank, equidistant from both teams.
   // Its own rotation is the far flank's site, so the two are a mirrored pair
   // like every other expansion.
   const contested = nearestOn(flank.points, { x: inset, y: size >> 1 });
 
-  const lanes: LaneSpec[] = [back, flank, diagonalA, diagonalB, approach0, approach1];
+  const lanes: LaneSpec[] = [back, flank, diagonalA, diagonalB, connector0, connector1];
 
   const expansions: Pt[] = [
     natural0,
@@ -363,8 +374,8 @@ function lanesLayout(size: number): Layout {
     radius: LANE_RADIUS,
   };
 
-  // Outer lanes run out to a corner and then along to the far base. One spec
-  // produces both: the mirrored brush carves the opposite corner's lane too.
+  // Outer lanes run out to a flank crossroads and then along to the far base.
+  // One spec produces both: the mirrored brush carves the opposite lane too.
   const edge = Math.floor(size * EDGE_INSET);
   const cornerLow: Pt = { x: edge, y: size - 1 - edge };
   const outer: LaneSpec = {
@@ -398,15 +409,18 @@ function lanesLayout(size: number): Layout {
   // than something that happens on the way past — but with an entrance at each
   // end, so holding it costs something too.
   const expansion = pointAt(connectors[1]!.points, 0.5);
-  const expansions: Pt[] = [expansion, mirror(expansion, size)];
+  // Minerals at each outer/river crossroads give the long routes something to
+  // contest. Both teams approach these sites over equal-length lane segments;
+  // claiming one rewards control of a flank rather than a safe third base.
+  const expansions: Pt[] = [expansion, cornerLow, mirror(expansion, size), mirror(cornerLow, size)];
 
   // Clearings: pockets of open ground where corridors meet. Somewhere to stage
   // an army, or put a forward building, that is not a chokepoint.
   const clearings = [
     { at: pointAt(connectors[0]!.points, 0.5), radius: CLEARING_RADIUS },
     { at: expansion, radius: EXPANSION_RADIUS },
-    // Where the river meets the outer lane — the map's two far corners.
-    { at: cornerLow, radius: CLEARING_RADIUS + 2 },
+    // A full base site where the river meets each outer lane.
+    { at: cornerLow, radius: EXPANSION_RADIUS },
     // The centre crossroads.
     { at: mid, radius: CLEARING_RADIUS + 2 },
   ];

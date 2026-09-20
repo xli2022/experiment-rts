@@ -80,13 +80,16 @@ const HEADROOM_TO_SPEED_UP = 2;
  * Bots are players hosted by a peer, so their commands share the wire with the
  * human's, and the wire has a hard ceiling: a packet over one transport chunk
  * is reassembled by arrival order and scrambled (see `TRANSPORT_CHUNK_BYTES`).
- * The human slot is not capped — a person cannot click fast enough to matter —
- * but nothing bounds what a program emits, so hosted slots are. `AgentDriver`
+ * The human slot queues excess input while a hosted slot refuses it.
+ * `AgentDriver`
  * paces a bot inside this budget and queues the rest; the check in `issue` is
  * the last line, not a normal path. `tests/wire.test.ts` sizes the worst packet
  * from it.
  */
 export const HOSTED_COMMANDS_PER_TURN = 4;
+
+/** Human clicks can accumulate during a stall; drain them without losing any. */
+export const HUMAN_COMMANDS_PER_TURN = 4;
 
 /**
  * Bot slots one peer may host on a networked transport.
@@ -200,6 +203,8 @@ export class LockstepRunner {
 
   /** Local checksums by tick, kept until a peer confirms or contradicts them. */
   private readonly checksums = new Map<number, number>();
+  /** A peer may reach a checksum tick before this runner does. */
+  private readonly earlyChecksums = new Map<number, Map<PlayerId, number>>();
 
   /**
    * Turns we have already broadcast for, as a contiguous prefix `[0, sentThrough]`.
@@ -305,6 +310,10 @@ export class LockstepRunner {
     return this.tick;
   }
 
+  private get halted(): boolean {
+    return this.state === 'ended' || this.state === 'desynced';
+  }
+
   /**
    * Advance real time. Call once per rendered frame.
    *
@@ -315,14 +324,14 @@ export class LockstepRunner {
    * arrives.
    */
   update(deltaMs: number): number {
-    if (this.state === 'ended' || this.state === 'desynced') return 0;
+    if (this.halted) return 0;
 
     // Cap the catch-up burst. After a long pause (tab backgrounded, breakpoint)
     // an uncapped accumulator would try to simulate minutes of game in one
     // frame and freeze the browser.
     this.accumulatorMs = Math.min(this.accumulatorMs + deltaMs, MS_PER_TICK * 10);
 
-    while (this.accumulatorMs >= MS_PER_TICK) {
+    while (this.accumulatorMs >= MS_PER_TICK && !this.halted) {
       if (!this.stepOnce()) break; // stalled; keep the time for later
       this.accumulatorMs -= MS_PER_TICK;
     }
@@ -372,6 +381,12 @@ export class LockstepRunner {
     if (this.tick % CHECKSUM_INTERVAL === 0) {
       this.checksums.set(this.tick, this.simulation.checksum());
       this.pruneChecksums();
+      const early = this.earlyChecksums.get(this.tick);
+      this.earlyChecksums.delete(this.tick);
+      for (const [player, value] of early ?? []) {
+        this.compareChecksum(player, { tick: this.tick, value });
+        if (this.halted) break;
+      }
     }
 
     // Transient simulation events are cleared by the next step. Notify the
@@ -441,13 +456,19 @@ export class LockstepRunner {
     if (this.now() - this.lastResendMs >= RESEND_INTERVAL_MS) {
       this.lastResendMs = this.now();
       if (this.recentSent.length > 0) {
-        const recovery: Packet = {
-          player: this.transport.localPlayer,
-          turns: this.recentSent.slice(),
-        };
+        // Recovery retains more turns than a normal packet, but each send must
+        // still fit the same transport budget. Splitting between complete turn
+        // entries preserves first-write-wins even when the packets reorder.
+        const entriesPerPacket = (REDUNDANT_TURNS + 1) * this.owned.length;
         const latest = this.latestChecksum();
-        if (latest) recovery.checksum = latest;
-        this.transport.send(recovery);
+        for (let first = 0; first < this.recentSent.length; first += entriesPerPacket) {
+          const recovery: Packet = {
+            player: this.transport.localPlayer,
+            turns: this.recentSent.slice(first, first + entriesPerPacket),
+          };
+          if (latest) recovery.checksum = latest;
+          this.transport.send(recovery);
+        }
       }
     }
 
@@ -520,7 +541,12 @@ export class LockstepRunner {
       for (const slot of this.owned) {
         // Commands ride the first turn we open — the one we would have sent
         // anyway. Turns beyond it are pure headroom and go out empty.
-        const mine = t === first ? this.pending.get(slot)! : [];
+        const pending = this.pending.get(slot)!;
+        const limit =
+          slot === this.transport.localPlayer && this.transport.playerCount > 1
+            ? HUMAN_COMMANDS_PER_TURN
+            : pending.length;
+        const mine = t === first ? pending.splice(0, limit) : [];
         this.recentSent.push({ turn: t, player: slot, commands: mine });
 
         // Record our own commands locally too — we are a peer like any other,
@@ -534,7 +560,6 @@ export class LockstepRunner {
       // Only once something was actually scheduled: if the delay just shrank
       // and we opened nothing, the commands must stay pending rather than
       // vanish into a turn we never sent.
-      for (const slot of this.owned) this.pending.set(slot, []);
       this.sentThrough = target;
     }
 
@@ -572,6 +597,7 @@ export class LockstepRunner {
   }
 
   private receive(packet: Packet): void {
+    if (this.halted) return;
     if (packet.player !== this.transport.localPlayer) {
       // How much margin the peer's schedule is arriving with, in turns.
       //
@@ -649,7 +675,22 @@ export class LockstepRunner {
    */
   private compareChecksum(player: PlayerId, remote: { tick: number; value: number }): void {
     const local = this.checksums.get(remote.tick);
-    if (local === undefined) return; // not there yet, or already pruned
+    if (local === undefined) {
+      // Peers can lead one another by their input delay. Remember a checksum
+      // that arrived early so a peer that stops sending after detecting the
+      // divergence cannot leave this side with only a misleading timeout.
+      // Bound the future window and accept only real checksum ticks.
+      if (
+        remote.tick > this.tick &&
+        remote.tick <= this.tick + CHECKSUM_INTERVAL &&
+        remote.tick % CHECKSUM_INTERVAL === 0
+      ) {
+        let peers = this.earlyChecksums.get(remote.tick);
+        if (!peers) this.earlyChecksums.set(remote.tick, (peers = new Map()));
+        if (!peers.has(player)) peers.set(player, remote.value);
+      }
+      return;
+    }
     if (local === remote.value) return;
 
     this.state = 'desynced';

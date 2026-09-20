@@ -49,7 +49,7 @@ const BUILDING_POOL_CAPACITY = 128;
  *
  * Structures get a smaller one than `POOL_CAPACITY`, which the shared overlays
  * and the authored-model pools use. Every combination now gets a pool, so the
- * table is 19 types wide instead of 9, and a side cannot put hundreds of any one
+ * table covers every entity type, and a side cannot put hundreds of any one
  * structure on screen the way it can units.
  */
 function poolCapacity(type: EntityType): number {
@@ -290,15 +290,12 @@ export class EntityRenderer {
     });
 
     for (let owner = 0; owner < this.teamOf.length; owner++) {
-      // Skins are authored one per side, not one per slot, so partners wear the
-      // same colours as each other and the opposing pair wears the other set.
-      // That is the read the game needs at a glance; which of the two allied
-      // players a unit belongs to is answered by the minimap and the rings.
-      const skin = textures[this.teamOf[owner] ?? 0] ?? null;
+      // Authored skins follow the same palette as buildings and the minimap:
+      // blue/red in duels, blue/teal versus red/orange in co-op.
+      const skin = textures[this.colourOf[owner] ?? owner] ?? null;
       const material = new THREE.MeshLambertMaterial({
         map: skin,
-        // Without a texture the player colour has to carry the whole read, so
-        // the model is tinted flat rather than left white.
+        // Keep authored colours unchanged; tint only the untextured fallback.
         color: skin ? 0xffffff : (PLAYER_COLOURS[this.colourOf[owner] ?? owner] ?? 0x9aa4b2),
       });
       const anim = new AnimatedUnitPool(model, material, POOL_CAPACITY);
@@ -421,7 +418,7 @@ export class EntityRenderer {
    *
    * Every type in the defs table, not a list kept here. The list used to be
    * written out by hand, and a type added to the game and not to it had no mesh
-   * at all: the Foundry was invisible, and the nine robots that came with it had
+   * at all: the Factory was invisible, and the nine robots that came with it had
    * no fallback to drop to if their GLB failed to load. A structure has no
    * authored model, so its procedural pool is the only thing that ever draws it.
    */
@@ -641,6 +638,7 @@ export class EntityRenderer {
         const entry = this.pools.get(poolKey(type, p, owner));
         if (!entry || entry.count >= entry.capacity) continue;
         const part = spec.parts[p]!;
+        if (part.minLevel && pool.buildingLevel[i]! < part.minLevel) continue;
 
         this.position.set(part.offset[0], part.offset[1] + sink + altitude, part.offset[2]);
         this.position.applyQuaternion(this.quat);
@@ -663,9 +661,9 @@ export class EntityRenderer {
       // A building mid-production gets a slow pulse of light at its base, so a
       // busy barracks is legible from across the map without selecting it.
       if (
-        pool.prodCount[i]! > 0 &&
+        (pool.prodCount[i]! > 0 || pool.upgrading[i] === 1) &&
         pool.buildState[i] === BuildState.Complete &&
-        ringCount < POOL_CAPACITY
+        prodCount < POOL_CAPACITY
       ) {
         const beat = 0.72 + 0.28 * Math.sin(elapsedS * PRODUCTION_PULSE_RATE + i);
         const r = spec.radius * 1.35 * beat;
@@ -718,7 +716,9 @@ export class EntityRenderer {
         barRight.set(1, 0, 0).applyQuaternion(camera.quaternion);
         barUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
 
-        const headY = (animated ? animated.height : spec.height) + altitude;
+        const modelHeight =
+          pool.buildingLevel[i]! >= 2 ? (spec.level2Height ?? spec.height) : spec.height;
+        const headY = (animated ? animated.height : modelHeight) + altitude;
         // Depth along the view axis, which is what perspective divides by.
         const viewDepth =
           (x - camera.position.x) * barForward.x +

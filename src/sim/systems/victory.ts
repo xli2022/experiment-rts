@@ -39,8 +39,9 @@
  * with the worker still in it.
  */
 
-import { defOf } from '../../config/rules.js';
+import { buildingUpgrade, defOf, productionOptions } from '../../config/rules.js';
 import {
+  BuildState,
   EntityType,
   MAX_PLAYERS,
   NEUTRAL,
@@ -68,6 +69,7 @@ const units = new Int32Array(MAX_PLAYERS);
  * already been bought and is sitting in a queue.
  */
 const canProduce = new Uint8Array(MAX_PLAYERS);
+const refundableUpgrades = new Int32Array(MAX_PLAYERS);
 
 export function victorySystem(world: World): void {
   if (world.matchOver) return;
@@ -77,6 +79,16 @@ export function victorySystem(world: World): void {
   buildings.fill(0, 0, playerCount);
   units.fill(0, 0, playerCount);
   canProduce.fill(0, 0, playerCount);
+  refundableUpgrades.fill(0, 0, playerCount);
+  // An upgrade is cancellable. Its committed minerals remain a way back into
+  // production even if the player's last worker dies before it finishes.
+  for (let i = 0; i < pool.count; i++) {
+    if (pool.alive[i] !== 1 || pool.upgrading[i] !== 1) continue;
+    const owner = pool.owner[i]!;
+    if (owner === NEUTRAL) continue;
+    const upgrade = buildingUpgrade(pool.type[i]! as EntityType);
+    if (upgrade) refundableUpgrades[owner]! += upgrade.mineralCost;
+  }
   for (let i = 0; i < pool.count; i++) {
     if (pool.alive[i] !== 1) continue;
     const type = pool.type[i]! as EntityType;
@@ -90,12 +102,16 @@ export function victorySystem(world: World): void {
     if (def.isBuilding) {
       buildings[owner]! += 1;
       // Only a finished building can train anything.
-      if (pool.buildState[i] === 2 && def.produces.length > 0) {
+      if (pool.buildState[i] === BuildState.Complete && def.produces.length > 0) {
         // Already paid for and under way: the minerals are spent, so the unit
         // arrives whatever the bank says.
         if (pool.prodCount[i]! > 0) canProduce[owner] = 1;
-        const cheapest = cheapestOf(def.produces);
-        if (world.player(owner as PlayerId).minerals >= cheapest) canProduce[owner] = 1;
+        const minerals = world.player(owner as PlayerId).minerals;
+        const level = pool.buildingLevel[i]!;
+        const cheapest = cheapestOf(productionOptions(type, level));
+        if (minerals + refundableUpgrades[owner]! >= cheapest) canProduce[owner] = 1;
+        if (pool.upgrading[i] === 1 && minerals >= cheapestOf(productionOptions(type, level + 1)))
+          canProduce[owner] = 1;
       }
     } else {
       units[owner]! += 1;

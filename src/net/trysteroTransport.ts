@@ -45,7 +45,7 @@
 
 import { joinRoom, selfId, type DataPayload, type MessageAction, type Room } from 'trystero/nostr';
 import type { PlayerId } from '../sim/types.js';
-import type { Packet, Transport } from './transport.js';
+import { isPacket, type Packet, type Transport } from './transport.js';
 
 /** Namespaces our rooms so unrelated Trystero apps never collide with ours. */
 const APP_ID = 'experiment-rts-v1';
@@ -118,8 +118,17 @@ function unorderedPeerConnection(): typeof RTCPeerConnection | undefined {
  *    A v5 peer runs its bots inside the simulation and never sends for their
  *    slots, so a v6 peer would wait forever on a turn that is never coming —
  *    and the roster field the mode string compares was renamed besides.
+ * 7: corrected simulation arithmetic, orders and checksums change the match
+ *    state. Both peers also confirm the same pairing before the lobby resolves,
+ *    including simultaneous joins, and slot zero supplies the agreed seed.
+ * 8: faster opening economy and revised unit/building balance change match
+ *    timing and combat outcomes; peers must use the same gameplay rules.
+ * 9: Factory/Airport production, per-building levels and upgrade commands add
+ *    checksummed state and change which units each building can train.
+ * 10: Firespout damage is reduced for the revised early production roster.
+ *     Older peers would apply different damage to the same attack.
  */
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 10;
 
 export interface HostConfig {
   roomCode: string;
@@ -280,6 +289,8 @@ interface Handshake {
   protocol: number;
   seed: number;
   mode: string;
+  /** The sender has reserved its one opponent slot for the recipient. */
+  accepted?: boolean;
 }
 
 /**
@@ -302,8 +313,8 @@ export function slotFromPeerIds(localId: string, remoteId: string): PlayerId {
 /**
  * Create or join a room and wait for the other player.
  *
- * Both sides call this. Whoever is already in the room when the other arrives
- * acts as host and owns the seed, so neither side needs to know in advance which
+ * Both sides call this. The peer assigned slot zero supplies the seed, so
+ * neither side needs to know in advance which
  * role it will play — the same code path serves "host" and "join", and the room
  * code is the only thing a player has to share.
  */
@@ -332,7 +343,6 @@ export function joinOnlineRoom(
   return new Promise((resolve, reject) => {
     let settled = false;
     let localPlayer: PlayerId | null = null;
-    const agreedSeed = seed;
     let peerId: string | null = null;
 
     // Packets go to the settled peer and are taken only from it. A room can
@@ -358,27 +368,30 @@ export function joinOnlineRoom(
      * only thing either check could do was report a desync it was meant to
      * prevent. One extra message is a cheap price for the guarantee.
      */
-    const resolveWith = (remoteId: string): void => {
+    const resolveWith = (remoteId: string, remoteSeed: number): void => {
       if (settled) return;
       peerId = remoteId;
       const slot = slotFromPeerIds(provider.selfId, remoteId);
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener('abort', abandon);
       localPlayer = slot;
       transport.markReady(remoteId);
       onStatus?.('Connected.');
-      resolve({ transport, seed: agreedSeed, localPlayer: slot });
+      resolve({ transport, seed: slot === 0 ? seed : remoteSeed, localPlayer: slot });
     };
 
     const refuse = (message: string): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener('abort', abandon);
       swallow(room.leave());
       reject(new Error(message));
     };
 
-    signal?.addEventListener('abort', () => refuse(JOIN_ABANDONED), { once: true });
+    const abandon = (): void => refuse(JOIN_ABANDONED);
+    signal?.addEventListener('abort', abandon, { once: true });
 
     // Sent once *per peer*. Peer discovery is symmetric but its two halves are
     // not ordered, so the greeting has to go out from whichever side of that
@@ -391,8 +404,7 @@ export function joinOnlineRoom(
     // only the first id we hear about strands the second. A room can hold more
     // than two: a player with the page open in a spare tab, a reload whose old
     // peer has not been reaped yet, or two pairs that landed on the same code.
-    // Greet whoever we meet; the extra message is a few dozen bytes and the
-    // first handshake back is still what settles the slot.
+    // Greet whoever we meet until one valid offer reserves our opponent slot.
     //
     // Until settled, that is. A greeting from a peer that already has its
     // match is a promise it cannot keep: the newcomer would settle against
@@ -400,19 +412,29 @@ export function joinOnlineRoom(
     // settled pair. Left ungreeted, it times out with an honest message.
     const greeted = new Set<string>();
     const greet = (id: string): void => {
-      if (settled || greeted.has(id)) return;
+      if (settled || greeted.has(id) || (peerId !== null && peerId !== id)) return;
       greeted.add(id);
       const hello: Handshake = { protocol: PROTOCOL_VERSION, seed, mode };
       swallow(handshakeAction.send(hello, { target: id }));
     };
 
     room.onPeerJoin = (id: string) => {
+      if (settled) return;
       onStatus?.('Peer found, agreeing on the map…');
       greet(id);
     };
 
     handshakeAction.onMessage = (data, context) => {
+      if (settled || (peerId !== null && peerId !== context.peerId)) return;
       greet(context.peerId);
+      if (
+        data === null ||
+        typeof data !== 'object' ||
+        !Number.isSafeInteger((data as Handshake).seed)
+      ) {
+        refuse('The other player sent an invalid game handshake.');
+        return;
+      }
       const msg = data as Handshake;
       if (msg.protocol !== PROTOCOL_VERSION) {
         refuse(
@@ -428,16 +450,27 @@ export function joinOnlineRoom(
         );
         return;
       }
-      resolveWith(context.peerId);
+      // An offer alone does not prove that its sender chose us: it may also
+      // have greeted another tab. Reserve exactly one peer and wait until that
+      // peer confirms the same reservation before either game can start.
+      if (peerId === null) {
+        peerId = context.peerId;
+        const accepted: Handshake = { protocol: PROTOCOL_VERSION, seed, mode, accepted: true };
+        swallow(handshakeAction.send(accepted, { target: peerId }));
+      }
+      if (msg.accepted === true) resolveWith(context.peerId, msg.seed);
     };
 
     room.onPeerLeave = (id: string) => {
-      if (id === peerId) transport.reportLost();
+      if (id !== peerId) return;
+      if (settled) transport.reportLost();
+      else refuse('The other player left before the match could start.');
     };
 
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
+      signal?.removeEventListener('abort', abandon);
       swallow(room.leave());
       reject(
         new Error(
@@ -487,7 +520,7 @@ class TrysteroTransport implements Transport {
 
   /** A packet from anyone but the paired peer is dropped, whatever it claims. */
   receive(packet: Packet, from: string): void {
-    if (this.closed || from !== this.peerId) return;
+    if (this.closed || from !== this.peerId || !isPacket(packet)) return;
     this.packetHandler?.(packet);
   }
 

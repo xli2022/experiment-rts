@@ -18,8 +18,9 @@
  * how projects lose weeks.
  */
 
-import type { Command } from '../sim/commands.js';
-import type { PlayerId } from '../sim/types.js';
+import { CommandType, type Command } from '../sim/commands.js';
+import { ENTITY_CAPACITY } from '../sim/entities.js';
+import { ENTITY_TYPE_COUNT, type PlayerId } from '../sim/types.js';
 
 /** One player's commands for one turn. */
 export interface TurnCommands {
@@ -58,6 +59,86 @@ export interface Packet {
    * exact.
    */
   peerHeadroom?: number;
+}
+
+/** JSON from a peer has no TypeScript guarantees; reject malformed envelopes. */
+export function isPacket(value: unknown): value is Packet {
+  if (value === null || typeof value !== 'object') return false;
+  const packet = value as Packet;
+  if (!Number.isSafeInteger(packet.player) || packet.player < 0 || !Array.isArray(packet.turns)) {
+    return false;
+  }
+  if (packet.peerHeadroom !== undefined && !Number.isSafeInteger(packet.peerHeadroom)) return false;
+  if (
+    packet.checksum !== undefined &&
+    (packet.checksum === null ||
+      !Number.isSafeInteger(packet.checksum.tick) ||
+      packet.checksum.tick < 0 ||
+      !Number.isSafeInteger(packet.checksum.value))
+  )
+    return false;
+  return packet.turns.every(
+    (turn) =>
+      turn !== null &&
+      typeof turn === 'object' &&
+      Number.isSafeInteger(turn.turn) &&
+      turn.turn >= 0 &&
+      Number.isSafeInteger(turn.player) &&
+      turn.player >= 0 &&
+      Array.isArray(turn.commands) &&
+      turn.commands.every(isCommand),
+  );
+}
+
+function isCommand(value: unknown): value is Command {
+  if (value === null || typeof value !== 'object') return false;
+  const command = value as Command;
+  const integer = Number.isSafeInteger;
+  const entityType = (type: number): boolean =>
+    integer(type) && type >= 0 && type < ENTITY_TYPE_COUNT;
+  const units = (): boolean =>
+    'units' in command && Array.isArray(command.units) && command.units.every(integer);
+  switch (command.type) {
+    case CommandType.Move:
+    case CommandType.AttackMove:
+      return (
+        units() &&
+        integer(command.x) &&
+        integer(command.y) &&
+        (command.formationOffset === undefined ||
+          (integer(command.formationOffset) &&
+            command.formationOffset >= 0 &&
+            command.formationOffset < ENTITY_CAPACITY &&
+            command.formationOffset + command.units.length <= ENTITY_CAPACITY))
+      );
+    case CommandType.Attack:
+    case CommandType.Harvest:
+      return units() && integer(command.target);
+    case CommandType.Stop:
+    case CommandType.Hold:
+      return units();
+    case CommandType.Build:
+      return (
+        integer(command.worker) &&
+        entityType(command.building) &&
+        integer(command.tileX) &&
+        integer(command.tileY)
+      );
+    case CommandType.Train:
+      return integer(command.building) && entityType(command.unit);
+    case CommandType.CancelTrain:
+      return integer(command.building) && integer(command.slot);
+    case CommandType.SetRally:
+      return integer(command.building) && integer(command.x) && integer(command.y);
+    case CommandType.CancelBuild:
+    case CommandType.UpgradeBuilding:
+    case CommandType.CancelUpgrade:
+      return integer(command.building);
+    case CommandType.Surrender:
+      return true;
+    default:
+      return false;
+  }
 }
 
 export interface Transport {

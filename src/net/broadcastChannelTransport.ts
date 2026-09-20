@@ -17,12 +17,21 @@
 
 import type { PlayerId } from '../sim/types.js';
 import { JOIN_ABANDONED, PROTOCOL_VERSION, slotFromPeerIds } from './trysteroTransport.js';
-import type { Packet, Transport } from './transport.js';
+import { isPacket, type Packet, type Transport } from './transport.js';
 
 const CHANNEL_PREFIX = 'experiment-rts:';
 
 type Envelope =
-  | { kind: 'hello'; protocol: number; from: string; seed: number; mode: string; reply: boolean }
+  | {
+      kind: 'hello';
+      protocol: number;
+      from: string;
+      seed: number;
+      mode: string;
+      reply: boolean;
+      /** Only this recipient has been reserved as the sender's opponent. */
+      accepted?: string;
+    }
   | { kind: 'packet'; from: string; packet: Packet }
   | { kind: 'bye'; from: string };
 
@@ -71,12 +80,18 @@ export function joinLocalRoom(
 
   return new Promise((resolve, reject) => {
     let settled = false;
+    let peerId: string | null = null;
+
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      channel.removeEventListener('message', onMessage);
+      signal?.removeEventListener('abort', abandon);
+    };
 
     const abandon = (): void => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
-      channel.removeEventListener('message', onMessage);
+      cleanup();
       channel.close();
       reject(new Error(JOIN_ABANDONED));
     };
@@ -84,8 +99,7 @@ export function joinLocalRoom(
     const finish = (seed: number, slot: PlayerId, peer: string): void => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
-      channel.removeEventListener('message', onMessage);
+      cleanup();
       resolve({
         transport: new BroadcastChannelTransport(channel, selfId, peer, slot),
         seed,
@@ -95,8 +109,11 @@ export function joinLocalRoom(
 
     const onMessage = (event: MessageEvent<Envelope>): void => {
       const msg = event.data;
-      if (!msg || msg.from === selfId) return;
+      if (!msg || typeof msg.from !== 'string' || msg.from === selfId) return;
       if (msg.kind !== 'hello') return;
+      if (!Number.isSafeInteger(msg.seed)) return;
+      if (msg.accepted !== undefined && msg.accepted !== selfId) return;
+      if (peerId !== null && peerId !== msg.from) return;
 
       // A tab that joined before us never saw our greeting, so answer once so
       // both sides end up knowing both ids and both seeds.
@@ -116,8 +133,7 @@ export function joinLocalRoom(
       // The check Trystero performs is the check that matters here too.
       if (msg.protocol !== PROTOCOL_VERSION) {
         settled = true;
-        clearTimeout(timer);
-        channel.removeEventListener('message', onMessage);
+        cleanup();
         channel.close();
         reject(
           new Error(
@@ -130,13 +146,27 @@ export function joinLocalRoom(
 
       if (msg.mode !== mode) {
         settled = true;
-        clearTimeout(timer);
-        channel.removeEventListener('message', onMessage);
+        cleanup();
         channel.close();
         reject(new Error('The other tab chose a different mode. Pick the same one in both.'));
         return;
       }
 
+      if (peerId === null) {
+        peerId = msg.from;
+        channel.postMessage({
+          kind: 'hello',
+          protocol: PROTOCOL_VERSION,
+          from: selfId,
+          seed: seedIfHost,
+          mode,
+          reply: false,
+          accepted: peerId,
+        } satisfies Envelope);
+      }
+      // Greetings go to every tab. Only a reciprocal reservation proves that
+      // the other tab will send its game packets to us after several join at once.
+      if (msg.accepted !== selfId) return;
       const slot = slotFromPeerIds(selfId, msg.from);
       // Both tabs now hold both seeds and agree on who is slot 0, so both pick
       // the same one without anyone having to be "the host".
@@ -158,7 +188,7 @@ export function joinLocalRoom(
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      channel.removeEventListener('message', onMessage);
+      cleanup();
       channel.close();
       reject(new Error('no second player joined'));
     }, timeoutMs);
@@ -171,6 +201,7 @@ class BroadcastChannelTransport implements Transport {
   private packetHandler: ((p: Packet) => void) | undefined;
   private lostHandler: ((p: PlayerId) => void) | undefined;
   private closed = false;
+  private readonly onPageHide = (): void => this.close();
 
   constructor(
     private readonly channel: BroadcastChannel,
@@ -186,7 +217,7 @@ class BroadcastChannelTransport implements Transport {
     channel.addEventListener('message', (event: MessageEvent<Envelope>) => {
       const msg = event.data;
       if (!msg || msg.from !== this.peerId) return;
-      if (msg.kind === 'packet') {
+      if (msg.kind === 'packet' && isPacket(msg.packet)) {
         this.packetHandler?.(msg.packet);
       } else if (msg.kind === 'bye') {
         this.lostHandler?.(this.localPlayer === 0 ? 1 : 0);
@@ -195,7 +226,7 @@ class BroadcastChannelTransport implements Transport {
 
     // Best-effort goodbye so the other tab shows "player left" rather than
     // sitting on a stall until the timeout.
-    window.addEventListener('pagehide', () => this.close());
+    window.addEventListener('pagehide', this.onPageHide);
   }
 
   send(packet: Packet): void {
@@ -214,6 +245,7 @@ class BroadcastChannelTransport implements Transport {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    window.removeEventListener('pagehide', this.onPageHide);
     try {
       this.channel.postMessage({ kind: 'bye', from: this.selfId } satisfies Envelope);
       this.channel.close();

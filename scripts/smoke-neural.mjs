@@ -24,6 +24,7 @@
 import { execSync, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 const args = new Map();
 for (let i = 2; i < process.argv.length; i++) {
@@ -85,18 +86,20 @@ async function main() {
   if (!existsSync('dist/index.html')) throw new Error('no build: run `npm run build` first');
   const { chromium } = resolvePlaywright();
   console.log(`playwright ${chromium.name()} at ${chromium.executablePath()}`);
-  // Its own process group, so that killing the preview kills the server npx
-  // started under it — and so that a signal to this script takes it along.
-  const preview = spawn('npx', ['vite', 'preview', '--port', String(port), '--strictPort'], {
+  // Launch the Node entry point directly: npx is a .cmd shim on Windows, and
+  // spawning it without a shell fails. The direct child is also the server we
+  // need to stop, without platform-specific process-group signals.
+  const vite = fileURLToPath(new URL('../node_modules/vite/bin/vite.js', import.meta.url));
+  const preview = spawn(process.execPath, [vite, 'preview', '--port', String(port), '--strictPort'], {
     stdio: ['ignore', 'pipe', 'pipe'],
-    detached: true,
+    windowsHide: true,
   });
   const previewLog = [];
   preview.stdout.on('data', (d) => previewLog.push(String(d)));
   preview.stderr.on('data', (d) => previewLog.push(String(d)));
   const stopPreview = () => {
     try {
-      process.kill(-preview.pid, 'SIGTERM');
+      preview.kill();
     } catch {
       // already gone
     }

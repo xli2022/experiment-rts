@@ -22,6 +22,7 @@
  */
 
 import {
+  buildingUpgrade,
   defOf,
   MAX_PRODUCTION_QUEUE,
   MINERALS_PER_TRIP,
@@ -113,7 +114,10 @@ const F_HAS_RALLY = F_PROD_PROGRESS + 1;
 const F_RALLY_DX = F_HAS_RALLY + 1;
 const F_RALLY_DY = F_RALLY_DX + 1;
 const F_COOLDOWN = F_RALLY_DY + 1;
-const F_VISIBLE = F_COOLDOWN + 1;
+const F_BUILDING_LEVEL = F_COOLDOWN + 1;
+const F_UPGRADING = F_BUILDING_LEVEL + 1;
+const F_UPGRADE_PROGRESS = F_UPGRADING + 1;
+const F_VISIBLE = F_UPGRADE_PROGRESS + 1;
 const F_MEMORY_AGE = F_VISIBLE + 1;
 const F_RESOURCE = F_MEMORY_AGE + 1;
 const F_IN_LAST = F_RESOURCE + 1;
@@ -178,11 +182,14 @@ interface Candidate {
 export class ObservationEncoder {
   private readonly candidates: Candidate[] = [];
   private readonly cellSum = new Float32Array(4 * CELLS);
+  private readonly rememberedSolid: Uint8Array;
 
   constructor(
     private readonly world: World,
     readonly viewer: PlayerId,
-  ) {}
+  ) {
+    this.rememberedSolid = new Uint8Array(world.map.width * world.map.height);
+  }
 
   /**
    * Fill `out` and `frame` from the world as the viewer sees it now.
@@ -213,6 +220,7 @@ export class ObservationEncoder {
     frame.rows.fill(NO_ENTITY);
     frame.rowKind.fill(RowKind.Empty);
     frame.rowOf.clear();
+    frame.constructionSites.clear();
     out.entities.fill(0);
     out.entityMask.fill(0);
     out.grid.fill(0);
@@ -378,6 +386,14 @@ export class ObservationEncoder {
         }
       }
       if (own) {
+        if (def.isBuilding) {
+          E[o + F_BUILDING_LEVEL] = pool.buildingLevel[i]! / 2;
+          E[o + F_UPGRADING] = pool.upgrading[i]!;
+          const upgrade = buildingUpgrade(type);
+          if (pool.upgrading[i] === 1 && upgrade) {
+            E[o + F_UPGRADE_PROGRESS] = clip01(pool.upgradeProgress[i]! / upgrade.buildTicks);
+          }
+        }
         const orderColumn = ORDER_COLUMNS.indexOf(pool.order[i]! as Order);
         if (orderColumn >= 0) E[o + F_ORDER + orderColumn] = 1;
         E[o + F_CARRYING] = clip01(pool.carrying[i]! / MINERALS_PER_TRIP);
@@ -403,6 +419,9 @@ export class ObservationEncoder {
       frame.rows[row] = id;
       frame.rowKind[row] = c.kind;
       frame.rowOf.set(id, row);
+      if (c.kind === RowKind.OwnBuilding && pool.buildState[i] !== BuildState.Complete) {
+        frame.constructionSites.set(pool.tileY[i]! * W + pool.tileX[i]!, { id, type });
+      }
       out.entityMask[row] = 1;
       row++;
     }
@@ -416,7 +435,7 @@ export class ObservationEncoder {
       const ty = canonY(entry.posX, entry.posY);
       writeCommon(row, entry.type, patch ? 3 : 2, tx, ty, entry.hp);
       if (entry.isBuilding && !patch) E[o + F_BUILD + entry.buildState] = 1;
-      E[o + F_VISIBLE] = r.kind === RowKind.EnemyRemembered ? 0 : 1;
+      E[o + F_VISIBLE] = entry.lastSeen === world.tick ? 1 : 0;
       E[o + F_MEMORY_AGE] = clip01((world.tick - entry.lastSeen) / UNIT_MEMORY_TICKS);
       if (patch) E[o + F_RESOURCE] = clip01(entry.resourceAmount / PATCH_AMOUNT);
       E[o + F_IN_LAST] = recent.lastUnits.has(entry.id) ? 1 : 0;
@@ -434,6 +453,18 @@ export class ObservationEncoder {
     const cellTiles = index.cellTiles;
     const state = vis.state;
     const occupied = map.occupied;
+    const rememberedSolid = this.rememberedSolid;
+    rememberedSolid.fill(0);
+    for (const entry of mem.entries) {
+      const def = defOf(entry.type);
+      if (!def.isBuilding || !def.collides) continue;
+      const footprint = def.footprint;
+      for (let y = entry.tileY; y < entry.tileY + footprint; y++) {
+        for (let x = entry.tileX; x < entry.tileX + footprint; x++) {
+          if (map.inBounds(x, y)) rememberedSolid[map.index(x, y)] = 1;
+        }
+      }
+    }
     const sums = this.cellSum;
     sums.fill(0);
     for (let t = 0; t < W * H; t++) {
@@ -441,9 +472,10 @@ export class ObservationEncoder {
       if (cell < 0) continue;
       const s = state[t]!;
       if (index.notCliff[t] === 1) sums[cell]!++;
-      // Occupancy is only known where the ground has been seen; unexplored
-      // ground reads as free, which is what a person would assume.
-      if (index.ground[t] === 1 && (s === UNEXPLORED || occupied[t] !== OCCUPIED_SOLID)) {
+      // Explored ground is still fogged. Use remembered structures there,
+      // never the current occupancy of buildings raised or destroyed unseen.
+      const solid = s === VISIBLE ? occupied[t] === OCCUPIED_SOLID : rememberedSolid[t] === 1;
+      if (index.ground[t] === 1 && !solid) {
         sums[CELLS + cell]!++;
       }
       if (s !== UNEXPLORED) sums[2 * CELLS + cell]!++;

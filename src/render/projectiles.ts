@@ -352,12 +352,13 @@ export class ProjectileRenderer {
    * Buildings get more, bigger, slower chunks than infantry — a Command Post
    * falling should not look like a Burstbot being shot.
    */
-  spawnDeaths(world: World): void {
+  spawnDeaths(world: World, canSee?: (index: number) => boolean): void {
     const pool = world.pool;
     const deaths = world.events.deaths;
 
     for (let k = 0; k < deaths.length; k++) {
       const i = deaths[k]!;
+      if (canSee && !canSee(i)) continue;
       const type = pool.type[i]! as EntityType;
       const def = defOf(type);
       // Exhausted mineral patches vanish rather than exploding.
@@ -424,13 +425,20 @@ export class ProjectileRenderer {
    * Both transforms and entity metadata are copied immediately: a later
    * catch-up tick can move the entities or recycle either slot before rendering.
    */
-  captureFromEvents(world: World, entities: EntityRenderer): void {
+  captureFromEvents(
+    world: World,
+    entities: EntityRenderer,
+    canSee?: (index: number) => boolean,
+  ): void {
     const shots = world.events.shots;
     const pool = world.pool;
 
     for (let k = 0; k + 1 < shots.length; k += 2) {
       const attacker = shots[k]!;
       const target = shots[k + 1]!;
+      // A battle between unseen enemies must not reveal itself through effects
+      // drawn above the fog plane. Keep incoming fire at a visible unit.
+      if (canSee && !canSee(attacker) && !canSee(target)) continue;
       const attackerType = pool.type[attacker]! as EntityType;
       const def = defOf(attackerType);
       const owner = pool.owner[attacker]!;

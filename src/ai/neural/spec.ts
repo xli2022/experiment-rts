@@ -38,7 +38,7 @@ export const ENTITY_FEATURES = [
   'type:Beamdrone',
   'type:Boomwalker',
   'type:Fixomatic',
-  'type:Foundry',
+  'type:Factory',
   'type:Firespout',
   'type:Arclight',
   'type:Piercebot',
@@ -46,6 +46,7 @@ export const ENTITY_FEATURES = [
   'type:DarkGolem',
   'type:IceGolem',
   'type:Plasmodrone',
+  'type:Airport',
   // relation to the viewer
   'rel:own',
   'rel:ally',
@@ -76,6 +77,9 @@ export const ENTITY_FEATURES = [
   'rallyDx',
   'rallyDy',
   'cooldown',
+  'buildingLevel',
+  'upgrading',
+  'upgradeProgress',
   // how it is known
   'visibleNow',
   'memoryAge',
@@ -134,7 +138,7 @@ export const SCALARS = [
   'own:Beamdrone',
   'own:Boomwalker',
   'own:Fixomatic',
-  'own:Foundry',
+  'own:Factory',
   'own:Firespout',
   'own:Arclight',
   'own:Piercebot',
@@ -142,6 +146,7 @@ export const SCALARS = [
   'own:DarkGolem',
   'own:IceGolem',
   'own:Plasmodrone',
+  'own:Airport',
   // known enemy counts by type — visible or remembered
   'enemy:Worker',
   'enemy:Burstbot',
@@ -154,7 +159,7 @@ export const SCALARS = [
   'enemy:Beamdrone',
   'enemy:Boomwalker',
   'enemy:Fixomatic',
-  'enemy:Foundry',
+  'enemy:Factory',
   'enemy:Firespout',
   'enemy:Arclight',
   'enemy:Piercebot',
@@ -162,6 +167,7 @@ export const SCALARS = [
   'enemy:DarkGolem',
   'enemy:IceGolem',
   'enemy:Plasmodrone',
+  'enemy:Airport',
   // the previous decision's type, one-hot in ActionType order
   'prev:Noop',
   'prev:Move',
@@ -174,6 +180,8 @@ export const SCALARS = [
   'prev:Train',
   'prev:CancelTrain',
   'prev:SetRally',
+  'prev:UpgradeBuilding',
+  'prev:CancelUpgrade',
   'decisionsSinceNonNoop',
   'recentCommands',
 ] as const;
@@ -192,6 +200,8 @@ export enum ActionType {
   Train = 8,
   CancelTrain = 9,
   SetRally = 10,
+  UpgradeBuilding = 11,
+  CancelUpgrade = 12,
 }
 export const ACTION_TYPES = [
   'Noop',
@@ -205,13 +215,15 @@ export const ACTION_TYPES = [
   'Train',
   'CancelTrain',
   'SetRally',
+  'UpgradeBuilding',
+  'CancelUpgrade',
 ] as const;
 export const ACTION_TYPE_COUNT = ACTION_TYPES.length;
 
 /** Tiles inside a cell a location head can point at: CELL_TILES squared. */
 export const SUB = CELL_TILES * CELL_TILES;
 
-/** Units named at most, per command; the UI's selection cap. */
+/** Units named at most per command, including each chunk of a larger human selection. */
 export const SELECTION_MAX = MAX_COMMAND_UNITS;
 
 /** A flat action: type, entityType, target, cell, sub, then SELECTION_MAX rows (-1 padded). */
@@ -262,13 +274,9 @@ export const CRITIC_LEN = CRITIC_PER_PLAYER.length * CRITIC_PLAYERS + 2;
 
 /** Everything Python needs to build and export a model that fits this codec. */
 export const SPEC = {
-  // 2: the robot line went from three units to twelve. Every table keyed by
-  // EntityType grew with it — the row type one-hot, the own and known-enemy
-  // counts, the build-type and per-row train masks — so a model exported for
-  // version 1 does not fit any of the tensors this build hands it. There is no
-  // migration to write: the network's input and output widths changed, and it
-  // has to be trained again (`ml/README.md`).
-  version: 2,
+  // 3: Factory/Airport production, building levels and upgrade commands change
+  // the input and action widths. Version 1/2 models must be trained again.
+  version: 3,
   decisionTicks: DECISION_TICKS,
   unitMemoryTicks: UNIT_MEMORY_TICKS,
   entities: { rows: N_ENT, features: ENTITY_FEATURES },

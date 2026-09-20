@@ -81,6 +81,9 @@ export class Simulation {
     world.grid.rebuild(world.pool);
 
     movementSystem(world, this.astar, this.fields);
+    // Steering, separation and footprint eviction have changed positions.
+    // Combat queries those new positions, so its buckets must reflect them.
+    world.grid.rebuild(world.pool);
     combatSystem(world);
     economySystem(world);
 

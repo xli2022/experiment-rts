@@ -301,11 +301,15 @@ describe('the robot line', () => {
 });
 
 describe('the roster', () => {
-  it('trains all twelve robots between the Barracks and the Foundry', () => {
-    const line = [...defOf(EntityType.Barracks).produces, ...defOf(EntityType.Foundry).produces];
+  it('trains all twelve robots across the three production buildings', () => {
+    const line = [
+      ...defOf(EntityType.Barracks).produces,
+      ...defOf(EntityType.Factory).produces,
+      ...defOf(EntityType.Airport).produces,
+    ];
     expect(line.length).toBe(12);
     expect(new Set(line).size).toBe(12);
-    // The Command Post's Worker is the only unit neither of them makes.
+    // The Command Post's Worker is the only unit none of them makes.
     for (const def of DEFS) {
       if (def.isBuilding || def.type === EntityType.Worker) continue;
       expect(line, `${def.name} is trained nowhere`).toContain(def.type);
@@ -313,7 +317,7 @@ describe('the roster', () => {
   });
 
   it('gives every entity type a procedural model of its own', () => {
-    // The Foundry shipped invisible: the renderer built its instanced pools
+    // The Factory shipped invisible: the renderer built its instanced pools
     // from a list of types written out by hand, and a structure has no authored
     // model to fall back on — the procedural mesh is the only thing that ever
     // draws it. The pool list comes from `DEFS` now; this is the other half,
@@ -345,18 +349,19 @@ describe('the roster', () => {
     }
   });
 
-  it('splits the line evenly between the two production buildings', () => {
-    expect(defOf(EntityType.Barracks).produces.length).toBe(6);
-    expect(defOf(EntityType.Foundry).produces.length).toBe(6);
+  it('splits infantry, vehicles and aircraft into their own buildings', () => {
+    expect(defOf(EntityType.Barracks).produces.length).toBe(5);
+    expect(defOf(EntityType.Factory).produces.length).toBe(5);
+    expect(defOf(EntityType.Airport).produces.length).toBe(2);
   });
 
   it('keeps every Barracks unit within reach of a Barracks budget', () => {
     // The Barracks is the building you have in the first two minutes. Nothing
-    // it makes may cost more than the Foundry that unlocks the rest, or the
+    // it makes may cost more than the Factory that unlocks the rest, or the
     // tech step would be the cheaper way to a bigger unit.
-    const foundry = defOf(EntityType.Foundry).mineralCost;
+    const factory = defOf(EntityType.Factory).mineralCost;
     for (const light of defOf(EntityType.Barracks).produces) {
-      expect(defOf(light).mineralCost).toBeLessThan(foundry);
+      expect(defOf(light).mineralCost).toBeLessThan(factory);
     }
   });
 });

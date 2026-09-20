@@ -92,11 +92,11 @@ function trunkChokes(size: number): {
   low: { x: number; y: number; r: number };
   high: { x: number; y: number; r: number };
 } {
-  const edge = Math.floor(size * 0.11);
+  const crossroads = buildLayout(size).lanes[1]!.points[1]!;
   // Wider than any corridor at these points, so a block really does sever the
   // route rather than leaving a lip of open ground to squeeze past.
   const r = 18;
-  const low = { x: edge, y: size - 1 - edge, r };
+  const low = { ...crossroads, r };
   return {
     centre: { x: (size >> 1) - 1, y: (size >> 1) - 1, r },
     low,

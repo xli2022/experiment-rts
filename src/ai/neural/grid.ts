@@ -29,7 +29,8 @@ export const BUILDINGS: readonly EntityType[] = [
   EntityType.Depot,
   EntityType.Barracks,
   EntityType.Turret,
-  EntityType.Foundry,
+  EntityType.Factory,
+  EntityType.Airport,
 ];
 
 /** The building footprints a `Build` may name. */

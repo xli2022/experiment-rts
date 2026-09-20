@@ -7,7 +7,7 @@
  * needing two machines and luck.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AgentDriver } from '../src/ai/driver.js';
 import { createHostedAgents } from '../src/ai/factory.js';
 import { CommandType, type Command } from '../src/sim/commands.js';
@@ -93,6 +93,38 @@ function run(net: LocalNetwork, peers: Peer[], frames: number): void {
 }
 
 describe('lockstep scheduler', () => {
+  it('compares an early peer checksum when its own simulation reaches that tick', () => {
+    const net = new LocalNetwork(2);
+    const transport = net.createTransport(0);
+    const onDesync = vi.fn();
+    const runner = new LockstepRunner(new Simulation(SEED), transport, { onDesync });
+    transport.deliver({
+      player: 1,
+      turns: Array.from({ length: CHECKSUM_INTERVAL }, (_, turn) => ({
+        turn,
+        player: 1,
+        commands: [],
+      })),
+      checksum: { tick: CHECKSUM_INTERVAL, value: 0 },
+    });
+    for (let tick = 0; tick < CHECKSUM_INTERVAL; tick++) runner.update(MS_PER_TICK);
+    expect(runner.checksumAt(CHECKSUM_INTERVAL)).not.toBe(0);
+    expect(onDesync).toHaveBeenCalledOnce();
+    expect(runner.state).toBe('desynced');
+    // Redundant copies must not repeatedly reopen the failure dialog.
+    transport.deliver({ player: 1, turns: [], checksum: { tick: CHECKSUM_INTERVAL, value: 0 } });
+    expect(onDesync).toHaveBeenCalledOnce();
+  });
+
+  it('stops a catch-up burst immediately when an onStep callback ends the match', () => {
+    const net = new LocalNetwork(1);
+    const sim = new Simulation(duelMatch(SEED, { botPlayers: [1] }));
+    const runner = new LockstepRunner(sim, net.createTransport(0), { onStep: () => runner.end() });
+    runner.update(MS_PER_TICK * 10);
+    expect(runner.state).toBe('ended');
+    expect(runner.currentTick).toBe(1);
+  });
+
   it('exposes every transient event during multi-tick catch-up', () => {
     class EventSimulation extends Simulation {
       override step(commands: Command[]): void {
@@ -358,10 +390,10 @@ describe('lockstep scheduler', () => {
 
     run(net, peers, 200);
 
-    const detected = peers[0]!.desyncs > 0 || peers[1]!.desyncs > 0;
-    expect(detected).toBe(true);
-    const halted = peers[0]!.runner.state === 'desynced' || peers[1]!.runner.state === 'desynced';
-    expect(halted).toBe(true);
+    for (const peer of peers) {
+      expect(peer.desyncs).toBe(1);
+      expect(peer.runner.state).toBe('desynced');
+    }
   });
 
   it('clamps interpolation alpha so a stall freezes rather than extrapolates', () => {

@@ -200,6 +200,10 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
      * is redrawn so the chip comes alive without a click.
      */
     const neuralAvailable = new Map<MapLayout, boolean>();
+    // A choice carries between modes only where that map has a usable model.
+    // Keep the preference so returning to the supported map restores it.
+    const botFor = (layout: MapLayout): BotKind =>
+      bot === BotKind.Neural && neuralAvailable.get(layout) !== true ? BotKind.Scripted : bot;
     let redrawMode: (() => void) | null = null;
     for (const layout of [MapLayout.Lanes, MapLayout.Quarters]) {
       void probeNeuralModel(layout).then((manifest) => {
@@ -349,8 +353,8 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
         const syncChips = (): void => {
           for (const chip of dialog.querySelectorAll<HTMLElement>('[data-bot]')) {
             const value = Number(chip.dataset.bot);
-            chip.classList.toggle('active', value === bot);
-            chip.setAttribute('aria-pressed', String(value === bot));
+            chip.classList.toggle('active', value === botFor(spec.layout));
+            chip.setAttribute('aria-pressed', String(value === botFor(spec.layout)));
           }
         };
         for (const chip of dialog.querySelectorAll<HTMLElement>('[data-bot]')) {
@@ -382,8 +386,12 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
             label: 'Start match',
             primary: true,
             run: () =>
-              withModel({ kind: 'skirmish', bot }, skirmish, () =>
-                start(new SoloTransport(), { kind: 'skirmish', bot }, randomSeed()),
+              withModel({ kind: 'skirmish', bot: botFor(MapLayout.Lanes) }, skirmish, () =>
+                start(
+                  new SoloTransport(),
+                  { kind: 'skirmish', bot: botFor(MapLayout.Lanes) },
+                  randomSeed(),
+                ),
               ),
           },
         ],
@@ -394,7 +402,7 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
     const coop = (): void => {
       const withPartner = (withAiPartner: boolean): LobbyMode => ({
         kind: 'coop',
-        bot,
+        bot: botFor(MapLayout.Quarters),
         withAiPartner,
       });
       modeScreen({

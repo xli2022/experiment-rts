@@ -18,22 +18,12 @@
  * required slot with only one baked frame is missing, so that unit and its stale
  * outputs are excluded. Team art is copied or decoded to the ignored
  * `assets/textures` staging directory, then encoded like the existing skins with
- * `npm run textures`.
+ * `npm run textures`, which also derives teal and orange from the authored pair.
  */
 
 import { spawn } from 'node:child_process';
 import { createReadStream } from 'node:fs';
-import {
-  access,
-  copyFile,
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { access, copyFile, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -46,6 +36,7 @@ import { TGALoader } from 'three/examples/jsm/loaders/TGALoader.js';
 import { ATHENA2_FACTIONS, ATHENA2_MODELS } from './athena2-models.mjs';
 import { readFbxTakeWindows } from './fbx-take-window.mjs';
 import { buildUnitySampledSkeletonModel } from './unity-sampled-skeleton.mjs';
+import { withTemporaryDirectories } from './temp-directories.mjs';
 
 installBrowserShims();
 const warnedTrajectoryCycles = new Set();
@@ -120,15 +111,25 @@ if (selected.length === 0) {
   throw new Error('No complete models selected');
 }
 
-let normalized = { paths: new Map(), tempRoot: null };
-let joined = { paths: new Map(), tempRoot: null };
-try {
+await withTemporaryDirectories(async (createTempDirectory) => {
   // Direct Unity sampling consumes the original FBX/controller pair itself.
   // Sending those specs through the legacy normalizer or multipart probe is
   // both wasted work and risks failing before Unity can author the final rig.
   const fbxSelected = selected.filter((spec) => !spec.unitySampledSkeleton);
-  normalized = await normalizeLegacyFbx(fbxSelected, modelRoot, args.unity, args.blender);
-  joined = await joinMultipartGeometry(fbxSelected, modelRoot, normalized.paths, args.blender);
+  const normalized = await normalizeLegacyFbx(
+    fbxSelected,
+    modelRoot,
+    args.unity,
+    args.blender,
+    createTempDirectory,
+  );
+  const joined = await joinMultipartGeometry(
+    fbxSelected,
+    modelRoot,
+    normalized.paths,
+    args.blender,
+    createTempDirectory,
+  );
   for (const [index, spec] of selected.entries()) {
     console.log(`[${index + 1}/${selected.length}] ${spec.unit} <- ${spec.source}`);
     await importModel(
@@ -143,16 +144,12 @@ try {
       args.unity,
     );
   }
-} finally {
-  for (const tempRoot of [joined.tempRoot, normalized.tempRoot]) {
-    if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
-  }
-}
+});
 
 await writeCatalog(outputRoot, authoredTimings, authoredRunSizes, publishedModels);
 console.log(
   `\nImported ${selected.length} model${selected.length === 1 ? '' : 's'}. ` +
-    'Run `npm run textures` to encode the staged team skins.',
+    'Run `npm run textures` to encode blue/red skins and derive teal/orange before serving the catalog.',
 );
 
 function hasCompleteAnimationSet(timings) {
@@ -176,7 +173,9 @@ async function pruneIncompleteOutputs(models, output, stage) {
     await Promise.all([
       rm(join(output, `${spec.slug}.glb`), { force: true }),
       rm(join(output, `${spec.slug}-blue.ktx2`), { force: true }),
+      rm(join(output, `${spec.slug}-teal.ktx2`), { force: true }),
       rm(join(output, `${spec.slug}-red.ktx2`), { force: true }),
+      rm(join(output, `${spec.slug}-orange.ktx2`), { force: true }),
       rm(join(stage, `${spec.slug}-blue.png`), { force: true }),
       rm(join(stage, `${spec.slug}-red.png`), { force: true }),
     ]);
@@ -194,7 +193,9 @@ async function pruneExcludedOutputs(models, output, stage) {
     models.flatMap((spec) => [
       rm(join(output, `${spec.slug}.glb`), { force: true }),
       rm(join(output, `${spec.slug}-blue.ktx2`), { force: true }),
+      rm(join(output, `${spec.slug}-teal.ktx2`), { force: true }),
       rm(join(output, `${spec.slug}-red.ktx2`), { force: true }),
+      rm(join(output, `${spec.slug}-orange.ktx2`), { force: true }),
       rm(join(stage, `${spec.slug}-blue.png`), { force: true }),
       rm(join(stage, `${spec.slug}-red.png`), { force: true }),
     ]),
@@ -207,7 +208,9 @@ async function pruneLegacyOutputs(models, output, stage) {
       spec.legacySlugs.flatMap((slug) => [
         rm(join(output, `${slug}.glb`), { force: true }),
         rm(join(output, `${slug}-blue.ktx2`), { force: true }),
+        rm(join(output, `${slug}-teal.ktx2`), { force: true }),
         rm(join(output, `${slug}-red.ktx2`), { force: true }),
+        rm(join(output, `${slug}-orange.ktx2`), { force: true }),
         rm(join(stage, `${slug}-blue.png`), { force: true }),
         rm(join(stage, `${slug}-red.png`), { force: true }),
       ]),
@@ -558,7 +561,13 @@ function matrixMaxElementDelta(left, right) {
   return maximum;
 }
 
-async function normalizeLegacyFbx(specs, meshes, unityOverride, blenderOverride) {
+async function normalizeLegacyFbx(
+  specs,
+  meshes,
+  unityOverride,
+  blenderOverride,
+  createTempDirectory,
+) {
   const sourcesFor = (method) => [
     ...new Set(
       specs
@@ -573,10 +582,10 @@ async function normalizeLegacyFbx(specs, meshes, unityOverride, blenderOverride)
   const unitySources = sourcesFor('unity');
   const blenderSources = sourcesFor('blender');
   const originals = [...unitySources, ...blenderSources];
-  if (originals.length === 0) return { paths: new Map(), tempRoot: null };
+  if (originals.length === 0) return { paths: new Map() };
   await Promise.all(originals.map((path) => access(path)));
 
-  const tempRoot = await mkdtemp(join(tmpdir(), 'rts-athena2-normalize-'));
+  const tempRoot = await createTempDirectory('rts-athena2-normalize-');
   const outputRoot = join(tempRoot, 'Normalized');
   await mkdir(outputRoot, { recursive: true });
   const paths = new Map();
@@ -683,10 +692,16 @@ async function normalizeLegacyFbx(specs, meshes, unityOverride, blenderOverride)
   }
 
   await Promise.all([...paths.values()].map((path) => access(path)));
-  return { paths, tempRoot };
+  return { paths };
 }
 
-async function joinMultipartGeometry(specs, meshes, normalizedPaths, blenderOverride) {
+async function joinMultipartGeometry(
+  specs,
+  meshes,
+  normalizedPaths,
+  blenderOverride,
+  createTempDirectory,
+) {
   const jobs = [];
   for (const spec of specs) {
     if (!spec.joinInBlender) continue;
@@ -699,7 +714,7 @@ async function joinMultipartGeometry(specs, meshes, normalizedPaths, blenderOver
     });
     if (skinnedCount > 1) jobs.push({ spec, source });
   }
-  if (jobs.length === 0) return { paths: new Map(), tempRoot: null };
+  if (jobs.length === 0) return { paths: new Map() };
 
   const blender = await findBlender(blenderOverride);
   if (!blender) {
@@ -709,7 +724,7 @@ async function joinMultipartGeometry(specs, meshes, normalizedPaths, blenderOver
     );
   }
 
-  const tempRoot = await mkdtemp(join(tmpdir(), 'rts-athena2-blender-'));
+  const tempRoot = await createTempDirectory('rts-athena2-blender-');
   const outputRoot = join(tempRoot, 'Joined');
   await mkdir(outputRoot, { recursive: true });
   const paths = new Map();
@@ -732,7 +747,7 @@ async function joinMultipartGeometry(specs, meshes, normalizedPaths, blenderOver
     manifest,
   ]);
   await Promise.all([...paths.values()].map((path) => access(path)));
-  return { paths, tempRoot };
+  return { paths };
 }
 
 async function findBlender(override) {
@@ -1924,7 +1939,7 @@ async function writeCatalog(output, timings, runSizes, completeModels) {
       unit: spec.unit,
       faction: spec.faction,
       file: `${spec.slug}.glb`,
-      skins: [`${spec.slug}-blue.ktx2`, `${spec.slug}-red.ktx2`],
+      skins: ['blue', 'teal', 'red', 'orange'].map((colour) => `${spec.slug}-${colour}.ktx2`),
       clips: timings.get(spec.animationAsset),
       runSize,
       ...(runGroundY === null ? {} : { runGroundY }),
@@ -1937,7 +1952,7 @@ async function writeCatalog(output, timings, runSizes, completeModels) {
   );
   models.sort((left, right) => catalogOrder.get(left.unit) - catalogOrder.get(right.unit));
   const catalog = {
-    version: 2,
+    version: 3,
     models,
   };
   await writeFile(join(output, 'all-units.json'), `${JSON.stringify(catalog, null, 2)}\n`);

@@ -9,6 +9,7 @@
 
 import {
   BUILD_REACH,
+  buildingUpgrade,
   defOf,
   HARVEST_REACH,
   HARVEST_TICKS,
@@ -24,6 +25,7 @@ import type { World } from '../world.js';
 export function economySystem(world: World): void {
   harvestSystem(world);
   constructionSystem(world);
+  upgradeSystem(world);
   productionSystem(world);
 }
 
@@ -322,8 +324,25 @@ function constructionSystem(world: World): void {
 }
 
 // ---------------------------------------------------------------------------
-// Production
+// Building upgrades and production
 // ---------------------------------------------------------------------------
+
+function upgradeSystem(world: World): void {
+  const pool = world.pool;
+  for (let i = 0; i < pool.count; i++) {
+    if (pool.alive[i] !== 1 || pool.upgrading[i] !== 1) continue;
+    if (pool.buildState[i] !== BuildState.Complete) continue;
+    const upgrade = buildingUpgrade(pool.type[i]! as EntityType);
+    if (!upgrade) continue;
+    pool.upgradeProgress[i]! += 1;
+    if (pool.upgradeProgress[i]! < upgrade.buildTicks) continue;
+    pool.buildingLevel[i] = 2;
+    pool.upgrading[i] = 0;
+    pool.upgradeProgress[i] = 0;
+    // An upgrade adds production choices, never health or a free repair.
+    world.events.completed.push(i);
+  }
+}
 
 /** Buildings with something queued, in creation order. Scratch. */
 const producers: number[] = [];
@@ -341,6 +360,7 @@ function productionSystem(world: World): void {
     if (pool.alive[i] !== 1) continue;
     if (pool.prodCount[i]! === 0) continue;
     if (pool.buildState[i] !== BuildState.Complete) continue;
+    if (pool.upgrading[i] === 1) continue;
     producers.push(i);
   }
   producers.sort(

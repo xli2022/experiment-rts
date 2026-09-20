@@ -265,29 +265,44 @@ export class ProceduralModelProvider implements ModelProvider {
       case EntityType.Barracks:
         return {
           radius,
-          height: 1.9,
+          height: 1.4,
+          level2Height: 2.1,
           parts: [
-            part(new THREE.BoxGeometry(2.6, 1.2, 2.6), 'player', [0, 0.6, 0]),
-            // Angled roof, so barracks never read as a bigger depot.
-            part(new THREE.BoxGeometry(2.2, 0.5, 1.2), 'dark', [0, 1.4, 0]),
-            part(new THREE.BoxGeometry(0.8, 0.9, 0.25), 'accent', [0, 0.45, 1.35]),
+            // The same coloured block and pale upper tier as the Command Post.
+            part(new THREE.BoxGeometry(2.6, 1.05, 2.4), 'player', [0, 0.525, 0]),
+            part(new THREE.BoxGeometry(2.2, 0.3, 1.8), 'accent', [0, 1.2, 0]),
+            part(new THREE.BoxGeometry(0.9, 0.7, 0.08), 'dark', [0, 0.35, 1.22]),
+            levelTwo(part(new THREE.BoxGeometry(1.25, 0.55, 1.15), 'player', [0, 1.625, 0])),
+            levelTwo(part(new THREE.BoxGeometry(1.35, 0.18, 1.25), 'accent', [0, 1.99, 0])),
           ],
         };
 
-      case EntityType.Foundry:
+      case EntityType.Factory:
         return {
           radius,
-          height: 2.2,
-          // Reads as a Barracks that grew a chimney. Deliberately the same
-          // family — it is the same idea one tier up — but a player scouting a
-          // base has to be able to tell at a glance which one they are looking
-          // at, and the stack does that from any angle.
+          height: 2.5,
+          level2Height: 2.75,
           parts: [
-            part(new THREE.BoxGeometry(2.6, 1.3, 2.6), 'player', [0, 0.65, 0]),
-            part(new THREE.BoxGeometry(2.0, 0.4, 2.0), 'dark', [0, 1.5, 0]),
-            part(new THREE.CylinderGeometry(0.38, 0.46, 1.0, 8), 'dark', [-0.7, 2.05, -0.7]),
-            part(new THREE.CylinderGeometry(0.42, 0.42, 0.16, 8), 'accent', [-0.7, 2.6, -0.7]),
-            part(new THREE.BoxGeometry(1.1, 0.8, 0.25), 'accent', [0, 0.45, 1.35]),
+            part(new THREE.BoxGeometry(2.6, 1.1, 2.4), 'player', [0, 0.55, 0]),
+            part(new THREE.BoxGeometry(2.6, 0.22, 2.4), 'accent', [0, 1.21, 0]),
+            part(new THREE.CylinderGeometry(0.28, 0.34, 1.25, 6), 'dark', [-0.8, 1.8, -0.65]),
+            // One extra stack is enough to identify the heavy production line.
+            levelTwo(
+              part(new THREE.CylinderGeometry(0.28, 0.34, 1.5, 6), 'dark', [0.8, 1.95, -0.65]),
+            ),
+          ],
+        };
+
+      case EntityType.Airport:
+        return {
+          radius,
+          height: 2.05,
+          parts: [
+            // A flat pad and a single tower, using the Depot's box-and-disc forms.
+            part(new THREE.BoxGeometry(2.6, 0.25, 2.6), 'player', [0, 0.125, 0]),
+            part(new THREE.CylinderGeometry(0.95, 0.95, 0.1, 8), 'accent', [0.2, 0.3, 0.2]),
+            part(new THREE.BoxGeometry(0.48, 1.5, 0.48), 'dark', [-0.95, 1.0, -0.95]),
+            part(new THREE.BoxGeometry(0.7, 0.25, 0.7), 'accent', [-0.95, 1.875, -0.95]),
           ],
         };
 
@@ -348,6 +363,10 @@ function part(
   rotation?: [number, number, number],
 ): ModelPart {
   return rotation ? { geometry, role, offset, rotation } : { geometry, role, offset };
+}
+
+function levelTwo(part: ModelPart): ModelPart {
+  return { ...part, minLevel: 2 };
 }
 
 /**

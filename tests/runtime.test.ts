@@ -4,7 +4,7 @@
  * dies takes every outstanding decision with it — never the match.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { allocMasks } from '../src/ai/neural/actions.js';
 import type { ActRequest } from '../src/ai/neural/agent.js';
 import type { ActMessage, FromWorker, ToWorker } from '../src/ai/neural/messages.js';
@@ -68,11 +68,26 @@ function request(seq = 1): ActRequest {
 }
 
 describe('loading', () => {
+  it('cleans up immediately if posting init throws', async () => {
+    vi.useFakeTimers();
+    try {
+      const worker = new FakeWorker();
+      worker.postMessage = () => {
+        throw new Error('cannot post init');
+      };
+      await expect(WorkerRuntime.load(worker, init, manifest)).rejects.toThrow('cannot post init');
+      expect(worker.terminated).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('refuses a model for another codec version without starting it', async () => {
     const worker = new FakeWorker();
-    await expect(
-      WorkerRuntime.load(worker, init, { specVersion: SPEC.version + 1, model: 'x' }),
-    ).rejects.toThrow(/codec version/);
+    await expect(WorkerRuntime.load(worker, init, { specVersion: 2, model: 'x' })).rejects.toThrow(
+      /codec version/,
+    );
     expect(worker.posted).toHaveLength(0);
     expect(worker.terminated).toBe(true);
   });
@@ -101,6 +116,23 @@ describe('loading', () => {
 });
 
 describe('acting', () => {
+  it('counts a failed post once and removes its timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const { worker, runtime } = await loaded();
+      worker.postMessage = () => {
+        throw new Error('detached buffer');
+      };
+      await expect(runtime.act(request())).rejects.toThrow('detached buffer');
+      expect(runtime.stats.failures).toBe(1);
+      expect(runtime.stats.timeouts).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+      runtime.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('sends the observation with its buffers transferred and resolves by id', async () => {
     let clock = 100;
     const { worker, runtime } = await loaded({ now: () => clock });

@@ -23,7 +23,8 @@
     "ml:record": "bun run tools/ml/record.ts",
     "smoke:neural": "node scripts/smoke-neural.mjs",
     "import:athena2": "node scripts/import-athena2-models.mjs",
-    "textures": "node scripts/encode-textures.mjs"
+    "textures": "node scripts/encode-textures.mjs",
+    "textures:teams": "node scripts/tint-team-textures.mjs"
   },
   "dependencies": {
     "onnxruntime-web": "^1.29.0",
@@ -35,11 +36,11 @@
     "@types/three": "^0.185.3",
     "ktx2-encoder": "^0.6.0",
     "prettier": "^3.8.1",
-    "sharp": "^0.35.3",
+    "sharp": "^0.35.4",
     "typescript": "^6.0.2",
     "vite": "^8.2.0",
     "vite-node": "^6.0.0",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "allowScripts": {
     "protobufjs@7.6.6": true

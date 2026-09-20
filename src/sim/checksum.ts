@@ -39,7 +39,7 @@ export function checksumU32(h: number, v: number): number {
  */
 export function checksumArray(
   h: number,
-  arr: Int32Array | Uint8Array | Uint16Array | Uint32Array,
+  arr: Int8Array | Int32Array | Uint8Array | Uint16Array | Uint32Array,
   count: number,
 ): number {
   let x = h;

@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { RowKind, allocFrame } from '../src/ai/neural/frame.js';
+import { RowKind, allocFrame, cellOf } from '../src/ai/neural/frame.js';
 import { EntityMemory } from '../src/ai/neural/memory.js';
 import {
   allocObservation,
@@ -26,12 +26,15 @@ import {
   N_ENT,
 } from '../src/ai/neural/spec.js';
 import { HeadlessMatch } from '../src/ai/headless.js';
+import { buildingUpgrade, defOf } from '../src/config/rules.js';
+import { fromInt } from '../src/sim/fixed.js';
 import { idIndex } from '../src/sim/entities.js';
+import { OCCUPIED_SOLID, UNOCCUPIED } from '../src/sim/map.js';
 import { coopMatch, duelMatch } from '../src/sim/match.js';
 import { Simulation } from '../src/sim/tick.js';
-import { NO_ENTITY, type PlayerId } from '../src/sim/types.js';
+import { EntityType, NO_ENTITY, type PlayerId } from '../src/sim/types.js';
 import type { World } from '../src/sim/world.js';
-import { Visibility } from '../src/vision/visibility.js';
+import { EXPLORED, VISIBLE, Visibility } from '../src/vision/visibility.js';
 import { scriptedAgents } from './helpers/agents.js';
 import { fullScript, mirrorCommand, twinMap } from './helpers/mirror.js';
 
@@ -71,6 +74,116 @@ function firstDifference(a: Float32Array, b: Float32Array): string | null {
 }
 
 describe('the observation', () => {
+  it('exposes own building technology and progress without leaking enemy research', () => {
+    const world = new Simulation(duelMatch(SEED, { botPlayers: [] })).world;
+    const eyes = new Eyes(world, 0);
+    const buildings = [0, 1].map((owner) =>
+      world.pool.spawn(EntityType.Barracks, owner, fromInt(30), fromInt(30)),
+    );
+    for (const id of buildings) {
+      const i = idIndex(id);
+      world.pool.buildingLevel[i] = 1;
+      world.pool.upgrading[i] = 1;
+      world.pool.upgradeProgress[i] = buildingUpgrade(EntityType.Barracks)!.buildTicks / 2;
+    }
+    eyes.vis.state.fill(VISIBLE);
+    eyes.mem.update(world, eyes.vis);
+    eyes.encode();
+    const technology = (id: number) =>
+      ['buildingLevel', 'upgrading', 'upgradeProgress'].map(
+        (feature) =>
+          eyes.obs.entities[
+            eyes.frame.rowOf.get(id)! * F +
+              ENTITY_FEATURES.indexOf(feature as (typeof ENTITY_FEATURES)[number])
+          ],
+      );
+    expect(technology(buildings[0]!)).toEqual([0.5, 1, 0.5]);
+    expect(technology(buildings[1]!)).toEqual([0, 0, 0]);
+    const i = idIndex(buildings[0]!);
+    world.pool.buildingLevel[i] = 2;
+    world.pool.upgrading[i] = 0;
+    world.pool.upgradeProgress[i] = 0;
+    eyes.encode();
+    expect(technology(buildings[0]!)).toEqual([1, 0, 0]);
+  });
+
+  it('keeps a remembered mineral patch from becoming a solid obstacle', () => {
+    const world = new Simulation(duelMatch(SEED, { botPlayers: [] })).world;
+    const eyes = new Eyes(world, 0);
+    const patch = world.pool.type.findIndex((type) => type === EntityType.MineralPatch);
+    const footprint = defOf(EntityType.MineralPatch).footprint;
+    for (let y = world.pool.tileY[patch]!; y < world.pool.tileY[patch]! + footprint; y++) {
+      for (let x = world.pool.tileX[patch]!; x < world.pool.tileX[patch]! + footprint; x++) {
+        eyes.vis.state[world.map.index(x, y)] = VISIBLE;
+      }
+    }
+    eyes.mem.update(world, eyes.vis);
+    expect(eyes.mem.get(world.pool.idAt(patch))).toBeDefined();
+    eyes.encode();
+    const offset = GRID_CHANNELS.indexOf('buildable') * CELLS;
+    const before = eyes.obs.grid.slice(offset, offset + CELLS);
+    world.tick++;
+    for (let t = 0; t < eyes.vis.state.length; t++) {
+      if (eyes.vis.state[t] === VISIBLE) eyes.vis.state[t] = EXPLORED;
+    }
+    eyes.mem.update(world, eyes.vis);
+    eyes.encode();
+    expect(firstDifference(eyes.obs.grid.slice(offset, offset + CELLS), before)).toBeNull();
+  });
+
+  it('does not reveal new occupancy on explored ground that is now hidden', () => {
+    const world = new Simulation(duelMatch(SEED, { botPlayers: [] })).world;
+    const eyes = new Eyes(world, 0);
+    eyes.vis.state.fill(EXPLORED);
+    world.map.occupied.fill(UNOCCUPIED);
+    eyes.encode();
+    const before = eyes.obs.grid.slice();
+    world.map.occupied.fill(OCCUPIED_SOLID);
+    eyes.encode();
+    expect(firstDifference(eyes.obs.grid, before)).toBeNull();
+  });
+
+  it('retains remembered building occupancy and marks hidden patches as remembered', () => {
+    const world = new Simulation(duelMatch(SEED, { botPlayers: [] })).world;
+    const eyes = new Eyes(world, 0);
+    eyes.vis.state.fill(VISIBLE);
+    eyes.mem.update(world, eyes.vis);
+    eyes.encode();
+    const buildable = GRID_CHANNELS.indexOf('buildable') * CELLS;
+    const before = eyes.obs.grid.slice(buildable, buildable + CELLS);
+    const enemyPost = world.pool.type.findIndex(
+      (type, i) => type === EntityType.CommandPost && world.pool.owner[i] === 1,
+    );
+    const cell = cellOf(world.pool.tileX[enemyPost]!, world.pool.tileY[enemyPost]!);
+    world.tick++;
+    eyes.vis.state.fill(EXPLORED);
+    eyes.mem.update(world, eyes.vis);
+    eyes.encode();
+    const remembered = eyes.obs.grid.slice(buildable, buildable + CELLS);
+    expect(remembered[cell]).toBe(before[cell]);
+    // The enemy base remains blocked even if it is destroyed while hidden.
+    for (let i = 0; i < world.pool.count; i++) {
+      if (world.pool.owner[i] === 1 && world.pool.type[i] === EntityType.CommandPost) {
+        const footprint = defOf(EntityType.CommandPost).footprint;
+        for (let y = world.pool.tileY[i]!; y < world.pool.tileY[i]! + footprint; y++) {
+          for (let x = world.pool.tileX[i]!; x < world.pool.tileX[i]! + footprint; x++) {
+            world.map.occupied[world.map.index(x, y)] = UNOCCUPIED;
+          }
+        }
+        world.pool.destroy(world.pool.idAt(i));
+      }
+    }
+    eyes.mem.update(world, eyes.vis);
+    eyes.encode();
+    expect(
+      firstDifference(eyes.obs.grid.slice(buildable, buildable + CELLS), remembered),
+    ).toBeNull();
+    const visibleCol = ENTITY_FEATURES.indexOf('visibleNow');
+    const patch = eyes.frame.rowKind.findIndex((kind) => kind === RowKind.Patch);
+    expect(patch).toBeGreaterThanOrEqual(0);
+    expect(eyes.obs.entities[patch * F + visibleCol]).toBe(0);
+  });
+
   it('is the same from both seats of a mirrored duel, row for row', () => {
     const sim = new Simulation(duelMatch(SEED, { botPlayers: [] }));
     const world = sim.world;

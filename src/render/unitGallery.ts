@@ -11,6 +11,7 @@ import * as THREE from 'three';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import { AnimatedUnitPool } from './animatedUnits.js';
 import { loadAnimatedModel, type AnimatedModel } from './models/animated.js';
+import { PLAYER_COLOURS } from './models/procedural.js';
 
 const LOAD_CONCURRENCY = 4;
 // The original shared scale used 1.7; 2.55 keeps every proportion intact while
@@ -22,13 +23,14 @@ const PREVIEW_VIEW_HEIGHT = 3.6;
 const GALLERY_CLEAR = 0x0c131d;
 const CARD_CLEAR = 0xedf1f5;
 const FACTION_ORDER = ['Human', 'Robot', 'Monster', 'Undead'] as const;
+export const GALLERY_TEAM_COLOURS = ['Blue', 'Teal', 'Red', 'Orange'] as const;
 type UnitFaction = (typeof FACTION_ORDER)[number];
 
 interface CatalogModel {
   unit: string;
   faction: UnitFaction;
   file: string;
-  skins: [string, string];
+  skins: [string, string, string, string];
   /** Athena2's first baked run frame, in its shared world scale. */
   runSize: [number, number, number];
   /** Desired y=0 plane in the final GLB's model-space run coordinates. */
@@ -77,6 +79,8 @@ interface GalleryPreview {
   nextTap: number;
   playing: GalleryPlayback | null;
   texture: THREE.Texture | null;
+  material: THREE.MeshLambertMaterial;
+  skins: CatalogModel['skins'];
   guide: THREE.GridHelper;
   matrix: THREE.Matrix4;
 }
@@ -93,7 +97,6 @@ interface LoadSession {
   abort: AbortController;
   completed: number;
   failed: number;
-  untextured: number;
   total: number;
 }
 
@@ -108,6 +111,7 @@ export class UnitGallery {
   private groups: HTMLElement | null = null;
   private status: HTMLElement | null = null;
   private closeButton: HTMLButtonElement | null = null;
+  private colourSelect: HTMLSelectElement | null = null;
   private returnFocus: HTMLElement | null = null;
   private observer: IntersectionObserver | null = null;
   private session: LoadSession | null = null;
@@ -122,6 +126,11 @@ export class UnitGallery {
   private readonly priorViewport = new THREE.Vector4();
   private readonly priorScissor = new THREE.Vector4();
   private elapsedSeconds = 0;
+  private selectedSkin = 0;
+  private skinRevision = 0;
+  private pendingSkinRevision: number | null = null;
+  private skinLoader: KTX2Loader | null = null;
+  private skinLoaderUsers = 0;
 
   constructor(
     private readonly root: HTMLElement,
@@ -150,6 +159,11 @@ export class UnitGallery {
           <div>
             <h1 id="unit-gallery-title">All units</h1>
             <p id="unit-gallery-description">Every authored model at a shared scale, grouped by faction. Click a unit to play its attack animation.</p>
+            <label class="unit-gallery-colour-label">Team colour
+              <select class="unit-gallery-colour" aria-label="Preview team colour">
+                ${GALLERY_TEAM_COLOURS.map((name, index) => `<option value="${index}">${name}</option>`).join('')}
+              </select>
+            </label>
             <p class="unit-gallery-status" role="status" aria-live="polite">Loading unit list…</p>
           </div>
           <button class="unit-gallery-close" type="button" aria-label="Close all units">Close</button>
@@ -168,6 +182,11 @@ export class UnitGallery {
     this.groups = required(overlay, '.unit-gallery-groups');
     this.status = required(overlay, '.unit-gallery-status');
     this.closeButton = required(overlay, '.unit-gallery-close') as HTMLButtonElement;
+    this.colourSelect = required(overlay, '.unit-gallery-colour') as HTMLSelectElement;
+    this.colourSelect.value = String(this.selectedSkin);
+    this.colourSelect.addEventListener('change', () =>
+      this.selectColour(Number(this.colourSelect?.value)),
+    );
 
     this.closeButton.addEventListener('click', () => this.close());
     overlay.addEventListener('pointerdown', (event) => {
@@ -181,7 +200,6 @@ export class UnitGallery {
       abort: new AbortController(),
       completed: 0,
       failed: 0,
-      untextured: 0,
       total: 0,
     };
     this.session = session;
@@ -302,6 +320,8 @@ export class UnitGallery {
     this.groups = null;
     this.status = null;
     this.closeButton = null;
+    this.colourSelect = null;
+    this.pendingSkinRevision = null;
 
     const focus = this.returnFocus;
     this.returnFocus = null;
@@ -322,8 +342,12 @@ export class UnitGallery {
       return;
     }
     if (event.key === 'Tab' && this.closeButton) {
-      const controls = [this.closeButton, ...this.buttons.filter((button) => !button.disabled)];
-      const current = controls.indexOf(document.activeElement as HTMLButtonElement);
+      const controls: HTMLElement[] = [
+        ...(this.colourSelect ? [this.colourSelect] : []),
+        this.closeButton,
+        ...this.buttons.filter((button) => !button.disabled),
+      ];
+      const current = controls.indexOf(document.activeElement as HTMLElement);
       const last = controls.length - 1;
       if (current < 0) {
         event.preventDefault();
@@ -344,7 +368,7 @@ export class UnitGallery {
         signal: session.abort.signal,
       });
       if (!response.ok) throw new Error(`unit list returned ${response.status}`);
-      const entries = parseCatalog(await response.json());
+      const entries = parseUnitCatalog(await response.json());
       if (session.cancelled) return;
       const largestRunExtent = Math.max(...entries.flatMap((entry) => entry.runSize));
       const worldScale = PREVIEW_LARGEST_MODEL_SIZE / largestRunExtent;
@@ -353,7 +377,7 @@ export class UnitGallery {
       this.mountCards(entries);
       this.updateProgress(session);
 
-      const skinLoader = new KTX2Loader().detectSupport(this.renderer);
+      const skinLoader = this.acquireSkinLoader();
       let next = 0;
       const worker = async (): Promise<void> => {
         while (!session.cancelled) {
@@ -363,10 +387,13 @@ export class UnitGallery {
           await this.loadOne(session, skinLoader, entry, index, worldScale);
         }
       };
-      await Promise.all(
-        Array.from({ length: Math.min(LOAD_CONCURRENCY, entries.length) }, () => worker()),
-      );
-      skinLoader.dispose();
+      try {
+        await Promise.all(
+          Array.from({ length: Math.min(LOAD_CONCURRENCY, entries.length) }, () => worker()),
+        );
+      } finally {
+        this.releaseSkinLoader();
+      }
 
       if (!session.cancelled && this.groups) {
         this.groups.setAttribute('aria-busy', 'false');
@@ -486,16 +513,17 @@ export class UnitGallery {
       });
       if (session.cancelled) return;
 
-      try {
-        texture = await skinLoader.loadAsync(modelAssetUrl(entry.skins[0]));
-        texture.colorSpace = THREE.SRGBColorSpace;
-        texture.needsUpdate = true;
-      } catch {
-        session.untextured++;
-      }
+      // A colour can change while this rig or its texture is loading. Only
+      // publish a preview for the currently selected palette slot.
+      let skin: number;
+      do {
+        texture?.dispose();
+        skin = this.selectedSkin;
+        texture = await loadGallerySkin(skinLoader, entry.skins[skin]!);
+      } while (!session.cancelled && skin !== this.selectedSkin);
       if (session.cancelled) return;
 
-      const preview = createPreview(model, texture, entry.runSize, worldScale, entry.runGroundY);
+      const preview = createPreview(model, texture, entry, worldScale, skin);
       this.previews.set(index, preview);
       model = null;
       texture = null;
@@ -523,10 +551,72 @@ export class UnitGallery {
     }
   }
 
+  private async selectColour(skin: number): Promise<void> {
+    if (!Number.isInteger(skin) || skin < 0 || skin >= GALLERY_TEAM_COLOURS.length) return;
+    if (skin === this.selectedSkin) return;
+    this.selectedSkin = skin;
+    const revision = ++this.skinRevision;
+    const session = this.session;
+    if (session) await this.reloadSkins(session, revision, skin);
+  }
+
+  /** Share one transcoder pool across overlapping loads, even across reopen. */
+  private acquireSkinLoader(): KTX2Loader {
+    if (!this.skinLoader) this.skinLoader = new KTX2Loader().detectSupport(this.renderer);
+    this.skinLoaderUsers++;
+    return this.skinLoader;
+  }
+
+  private releaseSkinLoader(): void {
+    this.skinLoaderUsers--;
+    if (this.skinLoaderUsers !== 0) return;
+    this.skinLoader?.dispose();
+    this.skinLoader = null;
+  }
+
+  private async reloadSkins(session: LoadSession, revision: number, skin: number): Promise<void> {
+    const previews = [...this.previews.values()];
+    if (previews.length === 0) return;
+    const loader = this.acquireSkinLoader();
+    this.pendingSkinRevision = revision;
+    this.updateProgress(session);
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      while (!session.cancelled && revision === this.skinRevision) {
+        const preview = previews[next++];
+        if (!preview) return;
+        const texture = await loadGallerySkin(loader, preview.skins[skin]!);
+        if (session.cancelled || revision !== this.skinRevision) {
+          texture?.dispose();
+          return;
+        }
+        const previous = preview.texture;
+        preview.texture = texture;
+        preview.material.map = texture;
+        preview.material.color.setHex(texture ? 0xffffff : PLAYER_COLOURS[skin]!);
+        preview.material.needsUpdate = true;
+        previous?.dispose();
+      }
+    };
+    try {
+      await Promise.all(
+        Array.from({ length: Math.min(LOAD_CONCURRENCY, previews.length) }, worker),
+      );
+    } finally {
+      this.releaseSkinLoader();
+      if (revision === this.skinRevision) this.pendingSkinRevision = null;
+    }
+    if (!session.cancelled && revision === this.skinRevision) this.updateProgress(session);
+  }
+
   private updateProgress(session: LoadSession): void {
     if (!this.status) return;
     if (session.total === 0) {
       this.status.textContent = 'Loading unit list…';
+      return;
+    }
+    if (this.pendingSkinRevision === this.skinRevision) {
+      this.status.textContent = `Loading ${GALLERY_TEAM_COLOURS[this.selectedSkin]} team skins…`;
       return;
     }
     if (session.completed < session.total) {
@@ -535,9 +625,13 @@ export class UnitGallery {
     }
 
     const ready = session.total - session.failed;
-    const notes: string[] = [`${ready} models ready`];
+    const notes: string[] = [
+      `${ready} models ready`,
+      `${GALLERY_TEAM_COLOURS[this.selectedSkin]} skins`,
+    ];
     if (session.failed > 0) notes.push(`${session.failed} unavailable`);
-    if (session.untextured > 0) notes.push(`${session.untextured} without team skin`);
+    const untextured = [...this.previews.values()].filter((preview) => !preview.texture).length;
+    if (untextured > 0) notes.push(`${untextured} without team skin`);
     this.status.textContent = notes.join(' · ');
   }
 
@@ -575,16 +669,16 @@ export class UnitGallery {
 function createPreview(
   model: AnimatedModel,
   texture: THREE.Texture | null,
-  authoredRunSize: readonly [number, number, number],
+  entry: CatalogModel,
   worldScale: number,
-  runGroundY?: number,
+  skin: number,
 ): GalleryPreview {
   const size = model.firstFrameBounds.getSize(new THREE.Vector3());
   const modelExtent = Math.max(0.001, size.x, size.y, size.z);
-  const authoredExtent = Math.max(...authoredRunSize);
+  const authoredExtent = Math.max(...entry.runSize);
   const scale = proportionalPreviewScale(authoredExtent, modelExtent, worldScale);
   const center = model.animatedBounds.getCenter(new THREE.Vector3());
-  const groundOffset = previewGroundOffset(runGroundY, model.animatedBounds.min.y, scale);
+  const groundOffset = previewGroundOffset(entry.runGroundY, model.animatedBounds.min.y, scale);
 
   const matrix = new THREE.Matrix4().compose(
     new THREE.Vector3(-center.x * scale, groundOffset, -center.z * scale),
@@ -594,7 +688,7 @@ function createPreview(
 
   const material = new THREE.MeshLambertMaterial({
     map: texture,
-    color: texture ? 0xffffff : 0x4a9eff,
+    color: texture ? 0xffffff : PLAYER_COLOURS[skin]!,
   });
   const pool = new AnimatedUnitPool(model, material, 1);
   pool.mesh.castShadow = false;
@@ -636,6 +730,8 @@ function createPreview(
     nextTap: 0,
     playing: null,
     texture,
+    material,
+    skins: entry.skins,
     guide,
     matrix,
   };
@@ -737,9 +833,9 @@ function modelAssetUrl(file: string): string {
   return `${import.meta.env.BASE_URL}units/${file}`;
 }
 
-function parseCatalog(value: unknown): CatalogModel[] {
-  if (!isRecord(value) || value.version !== 2 || !Array.isArray(value.models)) {
-    throw new Error('all-units.json is not a version 2 model catalog');
+export function parseUnitCatalog(value: unknown): CatalogModel[] {
+  if (!isRecord(value) || value.version !== 3 || !Array.isArray(value.models)) {
+    throw new Error('all-units.json is not a version 3 model catalog');
   }
 
   return value.models.map((candidate, index) => {
@@ -749,8 +845,12 @@ function parseCatalog(value: unknown): CatalogModel[] {
       !isFaction(candidate.faction) ||
       typeof candidate.file !== 'string' ||
       !Array.isArray(candidate.skins) ||
-      typeof candidate.skins[0] !== 'string' ||
-      typeof candidate.skins[1] !== 'string' ||
+      candidate.skins.length !== GALLERY_TEAM_COLOURS.length ||
+      !candidate.skins.every(
+        (skin, index) =>
+          typeof skin === 'string' &&
+          skin.endsWith(`-${GALLERY_TEAM_COLOURS[index]!.toLowerCase()}.ktx2`),
+      ) ||
       !Array.isArray(candidate.runSize) ||
       candidate.runSize.length !== 3 ||
       !candidate.runSize.every(
@@ -765,11 +865,22 @@ function parseCatalog(value: unknown): CatalogModel[] {
       unit: candidate.unit,
       faction: candidate.faction,
       file: candidate.file,
-      skins: [candidate.skins[0], candidate.skins[1]],
+      skins: [candidate.skins[0], candidate.skins[1], candidate.skins[2], candidate.skins[3]],
       runSize: [candidate.runSize[0], candidate.runSize[1], candidate.runSize[2]],
       ...(candidate.runGroundY === undefined ? {} : { runGroundY: candidate.runGroundY }),
     };
   });
+}
+
+async function loadGallerySkin(loader: KTX2Loader, file: string): Promise<THREE.Texture | null> {
+  try {
+    const texture = await loader.loadAsync(modelAssetUrl(file));
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.needsUpdate = true;
+    return texture;
+  } catch {
+    return null;
+  }
 }
 
 function isFaction(value: unknown): value is UnitFaction {

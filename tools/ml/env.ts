@@ -37,10 +37,11 @@ import {
   type Observation,
   type RecentActions,
 } from '../../src/ai/neural/observation.js';
-import { ACTION_INTS, ActionType, CRITIC_LEN } from '../../src/ai/neural/spec.js';
+import { ACTION_INTS, ACTION_TYPES, ActionType, CRITIC_LEN } from '../../src/ai/neural/spec.js';
 import { ScriptedAgent } from '../../src/ai/scripted.js';
 import { defOf } from '../../src/config/rules.js';
 import { CommandType, type Command } from '../../src/sim/commands.js';
+import { idIndex } from '../../src/sim/entities.js';
 import { matchConfig } from '../../src/sim/match.js';
 import {
   BotKind,
@@ -100,6 +101,20 @@ export interface StepResult {
   readonly issued: Int32Array;
 }
 
+/** Training-label coverage for one teacher in the current match. */
+export interface TeacherCoverage {
+  decisions: number;
+  valid: number;
+  nonNoop: number;
+  dropped: number;
+  actions: Record<string, number>;
+  droppedCommands: Record<string, number>;
+  buildings: Record<string, number>;
+  resumes: Record<string, number>;
+  upgrades: Record<string, number>;
+  units: Record<string, number>;
+}
+
 /** One slot's eyes, kept in step every tick. */
 class Eyes {
   readonly vis: Visibility;
@@ -114,8 +129,8 @@ class Eyes {
   };
   readonly commandTicks: number[] = [];
   /**
-   * A teacher slot's previous observation, reported once the command the
-   * teacher chose *from* it is known. Null for every other kind of slot.
+   * A teacher's observation and label captured together at its decision
+   * boundary. Null until its first decision and for every other kind of slot.
    */
   held: SlotObs | null = null;
 
@@ -143,7 +158,9 @@ class Eyes {
       if (
         command.type === CommandType.Train ||
         command.type === CommandType.CancelTrain ||
-        command.type === CommandType.SetRally
+        command.type === CommandType.SetRally ||
+        command.type === CommandType.UpgradeBuilding ||
+        command.type === CommandType.CancelUpgrade
       ) {
         this.recent.lastUnits.add(command.building);
       }
@@ -161,8 +178,8 @@ class Eyes {
   }
 
   /**
-   * Keep this observation, so it can be reported once the teacher's answer to
-   * it is known, and start encoding into the other buffer.
+   * Keep the labelled observation, and encode the next decision into the other
+   * buffer so readers never see a partially overwritten decision.
    *
    * A swap rather than a copy. The two buffers alternate: the one just held was
    * serialised on the previous `observe` and is free to write again, and every
@@ -202,20 +219,35 @@ class PolicyAgent implements Agent {
   }
 }
 
-/** The scripted bot at a human's cadence, remembering what it said at each boundary. */
+/** Decide at the boundary, then issue on the next tick like the neural policy. */
 class TeacherAgent implements Agent {
   private readonly inner: Agent;
-  /** The command released at the last decision boundary, or null. */
-  lastCommand: Command | null = null;
-  constructor(thinkInterval?: number) {
+  private pending: Command | null = null;
+  issuedThisStep = 0;
+  constructor(
+    private readonly decided: (world: World, player: PlayerId, command: Command | null) => void,
+    thinkInterval?: number,
+  ) {
     this.inner = humanCadence(
       new ScriptedAgent(thinkInterval === undefined ? {} : { thinkInterval }),
     );
   }
   act(world: World, player: PlayerId): Command[] {
+    const release = this.pending;
+    this.pending = null;
     const commands = this.inner.act(world, player);
-    if (world.tick % DECISION_TICKS === 0) this.lastCommand = commands[0] ?? null;
-    return commands;
+    if (world.tick % DECISION_TICKS === 0) {
+      this.pending = commands[0] ?? null;
+      // Capture after the think, before issuing anything: Agent.act may read
+      // but never mutate the world. The observation must describe this tick,
+      // not the state at the beginning of the four-tick environment step.
+      this.decided(world, player, this.pending);
+    }
+    if (release) this.issuedThisStep++;
+    return release ? [release] : [];
+  }
+  dispose(): void {
+    this.inner.dispose?.();
   }
 }
 
@@ -241,6 +273,7 @@ export class MatchEnv {
   private eyes = new Map<PlayerId, Eyes>();
   private policies = new Map<PlayerId, PolicyAgent>();
   private teachers = new Map<PlayerId, TeacherAgent>();
+  private coverage = new Map<PlayerId, TeacherCoverage>();
   /** Slots an observation is produced for: policy and teacher slots, ascending. */
   readonly observed: PlayerId[] = [];
   private potential = new Float32Array(0);
@@ -285,6 +318,7 @@ export class MatchEnv {
     const agents: [PlayerId, Agent][] = [];
     this.policies.clear();
     this.teachers.clear();
+    this.coverage.clear();
     slots.forEach((slot, p) => {
       if (slot.kind === 'scripted') {
         agents.push([
@@ -298,7 +332,32 @@ export class MatchEnv {
         this.policies.set(p, agent);
         agents.push([p, agent]);
       } else if (slot.kind === 'teacher') {
-        const agent = new TeacherAgent(slot.thinkInterval);
+        this.coverage.set(p, {
+          decisions: 0,
+          valid: 0,
+          nonNoop: 0,
+          dropped: 0,
+          actions: {},
+          droppedCommands: {},
+          buildings: {},
+          resumes: {},
+          upgrades: {},
+          units: {},
+        });
+        const agent = new TeacherAgent((world, player, command) => {
+          const eyes = this.eyes.get(player)!;
+          // The driver runs before the environment's post-tick vision update.
+          // Refresh here so newly visible entities belong to this same tick.
+          eyes.look(world);
+          eyes.observe(world);
+          this.writeLabel(eyes, command);
+          eyes.hold();
+          eyes.noteCommand(
+            world,
+            command,
+            command === null ? ActionType.Noop : this.typeOf(command),
+          );
+        }, slot.thinkInterval);
         this.teachers.set(p, agent);
         agents.push([p, agent]);
       }
@@ -365,16 +424,54 @@ export class MatchEnv {
    * The teacher's command written into `eyes.out.label`, encoded against the
    * frame `eyes.out` is currently holding — which must be the observation the
    * teacher chose it *from*. A command the student could not have expressed,
-   * or one the masks refuse, is marked invalid (type -1) and is not a lesson,
-   * since the teacher saw more than the student does.
+   * or one the masks refuse, is marked invalid (type -1) and is not a lesson.
    */
   private writeLabel(eyes: Eyes, command: Command | null): void {
+    const counts = this.coverage.get(eyes.out.player)!;
+    counts.decisions++;
     eyes.out.label.fill(-1);
     eyes.out.label[0] = ActionType.Noop;
-    if (command === null) return;
-    if (!encode(command, eyes.out.frame, this.action) || !legalise(this.action, eyes.out.masks)) {
-      eyes.out.label[0] = -1;
+    if (command === null) {
+      counts.valid++;
+      counts.actions.Noop = (counts.actions.Noop ?? 0) + 1;
       return;
+    }
+    let valid =
+      encode(command, eyes.out.frame, this.action) && legalise(this.action, eyes.out.masks);
+    if (valid && command.type === CommandType.Build) {
+      const decoded = decode(this.action, this.world, eyes.out.frame);
+      // A queued Build may name a site that is no longer workable. Coarse cell
+      // legality alone can otherwise label a different, nearby new foundation.
+      valid =
+        decoded?.type === CommandType.Build &&
+        decoded.tileX === command.tileX &&
+        decoded.tileY === command.tileY;
+    }
+    if (!valid) {
+      eyes.out.label[0] = -1;
+      counts.dropped++;
+      const kind = CommandType[command.type]!;
+      counts.droppedCommands[kind] = (counts.droppedCommands[kind] ?? 0) + 1;
+      return;
+    }
+    counts.valid++;
+    counts.nonNoop++;
+    const kind = ACTION_TYPES[this.action.type]!;
+    counts.actions[kind] = (counts.actions[kind] ?? 0) + 1;
+    if (command.type === CommandType.Build) {
+      const name = defOf(command.building).name;
+      counts.buildings[name] = (counts.buildings[name] ?? 0) + 1;
+      const site = eyes.out.frame.constructionSites.get(
+        command.tileY * eyes.out.frame.width + command.tileX,
+      );
+      if (site?.type === command.building) counts.resumes[name] = (counts.resumes[name] ?? 0) + 1;
+    } else if (command.type === CommandType.Train) {
+      const name = defOf(command.unit).name;
+      counts.units[name] = (counts.units[name] ?? 0) + 1;
+    } else if (command.type === CommandType.UpgradeBuilding) {
+      const index = idIndex(command.building);
+      const name = defOf(this.world.pool.type[index]! as EntityType).name;
+      counts.upgrades[name] = (counts.upgrades[name] ?? 0) + 1;
     }
     eyes.out.label[0] = this.action.type;
     eyes.out.label[1] = this.action.entityType;
@@ -388,18 +485,15 @@ export class MatchEnv {
   /**
    * The current observation for a slot. Valid until the next `step` or `reset`.
    *
-   * A teacher slot is reported one decision behind. The command the teacher
-   * takes from an observation is only known once the world has been stepped,
-   * and the label's rows are indices into the frame it was encoded against —
-   * so the pair can only be sent after the fact. Reporting the live
-   * observation with the last command instead would teach the student to
-   * answer with the previous state's move, which degenerates to Noop the
-   * moment the student drives. The first observation of a match is sent once
-   * with an invalid label, since nothing was decided from a state before it.
+   * A teacher slot reports its observation captured at the last decision
+   * boundary, together with the command chosen there. The teacher issues that
+   * command one tick later, just like a policy consuming this observation.
+   * The first observation has an invalid label because no decision exists yet.
    */
   observe(player: PlayerId): SlotObs {
     const eyes = this.eyes.get(player);
     if (!eyes) throw new Error(`slot ${player} is not observed`);
+    if (this.teachers.has(player) && eyes.held) return eyes.held;
     eyes.observe(this.match.world);
     if (!this.teachers.has(player)) {
       eyes.out.label.fill(-1);
@@ -407,11 +501,8 @@ export class MatchEnv {
       return eyes.out;
     }
     if (!eyes.held) {
-      // The first observation of a match: nothing was decided from a state
-      // before it, so it goes out with an invalid label and is skipped. It is
-      // reported from `out` rather than held, because the step that follows
-      // encodes the teacher's answer against this very buffer — swapping here
-      // would leave it labelling one that has never been encoded.
+      // Tick zero has no teacher decision. The next step captures the first
+      // labelled observation at its decision boundary.
       eyes.out.label.fill(-1);
       eyes.out.label[0] = -1;
       return eyes.out;
@@ -427,6 +518,7 @@ export class MatchEnv {
   step(actions: ReadonlyMap<PlayerId, ArrayLike<number>>): StepResult {
     const world = this.match.world;
     const issued = new Int32Array(this.observed.length);
+    for (const teacher of this.teachers.values()) teacher.issuedThisStep = 0;
     for (let k = 0; k < this.observed.length; k++) {
       const p = this.observed[k]!;
       const eyes = this.eyes.get(p)!;
@@ -452,23 +544,12 @@ export class MatchEnv {
     }
     this.steps++;
 
-    // Teachers issued through the driver; note what they said for the recent-
-    // action features, so the student sees the same thing it will see in play.
+    // The teacher captured its own decision and observation at the boundary.
+    // Count actual releases separately; the newest decision issues next tick.
     for (let k = 0; k < this.observed.length; k++) {
       const teacher = this.teachers.get(this.observed[k]!);
       if (!teacher) continue;
-      const eyes = this.eyes.get(this.observed[k]!)!;
-      // `eyes.out` still holds the observation this command was chosen from —
-      // the next `observe` is what replaces it — so the label can be encoded
-      // against the right frame here, and the pair kept until it is reported.
-      this.writeLabel(eyes, teacher.lastCommand);
-      eyes.hold();
-      eyes.noteCommand(
-        world,
-        teacher.lastCommand,
-        teacher.lastCommand === null ? ActionType.Noop : this.typeOf(teacher.lastCommand),
-      );
-      if (teacher.lastCommand !== null) issued[k] = 1;
+      issued[k] = teacher.issuedThisStep;
     }
 
     const done = this.done;
@@ -514,6 +595,10 @@ export class MatchEnv {
         return ActionType.CancelTrain;
       case CommandType.SetRally:
         return ActionType.SetRally;
+      case CommandType.UpgradeBuilding:
+        return ActionType.UpgradeBuilding;
+      case CommandType.CancelUpgrade:
+        return ActionType.CancelUpgrade;
       default:
         return ActionType.Noop;
     }
@@ -522,6 +607,21 @@ export class MatchEnv {
   /** Decisions taken since the last reset. */
   get decisions(): number {
     return this.steps;
+  }
+
+  /** A detached report; callers cannot mutate the next training observation. */
+  teacherCoverage(player: PlayerId): TeacherCoverage {
+    const counts = this.coverage.get(player);
+    if (!counts) throw new Error(`slot ${player} is not a teacher`);
+    return {
+      ...counts,
+      actions: { ...counts.actions },
+      droppedCommands: { ...counts.droppedCommands },
+      buildings: { ...counts.buildings },
+      resumes: { ...counts.resumes },
+      upgrades: { ...counts.upgrades },
+      units: { ...counts.units },
+    };
   }
 
   dispose(): void {

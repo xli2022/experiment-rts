@@ -16,7 +16,12 @@
  * agree about legality to the byte.
  */
 
-import { defOf, MAX_PRODUCTION_QUEUE } from '../../config/rules.js';
+import {
+  buildingUpgrade,
+  defOf,
+  MAX_PRODUCTION_QUEUE,
+  productionOptions,
+} from '../../config/rules.js';
 import { CommandType, type Command } from '../../sim/commands.js';
 import { idIndex } from '../../sim/entities.js';
 import { FIX_HALF, fromInt, toInt } from '../../sim/fixed.js';
@@ -124,7 +129,9 @@ export function selectsOne(type: number): boolean {
     type === ActionType.Build ||
     type === ActionType.Train ||
     type === ActionType.CancelTrain ||
-    type === ActionType.SetRally
+    type === ActionType.SetRally ||
+    type === ActionType.UpgradeBuilding ||
+    type === ActionType.CancelUpgrade
   );
 }
 export function usesTarget(type: number): boolean {
@@ -155,7 +162,7 @@ export interface Masks {
   readonly buildCell: Uint8Array;
   /** [N_ENT × ENTITY_TYPE_COUNT] what a production-building row may train now. */
   readonly rowEntityType: Uint8Array;
-  /** [ENTITY_TYPE_COUNT] building types affordable with somewhere to go. */
+  /** [ENTITY_TYPE_COUNT] building types that can be placed or resumed. */
   readonly buildType: Uint8Array;
 }
 
@@ -233,17 +240,29 @@ export function computeMasks(
     } else if (kind === RowKind.OwnBuilding) {
       if (!pool.isAlive(id)) continue;
       const i = idIndex(id);
-      const def = defOf(pool.type[i]! as EntityType);
+      const type = pool.type[i]! as EntityType;
+      const def = defOf(type);
       if (pool.buildState[i] === BuildState.Complete && def.produces.length > 0) {
         out.selection[ActionType.SetRally * N_ENT + r] = 1;
-        if (pool.prodCount[i]! < MAX_PRODUCTION_QUEUE) {
-          for (const unit of def.produces) {
+        if (pool.upgrading[i] === 0 && pool.prodCount[i]! < MAX_PRODUCTION_QUEUE) {
+          for (const unit of productionOptions(type, pool.buildingLevel[i]!)) {
             if (minerals >= defOf(unit).mineralCost)
               out.rowEntityType[r * ENTITY_TYPE_COUNT + unit] = 1;
           }
           if (any(out.rowEntityType, r * ENTITY_TYPE_COUNT, ENTITY_TYPE_COUNT)) {
             out.selection[ActionType.Train * N_ENT + r] = 1;
           }
+        }
+        const upgrade = buildingUpgrade(type);
+        if (pool.upgrading[i] === 1) {
+          out.selection[ActionType.CancelUpgrade * N_ENT + r] = 1;
+        } else if (
+          upgrade &&
+          pool.buildingLevel[i] === 1 &&
+          pool.prodCount[i] === 0 &&
+          minerals >= upgrade.mineralCost
+        ) {
+          out.selection[ActionType.UpgradeBuilding * N_ENT + r] = 1;
         }
       }
       if (pool.prodCount[i]! > 0) out.selection[ActionType.CancelTrain * N_ENT + r] = 1;
@@ -286,7 +305,9 @@ export function computeMasks(
   const sum = sumScratch;
   const occupied = map.occupied;
   for (let t = 0; t < tiles; t++) {
-    free[t] = index.ground[t] === 1 && occupied[t] === UNOCCUPIED ? 1 : 0;
+    // Every tile of a candidate footprint must be seen. A visible tile in
+    // its coarse cell alone does not make hidden occupancy safe to inspect.
+    free[t] = state[t] === VISIBLE && index.ground[t] === 1 && occupied[t] === UNOCCUPIED ? 1 : 0;
   }
   const stride = W + 1;
   for (let y = 0; y <= H; y++) sum[y * stride] = 0;
@@ -303,6 +324,9 @@ export function computeMasks(
   // for every tile first.
   for (const { type: building, footprint: f } of BUILD_FOOTPRINTS) {
     const affordable = minerals >= defOf(building).mineralCost;
+    // A free resume can enable this type even with an empty bank. In that case
+    // fresh construction cells must remain masked out.
+    if (!affordable) continue;
     const topLefts = index.topLeftsFor(building);
     const area = f * f;
     for (let cell = 0; cell < CELLS; cell++) {
@@ -323,7 +347,18 @@ export function computeMasks(
       }
       if (ok) out.buildCell[building * CELLS + cell] = 1;
     }
-    if (affordable && any(out.buildCell, building * CELLS, CELLS)) out.buildType[building] = 1;
+    if (any(out.buildCell, building * CELLS, CELLS)) out.buildType[building] = 1;
+  }
+  // Build on an owned unfinished structure means "finish this", with no new
+  // mineral cost. These sites are private own-state captured in the frame.
+  for (const [tile, site] of frame.constructionSites) {
+    const f = defOf(site.type).footprint;
+    const tx = uncanonTopLeft(tile % W, W, f, flip);
+    const ty = uncanonTopLeft(Math.floor(tile / W), H, f, flip);
+    const cell = cellOf(tx, ty);
+    if (cell < 0) continue;
+    out.buildCell[site.type * CELLS + cell] = 1;
+    out.buildType[site.type] = 1;
   }
 
   // --- types ---------------------------------------------------------------------
@@ -460,10 +495,29 @@ export function decode(action: Action, world: World, frame: Frame): Command | nu
       const building = action.entityType as EntityType;
       if (!BUILDINGS.includes(building)) return null;
       const f = defOf(building).footprint;
+      const affordable = world.player(player).minerals >= defOf(building).mineralCost;
+      const canResume = (id: EntityId): boolean => {
+        const i = idIndex(id);
+        return (
+          pool.isAlive(id) &&
+          pool.owner[i] === player &&
+          pool.type[i] === building &&
+          pool.buildState[i] !== BuildState.Complete
+        );
+      };
+      const intendedTile =
+        uncanonTopLeft(ty, frame.height, f, frame.flip) * frame.width +
+        uncanonTopLeft(tx, frame.width, f, frame.flip);
+      const intendedSite = frame.constructionSites.get(intendedTile);
+      // A delayed answer may arrive after this site completes or is destroyed.
+      // Preserve its resume intent instead of starting a different structure.
+      if (intendedSite?.type === building && !canResume(intendedSite.id)) return null;
       const place = (ctx: number, cty: number): { x: number; y: number } | null => {
         const wx = uncanonTopLeft(ctx, frame.width, f, frame.flip);
         const wy = uncanonTopLeft(cty, frame.height, f, frame.flip);
-        return world.map.canPlace(wx, wy, f) ? { x: wx, y: wy } : null;
+        const site = frame.constructionSites.get(wy * frame.width + wx);
+        const resume = site?.type === building && canResume(site.id);
+        return resume || (affordable && world.map.canPlace(wx, wy, f)) ? { x: wx, y: wy } : null;
       };
       let spot = place(tx, ty);
       for (let s = 0; s < SUB && spot === null; s++) {
@@ -490,6 +544,10 @@ export function decode(action: Action, world: World, frame: Frame): Command | nu
       };
     case ActionType.CancelTrain:
       return { type: CommandType.CancelTrain, player, building: units[0]!, slot: 0 };
+    case ActionType.UpgradeBuilding:
+      return { type: CommandType.UpgradeBuilding, player, building: units[0]! };
+    case ActionType.CancelUpgrade:
+      return { type: CommandType.CancelUpgrade, player, building: units[0]! };
     case ActionType.SetRally: {
       const p = pointAt(tx, ty, frame);
       return { type: CommandType.SetRally, player, building: units[0]!, x: p.x, y: p.y };
@@ -502,7 +560,7 @@ export function decode(action: Action, world: World, frame: Frame): Command | nu
 /**
  * The decision that would have produced `command` in `frame`, or null when
  * the frame cannot express it — a unit or target not in the table, a point
- * off the grid, a Surrender.
+ * off the grid, a Surrender, or a later chunk of a wider formation.
  *
  * Units the table does not hold are dropped rather than failing the whole
  * label; a teacher that sees more than the student can only be imitated as
@@ -545,6 +603,10 @@ export function encode(command: Command, frame: Frame, out: Action): boolean {
   switch (command.type) {
     case CommandType.Move:
     case CommandType.AttackMove:
+      // The policy can order its own group around a centre, but cannot name
+      // a later group's positions within an army-wide formation. Labelling
+      // that chunk as an ordinary centre order would teach different movement.
+      if ((command.formationOffset ?? 0) !== 0) return false;
       out.type = command.type === CommandType.Move ? ActionType.Move : ActionType.AttackMove;
       return many(command.units) && locate(command.x, command.y);
     case CommandType.Attack:
@@ -579,6 +641,12 @@ export function encode(command: Command, frame: Frame, out: Action): boolean {
       return single(command.building);
     case CommandType.CancelTrain:
       out.type = ActionType.CancelTrain;
+      return single(command.building);
+    case CommandType.UpgradeBuilding:
+      out.type = ActionType.UpgradeBuilding;
+      return single(command.building);
+    case CommandType.CancelUpgrade:
+      out.type = ActionType.CancelUpgrade;
       return single(command.building);
     case CommandType.SetRally:
       out.type = ActionType.SetRally;

@@ -5,9 +5,19 @@ import onnxruntime as ort
 import pytest
 import torch
 
-from rtsml.export import example_inputs, export_onnx, manifest, parity, run_onnx
+from rtsml.export import example_inputs, export_onnx, live_samples, main, manifest, parity, run_onnx
 from rtsml.model import ACT_INPUTS, ACT_OUTPUTS, Policy
 from rtsml.spec import SPEC
+
+from conftest import requires_bun
+
+
+def test_export_refuses_to_relabel_a_checkpoint_for_the_other_map(tmp_path):
+    checkpoint = tmp_path / "lanes.pt"
+    torch.save({"spec_version": SPEC.version, "hparams": {"layout": "lanes"}}, checkpoint)
+    out = tmp_path / "output"
+    assert main(["--ckpt", str(checkpoint), "--layout", "quarters", "--out", str(out)]) == 1
+    assert not out.exists()
 
 
 @pytest.fixture(scope="module")
@@ -32,6 +42,18 @@ def test_onnx_decides_exactly_what_torch_does(exported):
     samples = [example_inputs(1, g) for _ in range(40)]
     report = parity(policy, onnx_bytes, samples)
     assert report["agree"] == report["samples"], report["firstDifference"]
+
+
+@requires_bun
+@pytest.mark.parametrize("layout", ["lanes", "quarters"])
+def test_live_parity_uses_browser_batch_size(exported, layout):
+    policy, onnx_bytes = exported
+    samples = live_samples(3, layout=layout)
+    assert len(samples) == 3
+    for sample in samples:
+        assert all(t.shape[0] == 1 for t in sample.values())
+    report = parity(policy, onnx_bytes, samples)
+    assert report["agree"] == 3, report["firstDifference"]
 
 
 def test_onnx_output_is_a_legal_decision(exported):

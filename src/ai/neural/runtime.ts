@@ -117,7 +117,11 @@ export class WorkerRuntime implements NeuralRuntime {
           reject(error);
         },
       };
-      worker.postMessage({ type: 'init', ...init });
+      try {
+        worker.postMessage({ type: 'init', ...init });
+      } catch (error) {
+        runtime.fail(error instanceof Error ? error.message : String(error));
+      }
     });
   }
 
@@ -169,7 +173,15 @@ export class WorkerRuntime implements NeuralRuntime {
         reject(new Error('the neural model timed out'));
       }, this.timeoutMs);
       this.pending.set(id, { resolve, reject, startedMs: this.now(), timer });
-      this.worker.postMessage(message, transfer);
+      try {
+        this.worker.postMessage(message, transfer);
+      } catch (error) {
+        this.receive({
+          type: 'error',
+          id,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
     });
   }
 

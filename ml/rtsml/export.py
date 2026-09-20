@@ -156,10 +156,15 @@ def live_samples(n: int, seed: int = 1, layout: str = "lanes") -> list[dict[str,
             for _ in range(25):
                 batch = env.step(noop_actions(len(batch)))
             obs = to_torch(batch.arrays, torch.device("cpu"))
-            sample = {name: obs[name] for name in ACT_INPUTS if name in obs}
-            sample["noise"] = gumbel_noise(1, generator)
-            sample["temperature"] = torch.ones(1)
-            out.append(sample)
+            # Quarters observes both allied slots, while the browser graph has
+            # a fixed batch size of one. Exercise each seat as its own sample.
+            for row in range(len(batch)):
+                sample = {name: obs[name][row : row + 1] for name in ACT_INPUTS if name in obs}
+                sample["noise"] = gumbel_noise(1, generator)
+                sample["temperature"] = torch.ones(1)
+                out.append(sample)
+                if len(out) == n:
+                    break
     finally:
         env.close()
     return out
@@ -181,10 +186,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     ckpt = load_checkpoint(args.ckpt, pick_device("cpu"))
+    recorded_layout = ckpt.get("hparams", {}).get("layout")
+    if args.layout and recorded_layout in ("lanes", "quarters") and args.layout != recorded_layout:
+        print(f"checkpoint was trained for {recorded_layout}; cannot export it as {args.layout}")
+        return 1
     # A model is per layout and its file is named for it. Trust the checkpoint,
     # and refuse to guess when it does not say: a Lanes model served as the
     # Quarters one is a 3%-win-rate bot that looks like it loaded correctly.
-    layout = args.layout or ckpt.get("hparams", {}).get("layout")
+    layout = args.layout or recorded_layout
     if layout not in ("lanes", "quarters"):
         print(f"checkpoint records layout {layout!r}; pass --layout lanes|quarters to say which map this model is for")
         return 1

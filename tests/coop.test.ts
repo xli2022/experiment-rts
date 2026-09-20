@@ -818,25 +818,33 @@ describe('the bot on a side', () => {
     const world = sim.world;
     let alliedShots = 0;
     let hostileShots = 0;
+    let hostileRepairs = 0;
     let closestEver = Number.POSITIVE_INFINITY;
     for (let t = 0; t < ticks && !world.matchOver; t++) {
       sim.step();
       const shots = world.events.shots;
       for (let k = 0; k + 1 < shots.length; k += 2) {
-        const attacker = world.pool.owner[shots[k]!]!;
+        const source = shots[k]!;
+        const attacker = world.pool.owner[source]!;
         const victim = world.pool.owner[shots[k + 1]!]!;
-        if (world.areAllied(attacker, victim)) alliedShots++;
+        const allied = world.areAllied(attacker, victim);
+        // Repair beams share the animation event with weapons. They should
+        // target allies; only damaging weapon shots count as friendly fire.
+        if (defOf(world.pool.type[source]! as EntityType).repairAmount > 0) {
+          if (!allied) hostileRepairs++;
+        } else if (allied) alliedShots++;
         else hostileShots++;
       }
       closestEver = Math.min(closestEver, closestToEnemyPost(world));
     }
-    return { sim, world, alliedShots, hostileShots, closestEver };
+    return { sim, world, alliedShots, hostileShots, hostileRepairs, closestEver };
   }
 
   it('never fires on its partner, and does fire on the other side', () => {
-    const { alliedShots, hostileShots } = playCoop(3600);
+    const { alliedShots, hostileShots, hostileRepairs } = playCoop(3600);
     expect(alliedShots).toBe(0);
     expect(hostileShots).toBeGreaterThan(20);
+    expect(hostileRepairs).toBe(0);
   });
 
   it('gets an army across the map and into an enemy base', () => {

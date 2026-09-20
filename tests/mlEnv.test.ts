@@ -10,15 +10,26 @@
  * checked against the masks it was encoded with, never against a later world.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DECISION_TICKS } from '../src/ai/cadence.js';
 import { executeTickFor } from '../src/ai/headless.js';
-import { actionToInts, allocAction, legalise } from '../src/ai/neural/actions.js';
+import { actionToInts, allocAction, encode, legalise } from '../src/ai/neural/actions.js';
 import { sampleUniform } from '../src/ai/neural/random.js';
-import { ACTION_INTS, ActionType } from '../src/ai/neural/spec.js';
+import { ScriptedAgent } from '../src/ai/scripted.js';
+import {
+  ACTION_INTS,
+  ActionType,
+  ENTITY_FEATURE_COUNT,
+  ENTITY_FEATURES,
+  SCALARS,
+} from '../src/ai/neural/spec.js';
+import { STARTING_WORKERS } from '../src/config/rules.js';
+import { CommandType } from '../src/sim/commands.js';
 import { idIndex } from '../src/sim/entities.js';
+import { fromInt } from '../src/sim/fixed.js';
+import { UNOCCUPIED } from '../src/sim/map.js';
 import { Rng } from '../src/sim/rng.js';
-import { EntityType, MapLayout, Order } from '../src/sim/types.js';
+import { BuildState, EntityType, MapLayout, Order, Tile } from '../src/sim/types.js';
 import { MatchEnv, parseSlots } from '../tools/ml/env.js';
 
 const SEED = 0x51ce7a11;
@@ -30,6 +41,137 @@ function noop(): Int32Array {
 }
 
 describe('the training environment', () => {
+  it('drops a stale Build intent instead of labelling a nearby new foundation', () => {
+    const env = new MatchEnv({
+      seed: SEED,
+      layout: MapLayout.Lanes,
+      slots: parseSlots('teacher,idle'),
+    });
+    const world = env.world;
+    world.map.tiles.fill(Tile.Ground);
+    world.map.occupied.fill(UNOCCUPIED);
+    world.player(0).minerals = 1000;
+    const site = world.placeBuilding(EntityType.Airport, 0, 40, 40);
+    world.pool.buildState[idIndex(site)] = BuildState.Complete;
+    const worker = world.pool.spawn(EntityType.Worker, 0, fromInt(39), fromInt(39));
+    const command = {
+      type: CommandType.Build as const,
+      player: 0,
+      worker,
+      building: EntityType.Airport,
+      tileX: 40,
+      tileY: 40,
+    };
+    const think = vi.spyOn(ScriptedAgent.prototype, 'act').mockImplementation(() => [command]);
+    try {
+      env.step(new Map());
+      const slot = env.observe(0);
+      const action = allocAction();
+      expect(encode(command, slot.frame, action)).toBe(true);
+      expect(legalise(action, slot.masks)).toBe(true); // Coarse cell has free nearby tiles.
+      expect(slot.label[0]).toBe(-1);
+      expect(env.teacherCoverage(0)).toMatchObject({
+        nonNoop: 0,
+        dropped: 1,
+        droppedCommands: { Build: 1 },
+      });
+    } finally {
+      think.mockRestore();
+      env.dispose();
+    }
+  });
+
+  it('pairs a teacher label with the actual decision-source tick and neural issue delay', () => {
+    let sourceTick = -1;
+    const think = vi.spyOn(ScriptedAgent.prototype, 'act').mockImplementation((world, player) => {
+      if (world.tick !== DECISION_TICKS) return [];
+      sourceTick = world.tick;
+      const index = world.pool.type.findIndex(
+        (type, i) => type === EntityType.Worker && world.pool.owner[i] === player,
+      );
+      return [{ type: CommandType.Hold, player, units: [world.pool.idAt(index)] }];
+    });
+    const env = new MatchEnv({
+      seed: SEED,
+      layout: MapLayout.Lanes,
+      slots: parseSlots('teacher,idle'),
+    });
+    try {
+      expect(env.observe(0).label[0]).toBe(-1);
+      expect(env.step(new Map()).issued[0]).toBe(0);
+      const labelled = env.observe(0);
+      expect(sourceTick).toBe(DECISION_TICKS);
+      expect(labelled.frame.tick).toBe(sourceTick);
+      expect(labelled.observation.scalars[SCALARS.indexOf('tick')]).toBeCloseTo(
+        sourceTick / 24000,
+        8,
+      );
+      expect(labelled.label[0]).toBe(ActionType.Hold);
+      const worker = idIndex(labelled.frame.rows[labelled.label[5]!]!);
+      const executesAt = executeTickFor(sourceTick + 1);
+      expect(env.step(new Map()).issued[0]).toBe(1);
+      expect(env.tick).toBeLessThan(executesAt);
+      expect(env.world.pool.order[worker]).not.toBe(Order.Hold);
+      env.step(new Map());
+      expect(env.tick).toBeGreaterThan(executesAt);
+      expect(env.world.pool.order[worker]).toBe(Order.Hold);
+      const coverage = env.teacherCoverage(0);
+      expect(coverage).toMatchObject({
+        decisions: 3,
+        valid: 3,
+        nonNoop: 1,
+        dropped: 0,
+        actions: { Hold: 1, Noop: 2 },
+      });
+      coverage.actions.Hold = 99;
+      expect(env.teacherCoverage(0).actions.Hold).toBe(1);
+    } finally {
+      env.dispose();
+      think.mockRestore();
+    }
+  });
+
+  it('executes upgrade and cancellation decisions and remembers their building selection', () => {
+    const env = new MatchEnv({
+      seed: SEED,
+      layout: MapLayout.Lanes,
+      slots: parseSlots('policy,idle'),
+    });
+    const world = env.world;
+    const id = world.pool.spawn(EntityType.Barracks, 0, fromInt(30), fromInt(30));
+    const index = idIndex(id);
+    world.pool.buildState[index] = BuildState.Complete;
+    world.player(0).minerals = 1000;
+    for (const type of [ActionType.UpgradeBuilding, ActionType.CancelUpgrade]) {
+      const slot = env.observe(0);
+      expect(slot.masks.type[type]).toBe(1);
+      const action = allocAction();
+      action.type = type;
+      action.selection[0] = slot.frame.rowOf.get(id)!;
+      const ints = new Int32Array(ACTION_INTS);
+      actionToInts(action, ints);
+      expect(env.step(new Map([[0, ints]])).issued[0]).toBe(1);
+      const recent = env.observe(0);
+      expect(
+        recent.observation.scalars[
+          SCALARS.indexOf(
+            type === ActionType.UpgradeBuilding ? 'prev:UpgradeBuilding' : 'prev:CancelUpgrade',
+          )
+        ],
+      ).toBe(1);
+      expect(
+        recent.observation.entities[
+          recent.frame.rowOf.get(id)! * ENTITY_FEATURE_COUNT +
+            ENTITY_FEATURES.indexOf('inLastCommand')
+        ],
+      ).toBe(1);
+      env.step(new Map([[0, noop()]]));
+      expect(world.pool.upgrading[index]).toBe(type === ActionType.UpgradeBuilding ? 1 : 0);
+    }
+    expect(world.player(0).minerals).toBe(1000);
+    env.dispose();
+  });
+
   it('is a pure function of the seed and the decisions', () => {
     const make = () =>
       new MatchEnv({ seed: SEED, layout: MapLayout.Lanes, slots: parseSlots('policy,scripted') });
@@ -138,6 +280,7 @@ describe('the training environment', () => {
     const types = new Set<number>();
     let labelled = 0;
     let dropped = 0;
+    let peakSupply = world.player(0).supplyUsed;
     for (let step = 0; step < 2500 && !env.done; step++) {
       const slot = env.observe(0);
       if (slot.label[0] === -1) {
@@ -153,22 +296,21 @@ describe('the training environment', () => {
         action.cell = slot.label[3]!;
         action.sub = slot.label[4]!;
         for (let k = 0; k < action.selection.length; k++) action.selection[k] = slot.label[5 + k]!;
-        // Against the masks the label shipped with, which is the whole of what
-        // `writeLabel` promises. Decoding it against the *live* world instead
-        // looks stricter and is in fact wrong: a teacher slot is reported one
-        // decision behind, so by the time the label surfaces the command has
-        // already executed — and a Build whose site its own foundation now
-        // occupies no longer decodes, through no fault of the label. That is a
-        // real match, four ticks after the frame the label was encoded against.
+        // Masks and row indices belong to the same decision boundary as the
+        // command. The teacher issues it on the following tick, like a policy.
         expect(legalise(action, slot.masks)).toBe(true);
         expect(slot.masks.type[action.type]).toBe(1);
       }
       env.step(new Map());
+      peakSupply = Math.max(peakSupply, world.player(0).supplyUsed);
     }
     expect(labelled).toBeGreaterThan(50);
     expect(types.size).toBeGreaterThanOrEqual(4);
+    expect(types.has(ActionType.UpgradeBuilding)).toBe(true);
     expect(dropped).toBeLessThan(labelled / 2);
-    expect(world.player(0).supplyUsed).toBeGreaterThan(0);
+    // The teacher can lose this match; it must have developed beyond its
+    // opening units while producing useful labels, not survive the final tick.
+    expect(peakSupply).toBeGreaterThan(STARTING_WORKERS);
   });
 
   it('rewards the winner, charges for time, and resets on the next seed', () => {

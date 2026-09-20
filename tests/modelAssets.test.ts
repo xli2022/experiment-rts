@@ -81,7 +81,7 @@ interface CatalogModel {
   unit: string;
   faction: ExpectedFaction;
   file: string;
-  skins: [string, string];
+  skins: [string, string, string, string];
   runSize: [number, number, number];
   runGroundY?: number;
   clips: Record<'run' | 'attack' | 'die', CatalogClip>;
@@ -200,7 +200,7 @@ const FRAME_DISAGREEMENT = 5;
 
 describe('Athena2 authored model catalog', () => {
   it('contains unique complete entries', () => {
-    expect(catalog.version).toBe(2);
+    expect(catalog.version).toBe(3);
     expect(catalog.models.map((model) => model.unit).sort()).toEqual([...EXPECTED_UNITS].sort());
     expect(new Set(catalog.models.map((model) => model.unit)).size).toBe(catalog.models.length);
     expect(new Set(catalog.models.map((model) => model.file)).size).toBe(catalog.models.length);
@@ -213,9 +213,11 @@ describe('Athena2 authored model catalog', () => {
         expect(model.runGroundY, model.unit).toBeUndefined();
       }
       expect(Object.keys(model).sort(), model.unit).toEqual(expectedKeys.sort());
-      expect(model.skins).toHaveLength(2);
+      expect(model.skins).toHaveLength(4);
       expect(model.skins[0], `${model.unit} blue skin`).toMatch(/-blue\.ktx2$/);
-      expect(model.skins[1], `${model.unit} red skin`).toMatch(/-red\.ktx2$/);
+      expect(model.skins[1], `${model.unit} teal skin`).toMatch(/-teal\.ktx2$/);
+      expect(model.skins[2], `${model.unit} red skin`).toMatch(/-red\.ktx2$/);
+      expect(model.skins[3], `${model.unit} orange skin`).toMatch(/-orange\.ktx2$/);
       expect(model.runSize, `${model.unit} authored run size`).toHaveLength(3);
       for (const size of model.runSize) {
         expect(Number.isFinite(size), `${model.unit} run size`).toBe(true);
@@ -589,12 +591,13 @@ describe('Athena2 authored model catalog', () => {
   );
 
   it.each(catalog.models)(
-    '$unit has matching blue and red ETC1S skins with mipmaps',
+    '$unit has four matching team ETC1S skins with mipmaps',
     async (model) => {
-      const [blue, red] = await Promise.all(
+      const [blue, ...otherTeams] = await Promise.all(
         model.skins.map(async (skin) => ktx2Info(await readFile(join(MODEL_ROOT, skin)))),
       );
-      expect(red, `${model.unit} team skin dimensions`).toEqual(blue);
+      for (const skin of otherTeams)
+        expect(skin, `${model.unit} team skin dimensions`).toEqual(blue);
       expect(blue.width, `${model.unit} skin width`).toBeGreaterThan(0);
       expect(blue.height, `${model.unit} skin height`).toBeGreaterThan(0);
       expect(blue.levels, `${model.unit} complete mip chain`).toBe(

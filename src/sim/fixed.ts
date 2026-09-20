@@ -241,6 +241,13 @@ export function vecRotateToward(fx: Fix, fy: Fix, tx: Fix, ty: Fix, maxStep: Fix
     // Close enough to snap; still normalise so callers always get a unit vector.
     return vecNormalize(tx, ty);
   }
+  // Lerp between opposite headings only changes the vector's length: after
+  // normalisation it still points backwards forever. Take a perpendicular
+  // intermediate heading to start the turn. Rotating both inputs 180 degrees
+  // rotates this choice too, preserving mirrored movement.
+  if (fx * tx + fy * ty < 0 && fx * ty - fy * tx === 0) {
+    return vecRotateToward(fx, fy, -fy, fx, maxStep);
+  }
   const t = fdiv(maxStep, d);
   return vecNormalize(fx + fmul(dx, t), fy + fmul(dy, t));
 }

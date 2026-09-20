@@ -84,11 +84,16 @@ def play(
         while len(results) < len(keys):
             actions = decide(policy, batch.arrays, rows, device, temperature, generator)
             batch = env.step(actions)
+            # Sum every teammate's commands before recording a terminal match;
+            # otherwise its first row marks it complete and hides the last
+            # decision from the second Quarters slot.
+            for r, (p, e, _) in enumerate(batch.slots):
+                if (p, e) not in results:
+                    commands[(p, e)] += int(batch.issued[r])
             for r, (p, e, player) in enumerate(batch.slots):
                 key = (p, e)
                 if key in results:
                     continue
-                commands[key] += int(batch.issued[r])
                 if batch.done[r]:
                     winner = int(batch.winner[r])
                     won = None if winner < 0 else winner == team_of(player, players)

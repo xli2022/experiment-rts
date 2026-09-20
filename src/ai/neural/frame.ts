@@ -14,7 +14,7 @@
 
 import { fromInt, toInt, type Fix } from '../../sim/fixed.js';
 import { mirrorTile } from '../../sim/map.js';
-import { NO_ENTITY, type EntityId, type PlayerId } from '../../sim/types.js';
+import { NO_ENTITY, type EntityId, type EntityType, type PlayerId } from '../../sim/types.js';
 import { CELL_TILES, GRID, N_ENT } from './spec.js';
 
 export enum RowKind {
@@ -38,6 +38,8 @@ export interface Frame {
   readonly rowKind: Uint8Array;
   /** Row by entity handle, for encoding a command into a decision. */
   readonly rowOf: Map<EntityId, number>;
+  /** Owned unfinished sites at the decision tick, keyed by world top-left tile. */
+  readonly constructionSites: Map<number, { id: EntityId; type: EntityType }>;
 }
 
 export function allocFrame(): Frame {
@@ -50,6 +52,7 @@ export function allocFrame(): Frame {
     rows: new Int32Array(N_ENT).fill(NO_ENTITY),
     rowKind: new Uint8Array(N_ENT),
     rowOf: new Map(),
+    constructionSites: new Map(),
   };
 }
 

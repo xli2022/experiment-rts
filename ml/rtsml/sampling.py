@@ -51,11 +51,21 @@ def select_many(
     row's draw comes up, the single-row draw (argmax with `noise_a` alone)
     names one, so a type that needs units always has one.
     """
-    scaled = logits / temperature.unsqueeze(-1)
-    score = masked(scaled + (noise_a - noise_b), mask)
+    scores = logits / temperature.unsqueeze(-1) + noise_a
+    return select_many_from_scores(scores, mask, noise_b, k)
+
+
+def select_many_from_scores(scores: torch.Tensor, mask: torch.Tensor, noise_b: torch.Tensor, k: int) -> torch.Tensor:
+    """Project location-Gumbel draws and independent noise onto a legal selection.
+
+    Keeping the perturbed logits as a latent action lets PPO score the exact
+    distribution before this nonempty/top-k projection. Bernoulli membership
+    alone loses both the forced fallback and the capped rows' probability.
+    """
+    score = masked(scores - noise_b, mask)
     values, index = torch.topk(score, k, dim=-1)
     kept = torch.where(values > 0, index, torch.full_like(index, -1))
-    best = torch.argmax(masked(scaled + noise_a, mask), dim=-1)
+    best = torch.argmax(masked(scores, mask), dim=-1)
     none = values[:, 0] <= 0
     first = torch.where(none, best, kept[:, 0])
     return torch.cat([first.unsqueeze(1), kept[:, 1:]], dim=1)
@@ -86,6 +96,22 @@ def selection_entropy(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     p = torch.sigmoid(logits)
     h = -(p * F.logsigmoid(logits) + (1 - p) * F.logsigmoid(-logits))
     return (h * mask.to(logits.dtype)).sum(-1)
+
+
+def selection_score_logp(logits: torch.Tensor, mask: torch.Tensor, scores: torch.Tensor) -> torch.Tensor:
+    """Exact log-density of stored X = logits + Gumbel(0, 1), over legal rows.
+
+    `logits` already includes temperature. The other Gumbel draw is independent
+    of the policy and cancels in the likelihood ratio; the selection projection
+    and subsequent categorical heads depend only on these draws and the state.
+    """
+    z = torch.where(mask, scores.detach() - logits, torch.zeros_like(logits))
+    return torch.where(mask, -z - torch.exp(-z), torch.zeros_like(z)).sum(-1)
+
+
+def selection_score_entropy(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """Location does not affect Gumbel entropy: each legal latent has 1 + gamma."""
+    return mask.to(logits.dtype).sum(-1) * 1.5772156649015329
 
 
 def membership_of(selection: torch.Tensor, n: int) -> torch.Tensor:

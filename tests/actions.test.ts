@@ -20,6 +20,7 @@ import {
   computeMasks,
   decode,
   encode,
+  legalise,
   selectsMany,
   usesLocation,
   usesTarget,
@@ -35,11 +36,12 @@ import {
   N_ENT,
   SELECTION_MAX,
 } from '../src/ai/neural/spec.js';
-import { defOf } from '../src/config/rules.js';
+import { buildingUpgrade, defOf, productionOptions } from '../src/config/rules.js';
 import { CommandType, MAX_COMMAND_UNITS, type Command } from '../src/sim/commands.js';
 import { idIndex } from '../src/sim/entities.js';
 import { FIX_HALF, fromInt, toInt } from '../src/sim/fixed.js';
-import { duelMatch } from '../src/sim/match.js';
+import { UNOCCUPIED } from '../src/sim/map.js';
+import { duelMatch, matchConfig } from '../src/sim/match.js';
 import { Rng } from '../src/sim/rng.js';
 import { executeCommand } from '../src/sim/systems/orders.js';
 import { Simulation } from '../src/sim/tick.js';
@@ -47,12 +49,14 @@ import {
   BuildState,
   EntityType,
   ENTITY_TYPE_COUNT,
+  MapLayout,
   NO_ENTITY,
   Order,
+  Tile,
   type PlayerId,
 } from '../src/sim/types.js';
 import type { World } from '../src/sim/world.js';
-import { Visibility } from '../src/vision/visibility.js';
+import { VISIBLE, Visibility } from '../src/vision/visibility.js';
 import { scriptedAgents } from './helpers/agents.js';
 import { fullScript, mirrorCommand, twinMap } from './helpers/mirror.js';
 
@@ -89,6 +93,172 @@ function centreOf(x: number): number {
 }
 
 describe('encode and decode', () => {
+  it.each([0, 1])(
+    'resumes the exact owned construction site without paying again from seat %i',
+    (player) => {
+      const world = new Simulation(duelMatch(SEED, { botPlayers: [] })).world;
+      world.map.tiles.fill(Tile.Ground);
+      world.map.occupied.fill(UNOCCUPIED);
+      const worker = world.pool.spawn(EntityType.Worker, player, fromInt(39), fromInt(39));
+      const site = world.placeBuilding(EntityType.Airport, player, 40, 40);
+      world.pool.buildState[idIndex(site)] = BuildState.UnderConstruction;
+      world.pool.buildProgress[idIndex(site)] = 10;
+      const eyes = new Eyes(world, player);
+      const command: Command = {
+        type: CommandType.Build,
+        player,
+        worker,
+        building: EntityType.Airport,
+        tileX: 40,
+        tileY: 40,
+      };
+      const action = allocAction();
+      for (const minerals of [0, 1000]) {
+        world.player(player).minerals = minerals;
+        eyes.look(world);
+        eyes.see(world);
+        expect(encode(command, eyes.frame, action)).toBe(true);
+        expect(legalise(action, eyes.masks)).toBe(true);
+        expect(decode(action, world, eyes.frame)).toEqual(command);
+        const count = world.pool.count;
+        executeCommand(world, decode(action, world, eyes.frame)!);
+        expect(world.pool.order[idIndex(worker)]).toBe(Order.Build);
+        expect(world.pool.orderTarget[idIndex(worker)]).toBe(site);
+        expect(world.player(player).minerals).toBe(minerals);
+        expect(world.pool.count).toBe(count);
+        expect(world.pool.buildProgress[idIndex(site)]).toBe(10);
+        if (minerals === 0) {
+          expect([...eyes.masks.buildCell].reduce((sum, bit) => sum + bit, 0)).toBe(1);
+          // Sub-cells are unmasked: with no funds every sub-cell choice must
+          // resolve to the same existing site, not a nearby new foundation.
+          for (let sub = 0; sub < 16; sub++) {
+            action.sub = sub;
+            expect(decode(action, world, eyes.frame)).toEqual(command);
+          }
+          action.entityType = EntityType.Factory;
+          expect(legalise(action, eyes.masks)).toBe(false);
+          expect(decode(action, world, eyes.frame)).toBeNull();
+        }
+      }
+      world.pool.buildState[idIndex(site)] = BuildState.Complete;
+      expect(decode(action, world, eyes.frame)).toBeNull();
+      world.pool.buildState[idIndex(site)] = BuildState.UnderConstruction;
+      world.pool.destroy(site);
+      world.map.occupied.fill(UNOCCUPIED);
+      expect(decode(action, world, eyes.frame)).toBeNull();
+    },
+  );
+
+  it.each([
+    { owner: 0, state: BuildState.Complete, reason: 'completed own' },
+    { owner: 1, state: BuildState.UnderConstruction, reason: 'allied' },
+    { owner: 2, state: BuildState.UnderConstruction, reason: 'enemy' },
+  ])('does not offer free resume of a $reason building', ({ owner, state }) => {
+    const world = new Simulation(matchConfig(MapLayout.Quarters, SEED, { botPlayers: [] })).world;
+    world.map.tiles.fill(Tile.Ground);
+    world.map.occupied.fill(UNOCCUPIED);
+    const worker = world.pool.spawn(EntityType.Worker, 0, fromInt(39), fromInt(39));
+    const site = world.placeBuilding(EntityType.Airport, owner, 40, 40);
+    world.pool.buildState[idIndex(site)] = state;
+    world.player(0).minerals = 0;
+    const eyes = new Eyes(world, 0);
+    eyes.look(world);
+    eyes.see(world);
+    const action = allocAction();
+    expect(
+      encode(
+        {
+          type: CommandType.Build,
+          player: 0,
+          worker,
+          building: EntityType.Airport,
+          tileX: 40,
+          tileY: 40,
+        },
+        eyes.frame,
+        action,
+      ),
+    ).toBe(true);
+    expect(eyes.masks.type[ActionType.Build]).toBe(0);
+    expect(legalise(action, eyes.masks)).toBe(false);
+    expect(decode(action, world, eyes.frame)).toBeNull();
+  });
+
+  it('round-trips upgrade commands and matches each unlocked production tier', () => {
+    const world = new Simulation(duelMatch(SEED, { botPlayers: [] })).world;
+    const eyes = new Eyes(world, 0);
+    const action = allocAction();
+    for (const producer of [EntityType.Barracks, EntityType.Factory, EntityType.Airport]) {
+      const id = world.pool.spawn(producer, 0, fromInt(30), fromInt(30));
+      const i = idIndex(id);
+      world.pool.buildState[i] = BuildState.Complete;
+      world.player(0).minerals = 1000;
+      eyes.look(world);
+      eyes.see(world);
+      const row = eyes.frame.rowOf.get(id)!;
+      const allowed = (type: ActionType) => eyes.masks.selection[type * N_ENT + row];
+      const training = () =>
+        Array.from({ length: ENTITY_TYPE_COUNT }, (_, type) => type).filter(
+          (type) => eyes.masks.rowEntityType[row * ENTITY_TYPE_COUNT + type] === 1,
+        );
+      expect(training()).toEqual([...productionOptions(producer)].sort((a, b) => a - b));
+      const upgrade = buildingUpgrade(producer);
+      expect(allowed(ActionType.UpgradeBuilding)).toBe(upgrade ? 1 : 0);
+      if (!upgrade) continue;
+      world.player(0).minerals = upgrade.mineralCost - 1;
+      eyes.see(world);
+      expect(allowed(ActionType.UpgradeBuilding)).toBe(0);
+      world.player(0).minerals = 1000;
+      world.pool.prodPush(i, productionOptions(producer)[0]!);
+      eyes.see(world);
+      expect(allowed(ActionType.UpgradeBuilding)).toBe(0);
+      world.pool.prodCount[i] = 0;
+      for (const type of [CommandType.UpgradeBuilding, CommandType.CancelUpgrade] as const) {
+        const command = { type, player: 0, building: id };
+        expect(encode(command, eyes.frame, action)).toBe(true);
+        expect(decode(action, world, eyes.frame)).toEqual(command);
+      }
+      executeCommand(world, { type: CommandType.UpgradeBuilding, player: 0, building: id });
+      eyes.see(world);
+      expect(allowed(ActionType.UpgradeBuilding)).toBe(0);
+      expect(allowed(ActionType.CancelUpgrade)).toBe(1);
+      expect(allowed(ActionType.Train)).toBe(0);
+      expect(training()).toEqual([]);
+      executeCommand(world, { type: CommandType.CancelUpgrade, player: 0, building: id });
+      eyes.see(world);
+      expect(allowed(ActionType.CancelUpgrade)).toBe(0);
+      expect(allowed(ActionType.UpgradeBuilding)).toBe(1);
+      world.pool.buildingLevel[i] = 2;
+      eyes.see(world);
+      expect(allowed(ActionType.UpgradeBuilding)).toBe(0);
+      expect(training()).toEqual([...productionOptions(producer, 2)].sort((a, b) => a - b));
+      world.pool.buildState[i] = BuildState.UnderConstruction;
+      eyes.see(world);
+      expect(allowed(ActionType.Train)).toBe(0);
+      expect(allowed(ActionType.UpgradeBuilding)).toBe(0);
+    }
+  });
+
+  it('rejects teacher subformations the action vocabulary cannot express', () => {
+    const world = new Simulation(duelMatch(SEED, { botPlayers: [] })).world;
+    const eyes = new Eyes(world, 0);
+    eyes.look(world);
+    eyes.see(world);
+    const worker = [...eyes.frame.rowOf.keys()].find(
+      (id) =>
+        world.pool.owner[idIndex(id)] === 0 && world.pool.type[idIndex(id)] === EntityType.Worker,
+    )!;
+    const action = allocAction();
+    for (const type of [CommandType.Move, CommandType.AttackMove] as const) {
+      const command = { type, player: 0, units: [worker], x: fromInt(20), y: fromInt(20) };
+      expect(encode(command, eyes.frame, action)).toBe(true);
+      expect(encode({ ...command, formationOffset: 0 }, eyes.frame, action)).toBe(true);
+      expect(encode({ ...command, formationOffset: MAX_COMMAND_UNITS }, eyes.frame, action)).toBe(
+        false,
+      );
+    }
+  });
+
   it('round-trip every command the scripted bot issues, up to the vocabulary', () => {
     const config = duelMatch(SEED, { botPlayers: [0, 1] });
     const match = new HeadlessMatch(config, scriptedAgents(config));
@@ -211,6 +381,22 @@ describe('encode and decode', () => {
 });
 
 describe('the masks', () => {
+  it('does not reveal hidden occupancy at the edge of a visible build cell', () => {
+    const world = new Simulation(duelMatch(SEED, { botPlayers: [] })).world;
+    world.map.tiles.fill(Tile.Ground);
+    world.map.occupied.fill(UNOCCUPIED);
+    const eyes = new Eyes(world, 0);
+    // Only one tile is seen. A four-tile-wide footprint extends into fog.
+    eyes.vis.state[world.map.index(60, 60)] = VISIBLE;
+    eyes.see(world);
+    const before = eyes.masks.buildCell.slice();
+    for (let t = 0; t < world.map.occupied.length; t++) {
+      if (eyes.vis.state[t] !== VISIBLE) world.map.occupied[t] = 123;
+    }
+    eyes.see(world);
+    expect(eyes.masks.buildCell).toEqual(before);
+  });
+
   /** Apply a command and say whether the simulation took it. */
   function accepted(world: World, command: Command): boolean {
     const pool = world.pool;
@@ -237,7 +423,16 @@ describe('the masks', () => {
         return command.units.some((id) => pool.isAlive(id) && orderOf(id) === Order.Hold);
       case CommandType.Build: {
         executeCommand(world, command);
-        return world.player(command.player).minerals < minerals;
+        const worker = idIndex(command.worker);
+        const site = pool.orderTarget[worker]!;
+        return (
+          world.player(command.player).minerals < minerals ||
+          (pool.order[worker] === Order.Build &&
+            pool.isAlive(site) &&
+            pool.owner[idIndex(site)] === command.player &&
+            pool.tileX[idIndex(site)] === command.tileX &&
+            pool.tileY[idIndex(site)] === command.tileY)
+        );
       }
       case CommandType.Train: {
         const before = pool.prodCount[idIndex(command.building)]!;
@@ -249,6 +444,15 @@ describe('the masks', () => {
         executeCommand(world, command);
         return pool.prodCount[idIndex(command.building)]! < before;
       }
+      case CommandType.UpgradeBuilding:
+        executeCommand(world, command);
+        return pool.upgrading[idIndex(command.building)] === 1;
+      case CommandType.CancelUpgrade:
+        executeCommand(world, command);
+        return (
+          pool.upgrading[idIndex(command.building)] === 0 &&
+          world.player(command.player).minerals > minerals
+        );
       case CommandType.SetRally: {
         // The point may be snapped to the nearest standable tile, as a human's
         // click would be; what matters is that a rally was set.
@@ -267,47 +471,63 @@ describe('the masks', () => {
     // exceptions are the simulation's per-unit rules the vocabulary does not
     // see — melee units told to attack a flyer, a patch mined out since it was
     // last seen — and they are counted, not excused.
-    const config = duelMatch(SEED, { botPlayers: [1] });
-    const match = new HeadlessMatch(config, scriptedAgents(config));
-    const world = match.world;
-    const eyes = new Eyes(world, 0);
-    const rng = new Rng(0xabc);
-    const action = allocAction();
     const byType = new Map<number, { tried: number; refused: number }>();
     let tried = 0;
     let refused = 0;
     let nulls = 0;
-    for (let t = 0; t < 5000 && !world.matchOver; t++) {
-      match.step();
-      eyes.look(world);
-      // Nobody plays slot 0 but this test, and its random orders keep the
-      // workers from mining; a periodic grant keeps building and training
-      // affordable so those heads get sampled too.
-      if (t % 200 === 0) world.players[0]!.minerals = 600;
-      if (t % 5 !== 0) continue;
-      for (let k = 0; k < 2; k++) {
-        // Masks describe the world as it stands; a command just applied may
-        // have spent the minerals or emptied the queue the next one relied on.
-        eyes.see(world);
-        sampleUniform(eyes.masks, rng, action);
-        if (action.type === ActionType.Noop) continue;
-        expect(eyes.masks.type[action.type]).toBe(1);
-        const command = decode(action, world, eyes.frame);
-        if (command === null) {
-          nulls++;
-          continue;
+    // Use two matches so an earlier victory does not erase the sample budget.
+    for (const seed of [SEED, SEED + 1]) {
+      const config = duelMatch(seed, { botPlayers: [1] });
+      const match = new HeadlessMatch(config, scriptedAgents(config));
+      const world = match.world;
+      // Random workers rarely finish a production building. Start with one
+      // operational Barracks so research and its cancellation are exercised
+      // by the same simulation-acceptance fuzz as all other action heads.
+      const start = world.map.starts[0]!;
+      const producer = world.placeBuilding(
+        EntityType.Barracks,
+        0,
+        start.tileX + 5,
+        start.tileY + 6,
+      );
+      world.pool.buildState[idIndex(producer)] = BuildState.Complete;
+      const eyes = new Eyes(world, 0);
+      const rng = new Rng(0xabc);
+      const action = allocAction();
+      for (let t = 0; t < 5000 && !world.matchOver; t++) {
+        match.step();
+        eyes.look(world);
+        // Nobody plays slot 0 but this test, and its random orders keep the
+        // workers from mining; a periodic grant keeps building and training
+        // affordable so those heads get sampled too.
+        if (t % 200 === 0) world.players[0]!.minerals = 600;
+        if (t % 5 !== 0) continue;
+        for (let k = 0; k < 2; k++) {
+          // Masks describe the world as it stands; a command just applied may
+          // have spent the minerals or emptied the queue the next one relied on.
+          eyes.see(world);
+          sampleUniform(eyes.masks, rng, action);
+          if (action.type === ActionType.Noop) continue;
+          expect(eyes.masks.type[action.type]).toBe(1);
+          const command = decode(action, world, eyes.frame);
+          if (command === null) {
+            nulls++;
+            continue;
+          }
+          expect(command.type).not.toBe(CommandType.Surrender);
+          if ('units' in command)
+            expect(command.units.length).toBeLessThanOrEqual(MAX_COMMAND_UNITS);
+          const stat = byType.get(action.type) ?? { tried: 0, refused: 0 };
+          stat.tried++;
+          tried++;
+          if (!accepted(world, command)) {
+            stat.refused++;
+            refused++;
+          }
+          byType.set(action.type, stat);
         }
-        expect(command.type).not.toBe(CommandType.Surrender);
-        if ('units' in command) expect(command.units.length).toBeLessThanOrEqual(MAX_COMMAND_UNITS);
-        const stat = byType.get(action.type) ?? { tried: 0, refused: 0 };
-        stat.tried++;
-        tried++;
-        if (!accepted(world, command)) {
-          stat.refused++;
-          refused++;
-        }
-        byType.set(action.type, stat);
       }
+      match.dispose();
     }
     expect(tried).toBeGreaterThan(1500);
     expect(nulls).toBe(0);
@@ -357,7 +577,7 @@ describe('the masks', () => {
     expect(eyes.masks.rowEntityType[rowB * ENTITY_TYPE_COUNT + EntityType.Worker]).toBe(0);
     expect(eyes.masks.rowEntityType[rowP * ENTITY_TYPE_COUNT + EntityType.Worker]).toBe(1);
     expect(eyes.masks.type[ActionType.Build]).toBe(1);
-    // Every structure a worker can raise, the Foundry included.
+    // Every structure a worker can raise, including Factory and Airport.
     for (const building of BUILDINGS) {
       expect(eyes.masks.buildType[building]).toBe(1);
     }

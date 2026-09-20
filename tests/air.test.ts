@@ -16,7 +16,7 @@ import { defOf } from '../src/config/rules.js';
 import { CommandType } from '../src/sim/commands.js';
 import { toFloat } from '../src/sim/fixed.js';
 import { Simulation } from '../src/sim/tick.js';
-import { EntityType, NO_ENTITY, Order, type PlayerId } from '../src/sim/types.js';
+import { EntityType, NO_ENTITY, Order, Tile, type PlayerId } from '../src/sim/types.js';
 
 const FIX = 65536;
 
@@ -143,4 +143,36 @@ describe('everything else still covers both layers', () => {
   it('lets air shoot ground', () => {
     expect(duel(EntityType.Beamdrone, EntityType.Slicebot, 3).hit).toBe(true);
   });
+});
+
+describe('flying destinations', () => {
+  it.each([CommandType.Move, CommandType.AttackMove] as const)(
+    'lets aircraft in a mixed selection reach a cliff interior for command %i',
+    (type) => {
+      const sim = new Simulation(0x51ce7a11);
+      const { map, pool } = sim.world;
+      // A cliff wider than the ground destination's snap radius. Ground units
+      // cannot follow this order, while flying units can occupy its centre.
+      for (let y = 55; y <= 74; y++) {
+        for (let x = 54; x <= 74; x++) map.tiles[map.index(x, y)] = Tile.Ground;
+      }
+      for (let y = 56; y <= 74; y++) {
+        for (let x = 56; x <= 74; x++) map.tiles[map.index(x, y)] = Tile.Cliff;
+      }
+      const air = pool.spawn(EntityType.Beamdrone, 0, 55.5 * FIX, 65.5 * FIX);
+      const worker = pool.spawn(EntityType.Worker, 0, 55.5 * FIX, 65.5 * FIX);
+      const x = 65.5 * FIX;
+      const y = 65.5 * FIX;
+
+      sim.step([{ type, player: 0, units: [air, worker], x, y }]);
+      expect(pool.orderX[air & 0xffff]).toBe(x);
+      expect(pool.orderY[air & 0xffff]).toBe(y);
+      expect(pool.order[worker & 0xffff]).toBe(Order.None);
+
+      for (let tick = 0; tick < 100; tick++) sim.step([]);
+      expect(pool.isAlive(air)).toBe(true);
+      expect(pool.order[air & 0xffff]).toBe(Order.None);
+      expect(Math.abs(pool.posX[air & 0xffff]! - x)).toBeLessThan(FIX / 2);
+    },
+  );
 });

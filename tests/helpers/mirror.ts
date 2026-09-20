@@ -179,6 +179,9 @@ export function mirrorMismatch(a: World, b: World): MirrorMismatch | null {
       () => eq('resourceAmount', pa.resourceAmount[i]!, pb.resourceAmount[j]!),
       () => eq('buildState', pa.buildState[i]!, pb.buildState[j]!),
       () => eq('buildProgress', pa.buildProgress[i]!, pb.buildProgress[j]!),
+      () => eq('buildingLevel', pa.buildingLevel[i]!, pb.buildingLevel[j]!),
+      () => eq('upgrading', pa.upgrading[i]!, pb.upgrading[j]!),
+      () => eq('upgradeProgress', pa.upgradeProgress[i]!, pb.upgradeProgress[j]!),
       () =>
         def.isBuilding
           ? eq('tileX', mirrorTile(a.map.width, pa.tileX[i]!, def.footprint), pb.tileX[j]!)
@@ -290,6 +293,8 @@ export function mirrorCommand(world: World, cmd: Command, twins: Int32Array): Co
     case CommandType.CancelTrain:
       return { type: cmd.type, player, building: twinId(cmd.building), slot: cmd.slot };
     case CommandType.CancelBuild:
+    case CommandType.UpgradeBuilding:
+    case CommandType.CancelUpgrade:
       return { type: cmd.type, player, building: twinId(cmd.building) };
     case CommandType.SetRally:
       return {

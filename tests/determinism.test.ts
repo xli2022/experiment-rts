@@ -10,6 +10,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { HeadlessMatch } from '../src/ai/headless.js';
+import { defOf } from '../src/config/rules.js';
 import { checksumToHex } from '../src/sim/checksum.js';
 import { coopMatch } from '../src/sim/match.js';
 import { Simulation } from '../src/sim/tick.js';
@@ -193,8 +194,12 @@ describe('deterministic simulation', () => {
     }
     // And the match was worth checksumming: four bots that never built anything
     // would agree perfectly about nothing.
-    expect(a.world.player(0).supplyMax).toBeGreaterThan(10);
-    expect(a.world.player(3).supplyMax).toBeGreaterThan(10);
+    expect(a.world.player(0).supplyMax).toBeGreaterThan(
+      defOf(EntityType.CommandPost).supplyProvided,
+    );
+    expect(a.world.player(3).supplyMax).toBeGreaterThan(
+      defOf(EntityType.CommandPost).supplyProvided,
+    );
   });
 
   it('covers combat on the four-player map, not just economy', () => {
@@ -215,8 +220,14 @@ describe('deterministic simulation', () => {
       sim.step();
       const shots = world.events.shots;
       for (let k = 0; k + 1 < shots.length; k += 2) {
-        const attacker = world.pool.owner[shots[k]!]!;
+        const source = shots[k]!;
+        const attacker = world.pool.owner[source]!;
         const victim = world.pool.owner[shots[k + 1]!]!;
+        if (defOf(world.pool.type[source]! as EntityType).repairAmount > 0) {
+          // Repair beams share weapon animation events, but must help allies.
+          expect(world.areAllied(attacker, victim)).toBe(true);
+          continue;
+        }
         // Allies never shoot each other; a shot that crossed the front line is
         // the only kind that exercises team hostility.
         expect(world.areAllied(attacker, victim)).toBe(false);

@@ -27,7 +27,7 @@
  * and `tests/sealed-sim.test.ts` scans it — but nothing structural does.
  */
 
-import { MAX_COMMAND_UNITS, type Command } from '../sim/commands.js';
+import { CommandType, MAX_COMMAND_UNITS, type Command } from '../sim/commands.js';
 import type { PlayerId } from '../sim/types.js';
 import type { World } from '../sim/world.js';
 
@@ -46,9 +46,8 @@ export interface Agent {
  * Split any command naming more than `MAX_COMMAND_UNITS` units into several
  * that each obey the cap, in the original order.
  *
- * The scripted bot orders its whole army in one command, which a human cannot
- * do: the UI caps a selection at the same number. Chunking keeps every bot
- * inside the human vocabulary and every packet inside the wire's budget.
+ * Humans and bots can order a whole army at once. Chunking keeps every unit
+ * in that order while each individual command stays inside the wire's budget.
  */
 export function chunkCommands(commands: readonly Command[]): Command[] {
   const out: Command[] = [];
@@ -58,7 +57,16 @@ export function chunkCommands(commands: readonly Command[]): Command[] {
       continue;
     }
     for (let start = 0; start < command.units.length; start += MAX_COMMAND_UNITS) {
-      out.push({ ...command, units: command.units.slice(start, start + MAX_COMMAND_UNITS) });
+      const units = command.units.slice(start, start + MAX_COMMAND_UNITS);
+      if (command.type === CommandType.Move || command.type === CommandType.AttackMove) {
+        out.push({
+          ...command,
+          units,
+          formationOffset: (command.formationOffset ?? 0) + start,
+        });
+      } else {
+        out.push({ ...command, units });
+      }
     }
   }
   return out;

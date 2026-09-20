@@ -19,11 +19,15 @@
  * which decides the free list, which decides every entity id afterwards.
  */
 
-import { CHILL_SPEED, defOf, MIN_DAMAGE, type EntityDef } from '../../config/rules.js';
+import { CHILL_SPEED, DEFS, defOf, MIN_DAMAGE, type EntityDef } from '../../config/rules.js';
 import { idIndex } from '../entities.js';
 import { fmul, fromInt, sqRange, vecLen, vecLenSqRaw, vecNormalize } from '../fixed.js';
 import { BuildState, EntityType, NEUTRAL, NO_ENTITY, Order } from '../types.js';
 import type { World } from '../world.js';
+
+/** Broad-phase queries must include every target whose edge can be reached. */
+const MAX_TARGET_RADIUS = DEFS.reduce((radius, def) => Math.max(radius, def.radius), 0);
+const repairers: number[] = [];
 
 export function combatSystem(world: World): void {
   const pool = world.pool;
@@ -33,23 +37,31 @@ export function combatSystem(world: World): void {
   // the Ice Golem sat at a lower slot than what it shot, so the same chill
   // lasted one tick longer or shorter depending on which of the two was
   // spawned first — deterministic, but arbitrary, and visible on the panel.
+  repairers.length = 0;
   for (let i = 0; i < pool.count; i++) {
-    if (pool.alive[i] === 1 && pool.chill[i]! > 0) pool.chill[i]! -= 1;
+    if (pool.alive[i] !== 1) continue;
+    if (pool.chill[i]! > 0) pool.chill[i]! -= 1;
+    if (pool.attackCooldown[i]! > 0) pool.attackCooldown[i]! -= 1;
+    if (defOf(pool.type[i]! as EntityType).repairAmount > 0) repairers.push(i);
+  }
+
+  // Repair precedes all damage. Interleaving the two in slot order lets one
+  // side repair this tick's damage while its mirror has already taken its turn.
+  // Creation order also makes multiple repairers choose the same patients on
+  // both halves after slots have been recycled.
+  repairers.sort((a, b) => tieKey(world, a) - tieKey(world, b) || pool.owner[a]! - pool.owner[b]!);
+  for (let k = 0; k < repairers.length; k++) {
+    const i = repairers[k]!;
+    serviceRepair(world, i, defOf(pool.type[i]! as EntityType));
   }
 
   for (let i = 0; i < pool.count; i++) {
     if (pool.alive[i] !== 1) continue;
 
-    if (pool.attackCooldown[i]! > 0) pool.attackCooldown[i]! -= 1;
-
     const type = pool.type[i]! as EntityType;
     const def = defOf(type);
     if (def.attackRange === 0) continue;
-    // A repairer runs the same clock against the opposite list.
-    if (def.repairAmount > 0) {
-      serviceRepair(world, i, def);
-      continue;
-    }
+    if (def.repairAmount > 0) continue;
     if (pool.owner[i] === NEUTRAL) continue;
     // Unfinished buildings cannot shoot.
     if (def.isBuilding && pool.buildState[i] !== BuildState.Complete) continue;
@@ -170,7 +182,9 @@ function resolveAttackImpact(world: World, attackerIndex: number, target: number
 
   const dx = pool.posX[targetIndex]! - pool.posX[attackerIndex]!;
   const dy = pool.posY[targetIndex]! - pool.posY[attackerIndex]!;
-  if (vecLenSqRaw(dx, dy) > sqRange(def.attackRange + targetDef.radius)) return;
+  const distSq = vecLenSqRaw(dx, dy);
+  if (distSq > sqRange(def.attackRange + targetDef.radius)) return;
+  if (def.minRange > 0 && distSq < sqRange(def.minRange)) return;
 
   const dir = vecNormalize(dx, dy);
   pool.faceX[attackerIndex] = dir.x;
@@ -195,7 +209,7 @@ function resolveAttackImpact(world: World, attackerIndex: number, target: number
 
   // The payload went off, so the thing carrying it is gone. Queued like any
   // other death so it is reaped with them, after every system has run.
-  if (def.detonates) {
+  if (def.detonates && pool.hp[attackerIndex]! > 0) {
     pool.hp[attackerIndex] = 0;
     world.events.deaths.push(attackerIndex);
   }
@@ -263,7 +277,7 @@ function gatherSplash(
   const pool = world.pool;
   const cx = pool.posX[targetIndex]!;
   const cy = pool.posY[targetIndex]!;
-  world.grid.forEachNear(cx, cy, def.splashRadius, (j) => {
+  world.grid.forEachNear(cx, cy, def.splashRadius + MAX_TARGET_RADIUS, (j) => {
     const other = defOf(pool.type[j]! as EntityType);
     // Measured to the edge, like every other range test in here, so a big
     // building caught by the rim of a blast takes it.
@@ -340,7 +354,7 @@ function gatherExtraTargets(world: World, attackerIndex: number, def: EntityDef)
     let bestDistSq = Number.POSITIVE_INFINITY;
     let bestKey = 0;
 
-    world.grid.forEachNear(px, py, def.attackRange, (j) => {
+    world.grid.forEachNear(px, py, def.attackRange + MAX_TARGET_RADIUS, (j) => {
       if (!canVictimise(world, attackerIndex, j)) return;
       for (let k = 0; k < victims.length; k++) if (victims[k] === j) return;
 
@@ -419,7 +433,7 @@ function acquireRepairTarget(world: World, index: number, range: number): number
   let bestMissing = 0;
   let bestKey = 0;
 
-  world.grid.forEachNear(px, py, range, (j) => {
+  world.grid.forEachNear(px, py, range + MAX_TARGET_RADIUS, (j) => {
     if (j === index) return;
     if (pool.alive[j] !== 1) return;
     if (pool.owner[j] !== owner) return;
@@ -457,7 +471,8 @@ function acquireRepairTarget(world: World, index: number, range: number): number
 function acquireTarget(world: World, index: number, range: number): number {
   const pool = world.pool;
   const owner = pool.owner[index]!;
-  const canHitAir = defOf(pool.type[index]! as EntityType).canHitAir;
+  const def = defOf(pool.type[index]! as EntityType);
+  const canHitAir = def.canHitAir;
   const px = pool.posX[index]!;
   const py = pool.posY[index]!;
 
@@ -481,6 +496,7 @@ function acquireTarget(world: World, index: number, range: number): number {
     const dy = pool.posY[j]! - py;
     const distSq = vecLenSqRaw(dx, dy);
     if (distSq > sqRange(range)) return;
+    if (def.minRange > 0 && distSq < sqRange(def.minRange)) return;
 
     const key = world.ownerCanonical(pool.owner[j]!) * 1048576 + pool.serial[j]!;
     if (distSq < bestDistSq || (distSq === bestDistSq && key < bestKey)) {
@@ -502,7 +518,9 @@ function acquireTarget(world: World, index: number, range: number): number {
  */
 export function applyDamage(world: World, index: number, amount: number): void {
   const pool = world.pool;
-  if (pool.alive[index] !== 1) return;
+  // Several simultaneous blows can land before reaping. Death is one event,
+  // regardless of which blow crossed zero or which slot fired first.
+  if (pool.alive[index] !== 1 || pool.hp[index]! <= 0) return;
   const armor = defOf(pool.type[index]! as EntityType).armor;
   if (armor > 0 && amount > 0) {
     amount = amount - armor < MIN_DAMAGE ? MIN_DAMAGE : amount - armor;

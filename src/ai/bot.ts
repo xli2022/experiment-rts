@@ -28,12 +28,26 @@
  * state to keep in step.
  */
 
-import { defOf, MAX_PRODUCTION_QUEUE, SUPPLY_MAX, type EntityDef } from '../config/rules.js';
+import {
+  buildingUpgrade,
+  defOf,
+  MAX_PRODUCTION_QUEUE,
+  productionOptions,
+  SUPPLY_MAX,
+  type EntityDef,
+} from '../config/rules.js';
 import { CommandType, type Command } from '../sim/commands.js';
-import { fromFloat, fromInt, toInt, sqRange, vecLenSqRaw } from '../sim/fixed.js';
+import { FIX_HALF, fromFloat, fromInt, toInt, sqRange, vecLenSqRaw } from '../sim/fixed.js';
 import { mirrorTile } from '../sim/map.js';
 import { mirroredHalf } from '../sim/mapgen.js';
-import { BuildState, EntityType, NEUTRAL, Order, type PlayerId } from '../sim/types.js';
+import {
+  BuildState,
+  ENTITY_TYPE_COUNT,
+  EntityType,
+  NEUTRAL,
+  Order,
+  type PlayerId,
+} from '../sim/types.js';
 import type { World } from '../sim/world.js';
 
 /**
@@ -49,9 +63,10 @@ import type { World } from '../sim/world.js';
  * `ScriptedAgent` accepts a different interval, for tests that need a match
  * between unequal bots to resolve — never for play. Do not read it as a
  * strength dial: the cadence gates below (`beat % 2`, `beat % 6`) make its
- * effect anything but monotonic. Measured over eight seeds from both seats, a
- * bot thinking every 20 ticks beat this one 8–0, every 30 lost 8–0, and every
- * 40 won 5–3.
+ * effect anything but monotonic. Before the scouting and order-suppression
+ * revision, an eight-seed test found the 20-tick bot won 8–0, the 30-tick bot
+ * lost 8–0, and the 40-tick bot won 5–3. Those are historical measurements,
+ * not strength guarantees for the current strategy.
  */
 export const THINK_INTERVAL = 10;
 
@@ -94,8 +109,8 @@ interface Tuning {
   readonly attackArmySize: number;
   /** Barracks the bot will run once minerals are spare. */
   readonly maxBarracks: number;
-  /** Foundries it will run. Two, and the second only off a deep bank. */
-  readonly maxFoundries: number;
+  /** Factories it will run. Two, and the second only off a deep bank. */
+  readonly maxFactories: number;
   /** Turrets it will put up at home. */
   readonly maxTurrets: number;
   /** Command Posts it will run. */
@@ -117,7 +132,7 @@ const TUNING: Tuning = {
   targetWorkers: 18,
   attackArmySize: 6,
   maxBarracks: 8,
-  maxFoundries: 2,
+  maxFactories: 2,
   maxTurrets: 3,
   maxBases: 3,
   expandAtMinerals: 450,
@@ -182,9 +197,9 @@ export function botThink(world: World, player: PlayerId): Command[] {
   const cmds: Command[] = [];
   const s = survey(world, player);
 
-  keepWorkersBusy(world, player, s, cmds);
   manageProduction(world, player, s, tuning, cmds);
   manageConstruction(world, player, s, tuning, cmds);
+  keepWorkersBusy(world, player, s, cmds);
   manageArmy(world, player, s, tuning, cmds);
 
   return cmds;
@@ -194,24 +209,29 @@ interface Survey {
   workers: number[];
   idleWorkers: number[];
   army: number[];
+  /** Living and already queued units, including orders from this think. */
+  planned: number[];
+  fightersPlanned: number;
   commandPosts: number[];
   barracks: number[];
-  foundries: number[];
+  factories: number[];
+  airports: number[];
+  airportsPlanned: number;
   /**
-   * Foundries standing *or* going up.
+   * Factories standing *or* going up.
    *
-   * The cap is one, and `foundries` holds only the finished ones — so gating on
-   * that alone had the bot order a second and a third through the 55 seconds
-   * the first one takes to build, every time a construction slot came free.
+   * `factories` holds only the finished ones, so gating on that alone can
+   * exceed the cap while the first one is still being built, every time a
+   * construction slot comes free.
    * A cap on a slow building has to count the ones that are not there yet.
    */
-  foundriesPlanned: number;
+  factoriesPlanned: number;
   depots: number[];
   turrets: number[];
   sites: number[];
   /**
-   * Patches to send an idle worker to: the ones near a base of ours, or every
-   * live patch on the map when none of ours is left.
+   * Observed patches to send an idle worker to: the ones near a base of ours,
+   * or other observed patches when none of ours is left.
    */
   patches: number[];
   /**
@@ -223,14 +243,17 @@ interface Survey {
    * as healthy at exactly the moment it has run dry.
    */
   homePatches: number;
-  /** Any live patch anywhere, for deciding whether the map is mined out. */
+  /** Live patches currently observed by the team. */
   livePatches: number;
-  /** Hostile structures, ascending by slot. Killing these is what wins. */
+  /** Hostile structures currently observed by the team. */
   enemyTargets: number[];
-  /** Hostile combat units by class. Only the air count changes what gets built. */
+  /** Visible enemies with a damaging weapon, including static defences. */
+  visibleThreats: number[];
+  /** Hostile combat units currently in allied sight, grouped by their role. */
   enemyRanged: number;
   enemyMelee: number;
   enemyAir: number;
+  enemyArmored: number;
   /**
    * Combat units belonging to anyone on our side, including a partner's.
    *
@@ -258,10 +281,14 @@ function survey(world: World, player: PlayerId): Survey {
     workers: [],
     idleWorkers: [],
     army: [],
+    planned: new Array<number>(ENTITY_TYPE_COUNT).fill(0),
+    fightersPlanned: 0,
     commandPosts: [],
     barracks: [],
-    foundries: [],
-    foundriesPlanned: 0,
+    factories: [],
+    airports: [],
+    airportsPlanned: 0,
+    factoriesPlanned: 0,
     depots: [],
     turrets: [],
     sites: [],
@@ -269,9 +296,11 @@ function survey(world: World, player: PlayerId): Survey {
     homePatches: 0,
     livePatches: 0,
     enemyTargets: [],
+    visibleThreats: [],
     enemyRanged: 0,
     enemyMelee: 0,
     enemyAir: 0,
+    enemyArmored: 0,
     teamArmy: [],
     threatened: -1,
     minerals: world.player(player).minerals,
@@ -292,7 +321,7 @@ function survey(world: World, player: PlayerId): Survey {
     const owner = pool.owner[i]!;
 
     if (type === EntityType.MineralPatch) {
-      if (pool.resourceAmount[i]! > 0) allPatches.push(i);
+      if (inAlliedSight(world, player, i) && pool.resourceAmount[i]! > 0) allPatches.push(i);
       continue;
     }
     if (owner === NEUTRAL) continue;
@@ -301,14 +330,17 @@ function survey(world: World, player: PlayerId): Survey {
     const isArmy = isArmyUnit(def);
 
     if (!world.areAllied(owner, player)) {
+      if (!inAlliedSight(world, player, i)) continue;
+      if (def.damage > 0) s.visibleThreats.push(i);
       // Prefer structures as attack targets; killing buildings is what wins.
       if (def.isBuilding) s.enemyTargets.push(i);
       else {
         hostileUnits.push(i);
         // By shape, not by name. A roster that grows would otherwise leave the
-        // bot scouting a dozen units it counted as nothing at all — and the
-        // only thing it does with these numbers is ask whether what it is
-        // looking at can be answered from the ground.
+        // bot scouting a dozen units it counted as nothing at all. Counters
+        // respond to visible roles, not to the names of individual robots.
+        if (!isArmy) continue;
+        if (def.armor > 0) s.enemyArmored++;
         if (def.flying) s.enemyAir++;
         else if (def.attackRange > MELEE_RANGE) s.enemyRanged++;
         else if (def.damage > 0) s.enemyMelee++;
@@ -320,6 +352,14 @@ function survey(world: World, player: PlayerId): Survey {
     // team's, but nothing else of theirs is ours to command.
     if (isArmy) s.teamArmy.push(i);
     if (owner !== player) continue;
+
+    s.planned[type]!++;
+    if (isArmy && def.damage > 0) s.fightersPlanned++;
+    for (let q = 0; q < pool.prodCount[i]!; q++) {
+      const queued = pool.prodAt(i, q);
+      s.planned[queued]!++;
+      if (isArmyUnit(defOf(queued)) && defOf(queued).damage > 0) s.fightersPlanned++;
+    }
 
     const complete = pool.buildState[i] === BuildState.Complete;
     if (def.isBuilding) ownBuildings.push(i);
@@ -342,9 +382,14 @@ function survey(world: World, player: PlayerId): Survey {
         if (complete) s.barracks.push(i);
         else s.sites.push(i);
         break;
-      case EntityType.Foundry:
-        s.foundriesPlanned++;
-        if (complete) s.foundries.push(i);
+      case EntityType.Factory:
+        s.factoriesPlanned++;
+        if (complete) s.factories.push(i);
+        else s.sites.push(i);
+        break;
+      case EntityType.Airport:
+        s.airportsPlanned++;
+        if (complete) s.airports.push(i);
         else s.sites.push(i);
         break;
       case EntityType.Depot:
@@ -376,6 +421,8 @@ function survey(world: World, player: PlayerId): Survey {
   s.army.sort(byCreation);
   s.commandPosts.sort(byCreation);
   s.barracks.sort(byCreation);
+  s.factories.sort(byCreation);
+  s.airports.sort(byCreation);
   s.depots.sort(byCreation);
   s.turrets.sort(byCreation);
   s.sites.sort(byCreation);
@@ -413,6 +460,42 @@ function survey(world: World, player: PlayerId): Survey {
 
   s.threatened = nearestThreat(world, hostileUnits, ownBuildings);
   return s;
+}
+
+/** Current sight only; hidden reinforcements must not change the next counter-unit. */
+function inAlliedSight(world: World, player: PlayerId, target: number): boolean {
+  return pointInAlliedSight(world, player, world.pool.posX[target]!, world.pool.posY[target]!);
+}
+
+/** Current visibility only, conservatively on both sides of an exact tile edge.
+ * This agrees with the human's floor-based tile visibility without granting
+ * the opposite seat extra information when the same point is rotated.
+ */
+function pointInAlliedSight(world: World, player: PlayerId, x: number, y: number): boolean {
+  const tx = toInt(x);
+  const ty = toInt(y);
+  const minX = x === fromInt(tx) ? tx - 1 : tx;
+  const minY = y === fromInt(ty) ? ty - 1 : ty;
+  for (let py = minY; py <= ty; py++) {
+    for (let px = minX; px <= tx; px++) {
+      if (!tileInAlliedSight(world, player, px, py)) return false;
+    }
+  }
+  return true;
+}
+
+function tileInAlliedSight(world: World, player: PlayerId, tx: number, ty: number): boolean {
+  const pool = world.pool;
+  const x = fromInt(tx) + FIX_HALF;
+  const y = fromInt(ty) + FIX_HALF;
+  for (let i = 0; i < pool.count; i++) {
+    if (pool.alive[i] !== 1 || !world.areAllied(pool.owner[i]!, player)) continue;
+    const sight = defOf(pool.type[i]! as EntityType).sightRange;
+    if (sight > 0 && vecLenSqRaw(pool.posX[i]! - x, pool.posY[i]! - y) <= sqRange(sight)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -515,12 +598,21 @@ function keepWorkersBusy(world: World, player: PlayerId, s: Survey, cmds: Comman
   const pool = world.pool;
 
   for (const w of s.idleWorkers) {
+    const id = pool.idAt(w);
+    if (
+      cmds.some(
+        (c) =>
+          (c.type === CommandType.Build && c.worker === id) ||
+          (c.type === CommandType.Move && c.units.includes(id)),
+      )
+    )
+      continue;
     const best = nearestOf(world, w, s.patches);
     if (best < 0) continue;
     cmds.push({
       type: CommandType.Harvest,
       player,
-      units: [pool.idAt(w)],
+      units: [id],
       target: pool.idAt(best),
     });
   }
@@ -535,16 +627,52 @@ function manageProduction(
   cmds: Command[],
 ): void {
   const pool = world.pool;
+  if (
+    s.commandPosts.length === 0 &&
+    s.workers.length > 0 &&
+    !s.sites.some((i) => pool.type[i] === EntityType.CommandPost) &&
+    s.minerals >= defOf(EntityType.CommandPost).mineralCost
+  )
+    return;
+  // Give the first upgrade a deliberate queue-draining window. Otherwise a
+  // two-deep producer never becomes idle and its second tier stays locked.
+  // Other producers keep the army moving while this one invests in technology.
+  const reserved = new Set<number>();
+  for (const [buildings, threshold] of [
+    [s.barracks, 6],
+    [s.factories, 10],
+  ] as const) {
+    if (s.fightersPlanned < threshold) continue;
+    const alreadyAdvanced = buildings.some(
+      (i) => pool.buildingLevel[i]! >= 2 || pool.upgrading[i] === 1,
+    );
+    if (alreadyAdvanced && s.minerals < DEEP_QUEUE_MINERALS) continue;
+    const candidate = buildings.find((i) => pool.buildingLevel[i] === 1 && pool.upgrading[i] === 0);
+    if (candidate === undefined) continue;
+    const upgrade = buildingUpgrade(pool.type[candidate]! as EntityType)!;
+    // Do not idle our only producer to save for technology we cannot afford.
+    if (s.minerals < upgrade.mineralCost) continue;
+    reserved.add(candidate);
+    if (pool.prodCount[candidate] === 0 && s.minerals >= upgrade.mineralCost) {
+      cmds.push({ type: CommandType.UpgradeBuilding, player, building: pool.idAt(candidate) });
+      s.minerals -= upgrade.mineralCost;
+    }
+  }
+
   const supplyFree = s.supplyMax - s.supplyUsed;
   if (supplyFree <= 0) return;
 
   // Worker target scales with how many bases there are to work: a second
   // Command Post with nobody mining at it is 400 minerals of decoration.
-  const wantWorkers = tuning.targetWorkers * Math.max(1, s.commandPosts.length);
-  if (s.workers.length < wantWorkers) {
+  const wantWorkers = Math.min(
+    tuning.targetWorkers * Math.max(1, s.commandPosts.length),
+    s.homePatches * 3,
+  );
+  if (s.planned[EntityType.Worker]! < wantWorkers) {
     // Every base trains, not just the first. One Command Post queueing all the
     // workers is what left an expansion's mineral line empty for minutes.
     for (const hq of s.commandPosts) {
+      if (s.planned[EntityType.Worker]! >= wantWorkers) break;
       if (pool.prodCount[hq]! >= 2) continue;
       if (s.minerals < defOf(EntityType.Worker).mineralCost) break;
       cmds.push({
@@ -554,88 +682,83 @@ function manageProduction(
         unit: EntityType.Worker,
       });
       s.minerals -= defOf(EntityType.Worker).mineralCost;
+      s.planned[EntityType.Worker]!++;
     }
   }
 
-  // Two deep normally, so the bank stays available for buildings and the mix
-  // can still react to what gets scouted; full depth once minerals are piling
-  // up faster than they can be spent.
+  // Two deep normally, so income remains available for buildings and new
+  // technology; fill light queues only when production cannot spend the bank.
   const depth = s.minerals >= DEEP_QUEUE_MINERALS ? MAX_PRODUCTION_QUEUE : 2;
-  for (let k = 0; k < s.barracks.length; k++) {
-    const b = s.barracks[k]!;
-    if (pool.prodCount[b]! >= depth) continue;
-    const unit = pickUnitToTrain(world, s, k);
-    const cost = defOf(unit).mineralCost;
-    if (s.minerals < cost) break;
-    cmds.push({ type: CommandType.Train, player, building: pool.idAt(b), unit });
-    s.minerals -= cost;
-  }
-
-  // Foundries last, and never deeper than two. A heavy is three supply and
-  // most of a minute, so a Foundry allowed to queue five of them would spend
-  // the bank the Barracks were about to turn into an army now.
-  for (let k = 0; k < s.foundries.length; k++) {
-    const f = s.foundries[k]!;
-    if (pool.prodCount[f]! >= 2) continue;
-    const unit = pickHeavyToTrain(world, s, k);
-    const cost = defOf(unit).mineralCost;
-    if (s.minerals < cost) break;
-    cmds.push({ type: CommandType.Train, player, building: pool.idAt(f), unit });
-    s.minerals -= cost;
+  for (const buildings of [s.barracks, s.factories, s.airports]) {
+    for (const building of buildings) {
+      if (reserved.has(building) || pool.upgrading[building] === 1) continue;
+      const type = pool.type[building]! as EntityType;
+      if (pool.prodCount[building]! >= (type === EntityType.Barracks ? depth : 2)) continue;
+      const available = productionOptions(type, pool.buildingLevel[building]!);
+      const unit = pickUnitToTrain(s, available);
+      if (unit === null) continue;
+      cmds.push({ type: CommandType.Train, player, building: pool.idAt(building), unit });
+      s.minerals -= defOf(unit).mineralCost;
+      s.planned[unit]!++;
+      if (defOf(unit).damage > 0) s.fightersPlanned++;
+    }
   }
 }
 
-/**
- * Choose the next unit: a rotating spread, skewed by the one matchup rule left.
+/** Choose the least represented affordable role, including units already in queues.
  *
- * There used to be a damage triangle to play against, and this read the enemy
- * composition to counter it. With damage now a single number per unit, that
- * reasoning would be picking units against a mechanic that no longer exists —
- * and would get it backwards, since it answered massed Burstbots with Slicebots.
- *
- * What survives is structural rather than numeric: a Slicebot cannot reach a
- * flyer at all. So a scouted air force forces something that can shoot back,
- * and otherwise the bot keeps a mix, which is what stops one lucky read
- * deciding a match.
- *
- * The rotation is phased by the barracks' place in the bot's own list — its
- * creation ordinal — not by its slot. Slots differ between a barracks and its
- * mirror image, so two mirrored bots were training different units at the
- * same moment, and with a bank too tight for every barracks to queue, a
- * different number of them.
+ * Tick-based rotations lock onto particular train durations and can omit whole
+ * roles forever. Comparing integer count/weight ratios makes the mix survive a
+ * timing change, and lets losses and scouting naturally shift the next choice.
  */
-function pickUnitToTrain(world: World, s: Survey, ordinal: number): EntityType {
-  const phase = (Math.floor(world.tick / THINK_INTERVAL) + ordinal) % 4;
-
-  // Enough air out there to matter: only build what can answer it.
-  if (s.enemyAir >= 2 && s.enemyAir * 2 >= s.enemyRanged + s.enemyMelee) {
-    return phase === 1 ? EntityType.Beamdrone : EntityType.Burstbot;
+function balancedUnit(
+  s: Survey,
+  roster: readonly (readonly [EntityType, number])[],
+): EntityType | null {
+  let best: EntityType | null = null;
+  let bestWeight = 1;
+  for (const [type, weight] of roster) {
+    if (defOf(type).mineralCost > s.minerals) continue;
+    if (best === null || (s.planned[type]! + 1) * bestWeight < (s.planned[best]! + 1) * weight) {
+      best = type;
+      bestWeight = weight;
+    }
   }
-
-  if (phase === 0) return EntityType.Slicebot;
-  if (phase === 1) return EntityType.Beamdrone;
-  return EntityType.Burstbot;
+  return best;
 }
 
-/**
- * The same rotation, over what a Foundry makes.
- *
- * Deliberately a short list rather than all six. The bot's one real idea is to
- * arrive early with more units than its opponent has, and the golems cost two
- * Barracks units each — buying them is buying a smaller army. What it takes
- * from the Foundry is the one thing the Barracks line cannot do at all: reach
- * past a Turret.
- */
-function pickHeavyToTrain(world: World, s: Survey, ordinal: number): EntityType {
-  const phase = (Math.floor(world.tick / THINK_INTERVAL) + ordinal) % 2;
+function pickUnitToTrain(s: Survey, available: readonly EntityType[]): EntityType | null {
+  // Repairers need both an existing fighting core and an upgraded Barracks.
+  if (
+    available.includes(EntityType.Fixomatic) &&
+    s.fightersPlanned >= 6 &&
+    s.planned[EntityType.Fixomatic]! < Math.max(1, Math.floor(s.fightersPlanned / 8)) &&
+    s.minerals >= defOf(EntityType.Fixomatic).mineralCost
+  )
+    return EntityType.Fixomatic;
 
-  if (s.enemyAir >= 2 && s.enemyAir * 2 >= s.enemyRanged + s.enemyMelee) {
-    // Coils and a long rail: the two Foundry units that can shoot upward.
-    return phase === 0 ? EntityType.Piercebot : EntityType.Arclight;
-  }
-
-  if (phase === 0) return EntityType.Sentry;
-  return EntityType.Piercebot;
+  const air = s.enemyAir >= 2 && s.enemyAir * 2 >= s.enemyRanged + s.enemyMelee;
+  const swarm = s.enemyMelee >= 3 && s.enemyMelee > s.enemyRanged;
+  const armor = s.enemyArmored >= 2;
+  const roster: readonly (readonly [EntityType, number])[] = [
+    [EntityType.Burstbot, air ? 6 : armor ? 2 : 4],
+    [EntityType.Slicebot, armor ? 3 : 2],
+    [EntityType.Firespout, swarm ? 3 : 1],
+    [EntityType.Arclight, air || swarm ? 3 : 2],
+    [EntityType.Boomwalker, swarm ? 3 : 1],
+    [EntityType.Sentry, 2],
+    [EntityType.Piercebot, air || armor ? 4 : 2],
+    [EntityType.DarkGolem, armor ? 2 : 1],
+    [EntityType.IceGolem, swarm ? 2 : 1],
+    [EntityType.Beamdrone, 3],
+    [EntityType.Plasmodrone, 1],
+  ];
+  // During an air threat, devote the available factory capacity to weapons
+  // that can actually hit it. No unavailable cross-building choices escape.
+  const options = roster.filter(
+    ([type]) => available.includes(type) && (!air || defOf(type).canHitAir),
+  );
+  return balancedUnit(s, options);
 }
 
 /**
@@ -655,23 +778,54 @@ function manageConstruction(
   cmds: Command[],
 ): void {
   const pool = world.pool;
-  if (s.commandPosts.length === 0) return;
+  if (staffOrphanedSites(world, player, s, cmds)) return;
 
-  staffOrphanedSites(world, player, s, cmds);
+  if (s.commandPosts.length === 0) {
+    if (s.sites.some((i) => pool.type[i] === EntityType.CommandPost)) return;
+    const def = defOf(EntityType.CommandPost);
+    if (s.minerals < def.mineralCost) return;
+    const builder = pickBuilder(world, s);
+    if (builder < 0) return;
+    const { canonical, flip } = mirroredHalf(player, world.map.starts.length);
+    const start = world.map.starts[canonical]!;
+    const half = def.footprint >> 1;
+    const x = flip
+      ? mirrorTile(world.map.width, start.tileX - half, def.footprint)
+      : start.tileX - half;
+    const y = flip
+      ? mirrorTile(world.map.height, start.tileY - half, def.footprint)
+      : start.tileY - half;
+    const spot =
+      world.map.canPlace(x, y, def.footprint) &&
+      safeConstruction(world, s.visibleThreats, x, y, def.footprint)
+        ? { x, y }
+        : findBuildSpot(world, x, y, def.footprint, def.footprint, flip, s.visibleThreats);
+    if (spot && footprintInSight(world, player, spot.x, spot.y, def.footprint)) {
+      cmds.push({
+        type: CommandType.Build,
+        player,
+        worker: pool.idAt(builder),
+        building: EntityType.CommandPost,
+        tileX: spot.x,
+        tileY: spot.y,
+      });
+    }
+    return;
+  }
 
   if (s.sites.length >= tuning.maxSites) return;
 
-  const builder = pickBuilder(world, s);
+  let builder = pickBuilder(world, s);
   if (builder < 0) return;
 
   const hq = s.commandPosts[0]!;
   const supplyFree = s.supplyMax - s.supplyUsed;
   // More production capacity means supply drains faster, so keep more headroom.
-  const buffer = SUPPLY_BUFFER + s.barracks.length * 4;
+  const buffer = SUPPLY_BUFFER + (s.barracks.length + s.factories.length + s.airports.length) * 4;
   // A home mineral line that is nearly out is its own reason to expand, whatever
   // the bank looks like: waiting for a threshold that income can no longer reach
   // is how a bot mines itself to a standstill on a full map.
-  const patchesRunningOut = s.homePatches <= 2 && s.livePatches > s.homePatches;
+  const patchesRunningOut = s.homePatches <= 2;
 
   let want: EntityType | null = null;
   if (s.supplyMax < SUPPLY_MAX && supplyFree < buffer) {
@@ -680,19 +834,20 @@ function manageConstruction(
     want = EntityType.Barracks;
   } else if (s.turrets.length < tuning.maxTurrets && s.minerals >= 300) {
     want = EntityType.Turret;
+  } else if (s.factoriesPlanned >= 1 && s.airportsPlanned === 0 && s.fightersPlanned >= 6) {
+    want = EntityType.Airport;
   } else if (
     s.barracks.length >= 2 &&
-    s.foundriesPlanned < tuning.maxFoundries &&
-    (s.foundriesPlanned === 0 || s.minerals >= DEEP_QUEUE_MINERALS)
+    s.factoriesPlanned < tuning.maxFactories &&
+    (s.factoriesPlanned === 0 || s.minerals >= DEEP_QUEUE_MINERALS)
   ) {
-    // Behind the first two Barracks on purpose. The tech is 200 minerals and
-    // 55 seconds that buy nothing on their own, so it is worth taking once the
-    // army that has to survive those 55 seconds already exists. The second one
-    // waits on a bank the Barracks cannot spend: a Foundry queues two units at
+    // Behind the first two Barracks on purpose. Tech buys no fighting units
+    // on its own, so the light army needs to exist while it builds. The second one
+    // waits on a bank the Barracks cannot spend: a Factory queues two units at
     // a time, so it is the outlet that absorbs a pile of minerals, and adding
     // one is worth more than a tenth Barracks queueing behind the same eight
     // patches.
-    want = EntityType.Foundry;
+    want = EntityType.Factory;
   } else if (
     (s.minerals >= tuning.expandAtMinerals || patchesRunningOut) &&
     expansionSite(world, player, s, tuning)
@@ -722,8 +877,37 @@ function manageConstruction(
       defOf(EntityType.CommandPost).footprint,
       def.footprint,
       world.flipOf(player),
+      s.visibleThreats,
     );
   if (!spot) return;
+
+  if (site) {
+    const x = fromInt(site.x) + fromFloat(def.footprint / 2);
+    const y = fromInt(site.y) + fromFloat(def.footprint / 2);
+    const scout = s.workers.find(
+      (i) => pool.order[i] === Order.Move && pool.orderX[i] === x && pool.orderY[i] === y,
+    );
+    if (scout !== undefined) {
+      if (!footprintInSight(world, player, site.x, site.y, def.footprint)) return;
+      builder = scout;
+    } else {
+      builder = pickBuilder(world, s, x, y);
+      if (builder < 0) return;
+    }
+  }
+
+  if (site && !footprintInSight(world, player, site.x, site.y, def.footprint)) {
+    // Public expansion coordinates are a scouting plan, not permission to
+    // inspect whatever hidden structure or resource amount happens to be there.
+    cmds.push({
+      type: CommandType.Move,
+      player,
+      units: [pool.idAt(builder)],
+      x: fromInt(site.x) + fromFloat(def.footprint / 2),
+      y: fromInt(site.y) + fromFloat(def.footprint / 2),
+    });
+    return;
+  }
 
   cmds.push({
     type: CommandType.Build,
@@ -778,7 +962,9 @@ function expansionSite(
     const y = mirrored.flip
       ? mirrorTile(map.height, canonical.tileY - half, def.footprint)
       : canonical.tileY - half;
-    if (!map.canPlace(x, y, def.footprint)) continue;
+    if (!safeConstruction(world, s.visibleThreats, x, y, def.footprint)) continue;
+    if (footprintInSight(world, player, x, y, def.footprint) && !map.canPlace(x, y, def.footprint))
+      continue;
 
     // Everything in world units from the centres of things, as the rest of
     // the simulation measures. Mixing a site's centre tile with a building's
@@ -791,6 +977,7 @@ function expansionSite(
     for (let i = 0; i < pool.count; i++) {
       if (pool.alive[i] !== 1) continue;
       if (pool.type[i] !== EntityType.CommandPost) continue;
+      if (!world.areAllied(pool.owner[i]!, player) && !inAlliedSight(world, player, i)) continue;
       if (vecLenSqRaw(pool.posX[i]! - siteX, pool.posY[i]! - siteY) < sqRange(CLAIMED_RANGE)) {
         contested = true;
         break;
@@ -802,11 +989,22 @@ function expansionSite(
     // base does not count against it — a site behind a partner is safer than
     // one behind us, not less safe.
     let enemyCloser = false;
-    for (let i = 0; i < pool.count; i++) {
-      if (pool.alive[i] !== 1) continue;
-      if (!world.isHostile(i, player)) continue;
-      if (!defOf(pool.type[i]! as EntityType).isBuilding) continue;
+    for (const i of s.enemyTargets) {
       if (vecLenSqRaw(pool.posX[i]! - siteX, pool.posY[i]! - siteY) < dHome) {
+        enemyCloser = true;
+        break;
+      }
+    }
+    if (enemyCloser) continue;
+
+    // Starting positions are public map geometry. An unseen opponent still
+    // owns its side of the map; scouting cannot justify a worker crossing it.
+    for (let enemy = 0; enemy < world.players.length; enemy++) {
+      if (world.areAllied(enemy, player)) continue;
+      const start = map.starts[enemy]!;
+      const ex = fromInt(start.tileX) + FIX_HALF;
+      const ey = fromInt(start.tileY) + FIX_HALF;
+      if (vecLenSqRaw(ex - siteX, ey - siteY) < dHome) {
         enemyCloser = true;
         break;
       }
@@ -826,8 +1024,8 @@ function expansionSite(
 }
 
 /** Send a worker to any construction site nobody is working on. */
-function staffOrphanedSites(world: World, player: PlayerId, s: Survey, cmds: Command[]): void {
-  if (s.sites.length === 0) return;
+function staffOrphanedSites(world: World, player: PlayerId, s: Survey, cmds: Command[]): boolean {
+  if (s.sites.length === 0) return false;
   const pool = world.pool;
 
   // Which sites already have someone assigned.
@@ -840,8 +1038,18 @@ function staffOrphanedSites(world: World, player: PlayerId, s: Survey, cmds: Com
 
   for (const site of s.sites) {
     if (staffed.has(site)) continue;
+    if (
+      !safeConstruction(
+        world,
+        s.visibleThreats,
+        pool.tileX[site]!,
+        pool.tileY[site]!,
+        defOf(pool.type[site]! as EntityType).footprint,
+      )
+    )
+      continue;
     const builder = pickBuilder(world, s);
-    if (builder < 0) return;
+    if (builder < 0) return false;
     cmds.push({
       type: CommandType.Build,
       player,
@@ -850,21 +1058,50 @@ function staffOrphanedSites(world: World, player: PlayerId, s: Survey, cmds: Com
       tileX: pool.tileX[site]!,
       tileY: pool.tileY[site]!,
     });
-    // Only one reassignment per think tick; the command may be rejected (the
-    // tile is already occupied by the site itself), in which case the direct
-    // repair below still applies.
-    return;
+    // Reserve this worker for the orphaned site. A new build in the same think
+    // would otherwise take the same worker and overwrite this assignment.
+    return true;
   }
+  return false;
+}
+
+function footprintInSight(
+  world: World,
+  player: PlayerId,
+  x: number,
+  y: number,
+  size: number,
+): boolean {
+  for (let dy = 0; dy < size; dy++) {
+    for (let dx = 0; dx < size; dx++) {
+      if (!tileInAlliedSight(world, player, x + dx, y + dy)) return false;
+    }
+  }
+  return true;
 }
 
 /**
  * Choose a worker to construct with.
  *
- * Prefers an idle one; otherwise takes the highest-index harvester so the same
- * worker is not repeatedly pulled off minerals. Never takes the last worker.
+ * With a destination, prefer the nearest available worker. Otherwise prefer an
+ * idle worker, then the newest harvester. Preserve the last miner unless the
+ * Command Post itself needs rebuilding.
  */
-function pickBuilder(world: World, s: Survey): number {
-  if (s.workers.length <= 1) return -1;
+function pickBuilder(world: World, s: Survey, x?: number, y?: number): number {
+  if (s.workers.length <= (s.commandPosts.length > 0 ? 1 : 0)) return -1;
+  if (x !== undefined && y !== undefined) {
+    let best = -1;
+    let bestDistance = Infinity;
+    for (const i of s.workers) {
+      if (world.pool.order[i] !== Order.None && world.pool.order[i] !== Order.Harvest) continue;
+      const distance = vecLenSqRaw(world.pool.posX[i]! - x, world.pool.posY[i]! - y);
+      if (distance < bestDistance) {
+        best = i;
+        bestDistance = distance;
+      }
+    }
+    return best;
+  }
   if (s.idleWorkers.length > 0) return s.idleWorkers[0]!;
   for (let k = s.workers.length - 1; k >= 0; k--) {
     const w = s.workers[k]!;
@@ -904,6 +1141,7 @@ function findBuildSpot(
   originFootprint: number,
   footprint: number,
   flip: boolean,
+  visibleThreats: readonly number[],
 ): { x: number; y: number } | null {
   for (let ring = 4; ring <= 26; ring += 2) {
     for (let step = 0; step < ring * 8; step += 3) {
@@ -931,6 +1169,7 @@ function findBuildSpot(
       }
       const x = originX + (flip ? originFootprint - footprint - dx : dx);
       const y = originY + (flip ? originFootprint - footprint - dy : dy);
+      if (!safeConstruction(world, visibleThreats, x, y, footprint)) continue;
       if (!world.map.canPlace(x, y, footprint)) continue;
       if (!hasClearMoat(world, x, y, footprint)) continue;
       // The moat alone is not enough: enough moated buildings still ring the
@@ -941,6 +1180,31 @@ function findBuildSpot(
     }
   }
   return null;
+}
+
+/** A foundation must not be placed directly under a weapon we can already see.
+ * Measure to the whole footprint, so a large structure's exposed edge counts.
+ * The survey supplies observed enemies only; hidden positions never veto a spot.
+ */
+function safeConstruction(
+  world: World,
+  threats: readonly number[],
+  tileX: number,
+  tileY: number,
+  footprint: number,
+): boolean {
+  const pool = world.pool;
+  const left = fromInt(tileX),
+    right = fromInt(tileX + footprint);
+  const top = fromInt(tileY),
+    bottom = fromInt(tileY + footprint);
+  for (const i of threats) {
+    const def = defOf(pool.type[i]! as EntityType);
+    const dx = Math.max(left - pool.posX[i]!, 0, pool.posX[i]! - right);
+    const dy = Math.max(top - pool.posY[i]!, 0, pool.posY[i]! - bottom);
+    if (vecLenSqRaw(dx, dy) <= sqRange(def.attackRange + def.radius)) return false;
+  }
+  return true;
 }
 
 /**
@@ -1074,21 +1338,14 @@ function manageArmy(
   // costs a building.
   if (tuning.defendsHome && s.threatened >= 0 && s.army.length > 0) {
     if (beat % 2 !== 0) return;
-    cmds.push({
-      type: CommandType.AttackMove,
-      player,
-      units: s.army.map((i) => pool.idAt(i)),
-      x: pool.posX[s.threatened]!,
-      y: pool.posY[s.threatened]!,
-    });
+    orderArmy(world, player, s.army, pool.posX[s.threatened]!, pool.posY[s.threatened]!, cmds);
     return;
   }
 
   // --- attack -------------------------------------------------------------
-  if (s.enemyTargets.length === 0) return;
 
-  // Normally wait for a critical mass before committing. But once the map is
-  // mined out and there are no minerals banked, that army is never getting any
+  // Normally wait for a critical mass before committing. But without observed
+  // resources or minerals banked, there is no known way to make that army any
   // bigger, and holding out for a threshold it can no longer reach turns a won
   // position into a permanent draw — observed with a crippled opponent still
   // standing because the winner was one unit short of attacking. With no way to
@@ -1114,7 +1371,8 @@ function manageArmy(
   // in its dead base forever, which is the exact draw by inaction the paragraph
   // above exists to prevent.
   const marching = attackers === s.army;
-  const committed = tuning.coordinates && marching ? s.teamArmy.length : attackers.length;
+  const force = tuning.coordinates && marching ? s.teamArmy : attackers;
+  const committed = force.filter((i) => defOf(pool.type[i]! as EntityType).damage > 0).length;
   if (committed < required) return;
 
   // Re-issue occasionally rather than every think tick, so units get a chance
@@ -1126,15 +1384,81 @@ function manageArmy(
   if (beat % 6 !== 0) return;
 
   const target = pickAttackTarget(world, s, tuning, player);
-  if (target < 0) return;
+  if (target >= 0) {
+    orderArmy(world, player, attackers, pool.posX[target]!, pool.posY[target]!, cmds);
+    return;
+  }
+  const scout = scoutingPoint(world, player, s);
+  if (scout) orderArmy(world, player, attackers, scout.x, scout.y, cmds);
+}
 
-  cmds.push({
-    type: CommandType.AttackMove,
-    player,
-    units: attackers.map((i) => pool.idAt(i)),
-    x: pool.posX[target]!,
-    y: pool.posY[target]!,
-  });
+/** Reinforce and retarget without repeatedly resetting the same march or wind-up. */
+function orderArmy(
+  world: World,
+  player: PlayerId,
+  army: readonly number[],
+  x: number,
+  y: number,
+  cmds: Command[],
+): void {
+  const pool = world.pool;
+  const units = army
+    .filter((i) => {
+      if (pool.attackWindup[i]! > 0) return false;
+      return (
+        pool.order[i] !== Order.AttackMove ||
+        vecLenSqRaw(pool.orderX[i]! - x, pool.orderY[i]! - y) > sqRange(fromInt(8))
+      );
+    })
+    .map((i) => pool.idAt(i));
+  if (units.length > 0) cmds.push({ type: CommandType.AttackMove, player, units, x, y });
+}
+
+/** Search public start/expansion positions; never inspect an unseen enemy entity.
+ * An existing scout march is allowed to reach sight of its objective before
+ * the search schedule advances, so a long cross-map route is not cancelled.
+ */
+function scoutingPoint(world: World, player: PlayerId, s: Survey): { x: number; y: number } | null {
+  const { pool, map } = world;
+  const points: { x: number; y: number }[] = [];
+  for (let p = 0; p < world.players.length; p++) {
+    if (world.areAllied(p, player)) continue;
+    const start = map.starts[p]!;
+    points.push({ x: fromInt(start.tileX) + FIX_HALF, y: fromInt(start.tileY) + FIX_HALF });
+  }
+  // Keep the search order in the requesting player's frame on either seat.
+  const flip = world.flipOf(player);
+  points.sort(
+    (a, b) =>
+      map.tileOfPosFor(a.x, a.y, flip) * (flip ? -1 : 1) -
+      map.tileOfPosFor(b.x, b.y, flip) * (flip ? -1 : 1),
+  );
+  const expansions = map.expansions.map((site) => ({
+    x: fromInt(site.tileX) + FIX_HALF,
+    y: fromInt(site.tileY) + FIX_HALF,
+  }));
+  expansions.sort(
+    (a, b) =>
+      map.tileOfPosFor(a.x, a.y, flip) * (flip ? -1 : 1) -
+      map.tileOfPosFor(b.x, b.y, flip) * (flip ? -1 : 1),
+  );
+  points.push(...expansions);
+  for (const i of s.teamArmy) {
+    if (pool.order[i] !== Order.AttackMove) continue;
+    for (const point of points) {
+      if (
+        vecLenSqRaw(pool.orderX[i]! - point.x, pool.orderY[i]! - point.y) <= sqRange(fromInt(8)) &&
+        !pointInAlliedSight(world, player, point.x, point.y)
+      )
+        return point;
+    }
+  }
+  const phase = Math.floor(Math.max(0, world.tick - 3600) / 900) % points.length;
+  for (let k = 0; k < points.length; k++) {
+    const point = points[(phase + k) % points.length]!;
+    if (!pointInAlliedSight(world, player, point.x, point.y)) return point;
+  }
+  return null;
 }
 
 /**

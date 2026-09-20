@@ -95,6 +95,14 @@ class Roles:
             else:
                 by_member.setdefault(a.member.name, []).append(r)
         self.learner = np.asarray(learner, dtype=np.int64)
+        # Teammates receive the same terminal result. Count a Quarters match
+        # once, just like a Lanes match, when updating league statistics.
+        seen: set[tuple[int, int]] = set()
+        self.matches: list[int] = []
+        for r in learner:
+            if self.row_key[r] not in seen:
+                seen.add(self.row_key[r])
+                self.matches.append(r)
         self.snapshots = {name: np.asarray(rows, dtype=np.int64) for name, rows in by_member.items()}
         self.assignments = assignments
 
@@ -106,6 +114,7 @@ class Rollout:
         self.steps, self.rows = steps, rows
         self.obs: dict[str, np.ndarray] | None = None
         self.actions = np.zeros((steps * rows, SPEC.action_ints), dtype=np.int32)
+        self.selection_scores = np.zeros((steps * rows, SPEC.n_ent), dtype=np.float32)
         self.logp = np.zeros((steps, rows), dtype=np.float32)
         self.value = np.zeros((steps, rows), dtype=np.float32)
         self.reward = np.zeros((steps, rows), dtype=np.float32)
@@ -377,8 +386,8 @@ def main(argv: list[str] | None = None) -> int:
                 with torch.no_grad():
                     noise = gumbel_noise(len(roles.learner), generator).to(device)
                     temperature = torch.full((len(roles.learner),), args.temperature, device=device)
-                    actions = policy.act(obs, noise, temperature)
-                    out = policy.evaluate(obs, actions)
+                    actions, selection_scores = policy.sample(obs, noise, temperature)
+                    out = policy.evaluate(obs, actions, args.temperature, selection_scores)
                 full = np.full((len(batch), SPEC.action_ints), -1, dtype=np.int32)
                 full[:, 0] = NOOP
                 full[roles.learner] = actions.to(torch.int32).cpu().numpy()
@@ -386,13 +395,14 @@ def main(argv: list[str] | None = None) -> int:
                     full[rows] = decide(opponents[name], batch.arrays, rows, device, args.temperature, generator)
                 rollout.store_obs(t, batch.arrays, roles.learner)
                 rollout.actions[t * rollout.rows : (t + 1) * rollout.rows] = full[roles.learner]
+                rollout.selection_scores[t * rollout.rows : (t + 1) * rollout.rows] = selection_scores.cpu().numpy()
                 rollout.logp[t] = out["logp"].cpu().numpy()
                 rollout.value[t] = out["value"].cpu().numpy()
 
                 batch = env.step(full)
                 rollout.reward[t] = batch.reward[roles.learner]
                 rollout.done[t] = batch.done[roles.learner]
-                for r in roles.learner:
+                for r in roles.matches:
                     if batch.done[r]:
                         p, e = roles.row_key[r]
                         a = assignments[p][e]
@@ -467,7 +477,8 @@ def main(argv: list[str] | None = None) -> int:
                     idx = order[start : start + args.minibatch]
                     obs = to_torch(rollout.obs, device, idx)
                     actions = torch.from_numpy(rollout.actions[idx].astype(np.int64)).to(device)
-                    out = policy.evaluate(obs, actions)
+                    selection_scores = torch.from_numpy(rollout.selection_scores[idx]).to(device)
+                    out = policy.evaluate(obs, actions, args.temperature, selection_scores)
                     logp = out["logp"]
                     lp_old = torch.from_numpy(old_logp[idx]).to(device)
                     a = torch.from_numpy(adv[idx]).to(device)
@@ -487,7 +498,7 @@ def main(argv: list[str] | None = None) -> int:
                     kl = torch.zeros((), device=device)
                     if reference is not None and not warming:
                         with torch.no_grad():
-                            lp_ref = reference.evaluate(obs, actions)["logp"]
+                            lp_ref = reference.evaluate(obs, actions, args.temperature, selection_scores)["logp"]
                         # A Huber penalty on the log-ratio, not the k3 KL estimator.
                         # k3's gradient is exp(r) - 1, and `logp` here is a joint
                         # log-probability summed over six heads and up to N_ENT

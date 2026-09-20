@@ -48,12 +48,14 @@ export async function toggleFullscreen(
   const doc = document as WebkitDocument;
   try {
     if (isFullscreen()) {
-      await (doc.exitFullscreen?.() ?? doc.webkitExitFullscreen?.());
-      return false;
+      const exit = doc.exitFullscreen ?? doc.webkitExitFullscreen;
+      await exit?.call(doc);
+      return isFullscreen();
     }
     const el = target as WebkitElement;
-    await (el.requestFullscreen?.() ?? el.webkitRequestFullscreen?.());
-    return true;
+    const request = el.requestFullscreen ?? el.webkitRequestFullscreen;
+    await request?.call(el);
+    return isFullscreen();
   } catch {
     // Denied by the browser (no gesture, or a permissions policy). Report the
     // real state rather than pretending the toggle worked.

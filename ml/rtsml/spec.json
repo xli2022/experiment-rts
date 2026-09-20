@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "decisionTicks": 4,
   "unitMemoryTicks": 300,
   "entities": {
@@ -16,7 +16,7 @@
       "type:Beamdrone",
       "type:Boomwalker",
       "type:Fixomatic",
-      "type:Foundry",
+      "type:Factory",
       "type:Firespout",
       "type:Arclight",
       "type:Piercebot",
@@ -24,6 +24,7 @@
       "type:DarkGolem",
       "type:IceGolem",
       "type:Plasmodrone",
+      "type:Airport",
       "rel:own",
       "rel:ally",
       "rel:enemy",
@@ -51,6 +52,9 @@
       "rallyDx",
       "rallyDy",
       "cooldown",
+      "buildingLevel",
+      "upgrading",
+      "upgradeProgress",
       "visibleNow",
       "memoryAge",
       "resourceAmount",
@@ -101,7 +105,7 @@
     "own:Beamdrone",
     "own:Boomwalker",
     "own:Fixomatic",
-    "own:Foundry",
+    "own:Factory",
     "own:Firespout",
     "own:Arclight",
     "own:Piercebot",
@@ -109,6 +113,7 @@
     "own:DarkGolem",
     "own:IceGolem",
     "own:Plasmodrone",
+    "own:Airport",
     "enemy:Worker",
     "enemy:Burstbot",
     "enemy:Slicebot",
@@ -120,7 +125,7 @@
     "enemy:Beamdrone",
     "enemy:Boomwalker",
     "enemy:Fixomatic",
-    "enemy:Foundry",
+    "enemy:Factory",
     "enemy:Firespout",
     "enemy:Arclight",
     "enemy:Piercebot",
@@ -128,6 +133,7 @@
     "enemy:DarkGolem",
     "enemy:IceGolem",
     "enemy:Plasmodrone",
+    "enemy:Airport",
     "prev:Noop",
     "prev:Move",
     "prev:AttackMove",
@@ -139,6 +145,8 @@
     "prev:Train",
     "prev:CancelTrain",
     "prev:SetRally",
+    "prev:UpgradeBuilding",
+    "prev:CancelUpgrade",
     "decisionsSinceNonNoop",
     "recentCommands"
   ],
@@ -171,10 +179,12 @@
       "Hold",
       "Train",
       "CancelTrain",
-      "SetRally"
+      "SetRally",
+      "UpgradeBuilding",
+      "CancelUpgrade"
     ],
     "selectionMax": 24,
-    "entityTypes": 19,
+    "entityTypes": 20,
     "sub": 16,
     "ints": 29,
     "heads": [
@@ -188,37 +198,37 @@
   },
   "masks": {
     "type": [
-      11
+      13
     ],
     "selection": [
-      11,
+      13,
       160
     ],
     "target": [
-      11,
+      13,
       160
     ],
     "cell": [
-      11,
+      13,
       1600
     ],
     "buildCell": [
-      19,
+      20,
       1600
     ],
     "rowEntityType": [
       160,
-      19
+      20
     ],
     "buildType": [
-      19
+      20
     ]
   },
   "noise": {
     "segments": [
       {
         "name": "type",
-        "size": 11,
+        "size": 13,
         "distribution": "gumbel"
       },
       {
@@ -228,7 +238,7 @@
       },
       {
         "name": "entityType",
-        "size": 19,
+        "size": 20,
         "distribution": "gumbel"
       },
       {
@@ -247,6 +257,6 @@
         "distribution": "gumbel"
       }
     ],
-    "length": 2126
+    "length": 2129
   }
 }

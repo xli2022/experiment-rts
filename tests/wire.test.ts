@@ -23,6 +23,7 @@
 import { describe, expect, it } from 'vitest';
 import { CommandType, type Command } from '../src/sim/commands.js';
 import { fromInt } from '../src/sim/fixed.js';
+import { ENTITY_CAPACITY } from '../src/sim/entities.js';
 import { Simulation } from '../src/sim/tick.js';
 import { CHECKSUM_INTERVAL, MS_PER_TICK, type PlayerId } from '../src/sim/types.js';
 import { LocalNetwork } from '../src/net/localTransport.js';
@@ -33,8 +34,10 @@ import {
   MAX_HOSTED_PER_PEER,
 } from '../src/net/lockstep.js';
 import { MAX_SELECTION } from '../src/input/selection.js';
+import { SUPPLY_MAX } from '../src/config/rules.js';
+import { chunkCommands } from '../src/ai/agent.js';
 import { TRANSPORT_CHUNK_BYTES } from '../src/net/trysteroTransport.js';
-import type { Packet, Transport } from '../src/net/transport.js';
+import { isPacket, type Packet, type Transport } from '../src/net/transport.js';
 import { MAX_COMMAND_UNITS } from '../src/sim/commands.js';
 import { coopMatch, duelMatch, hostedBy } from '../src/sim/match.js';
 import { BotKind } from '../src/sim/types.js';
@@ -51,6 +54,70 @@ const LATE_EVERY = 4;
  * see the note on `out-of-order delivery` below for what was measured.
  */
 const DISPLACE_BY = 4;
+
+describe('wire payload validation', () => {
+  it('accepts bounded formation offsets and refuses malformed or overflowing slots', () => {
+    for (const type of [CommandType.Move, CommandType.AttackMove]) {
+      const accepts = (formationOffset: unknown, count = 2): boolean =>
+        isPacket({
+          player: 1,
+          turns: [
+            {
+              turn: 2,
+              player: 1,
+              commands: [
+                { type, player: 1, units: Array(count).fill(123), x: 10, y: 20, formationOffset },
+              ],
+            },
+          ],
+        });
+      for (const offset of [undefined, 0, 24, ENTITY_CAPACITY - 2]) {
+        expect(accepts(offset)).toBe(true);
+      }
+      for (const offset of [null, '24', -1, 0.5, NaN, Infinity, ENTITY_CAPACITY - 1, 2 ** 32]) {
+        expect(accepts(offset)).toBe(false);
+      }
+      expect(accepts(ENTITY_CAPACITY, 0)).toBe(false);
+    }
+  });
+
+  it('refuses malformed JSON before it reaches the scheduler or simulation', () => {
+    for (const value of [
+      null,
+      {},
+      { player: 1, turns: null },
+      { player: 1, turns: [null] },
+      { player: 1, turns: [{ turn: 2, player: 1, commands: [null] }] },
+      { player: 1, turns: [{ turn: 2, player: 1, commands: [{ type: CommandType.Move }] }] },
+      {
+        player: 1,
+        turns: [
+          {
+            turn: 2,
+            player: 1,
+            commands: [{ type: CommandType.Build, worker: 123, building: 999, tileX: 3, tileY: 4 }],
+          },
+        ],
+      },
+      { player: 1, turns: [], checksum: null },
+    ])
+      expect(isPacket(value)).toBe(false);
+    expect(
+      isPacket({
+        player: 1,
+        turns: [
+          {
+            turn: 2,
+            player: 1,
+            commands: [{ type: CommandType.Move, player: 1, units: [123], x: 10, y: 20 }],
+          },
+        ],
+        checksum: { tick: 20, value: 0xffffffff },
+        peerHeadroom: -1,
+      }),
+    ).toBe(true);
+  });
+});
 
 /**
  * Delivers most packets immediately and a few of them late.
@@ -260,12 +327,19 @@ describe('packets fit in one chunk', () => {
     return new TextEncoder().encode(JSON.stringify(packet)).byteLength;
   }
 
-  /** The largest command the UI can produce: a full selection, ordered to move. */
+  /** One largest wire command after a full army order has been chunked. */
   function fullSelectionMove(): Command {
     const units: number[] = [];
     // Worst case ids: high slot, high generation, so every one serialises long.
-    for (let i = 0; i < MAX_SELECTION; i++) units.push((((2047 - i) << 16) | 0xffff) >>> 0);
-    return { type: CommandType.Move, player: 1, units, x: -2147483648, y: -2147483648 };
+    for (let i = 0; i < MAX_COMMAND_UNITS; i++) units.push((((2047 - i) << 16) | 0xffff) >>> 0);
+    return {
+      type: CommandType.Move,
+      player: 1,
+      units,
+      x: -2147483648,
+      y: -2147483648,
+      formationOffset: ENTITY_CAPACITY - MAX_COMMAND_UNITS,
+    };
   }
 
   /**
@@ -293,16 +367,79 @@ describe('packets fit in one chunk', () => {
     return { player: 1, turns, checksum: { tick: 999999, value: 0xffffffff } };
   }
 
-  it('fits a hard burst of full-selection orders with room to spare', () => {
-    // Four commands per 100ms turn is already beyond human clicking. If this
-    // ever fails, unordered delivery is no longer safe — a packet split across
-    // chunks is reassembled by arrival order and would be scrambled.
+  it('keeps stall-recovery history inside the same packet limit', () => {
+    const net = new LocalNetwork(2);
+    const config = coopMatch(SEED);
+    const packets: Packet[] = [];
+    const submit = net.submit.bind(net);
+    net.submit = (from, packet) => {
+      packets.push(packet);
+      submit(from, packet);
+    };
+    const runners = [0, 1].map(
+      (player) =>
+        new LockstepRunner(
+          new Simulation(config),
+          net.createTransport(player),
+          {},
+          () => net.nowMs,
+        ),
+    );
+    for (let frame = 0; frame < 80; frame++) {
+      if (frame % 2 === 0) {
+        for (let command = 0; command < 4; command++) {
+          runners[0]!.issue(fullSelectionMove());
+          runners[0]!.issue(fullSelectionMove(), 2);
+        }
+      }
+      for (const runner of runners) runner.update(MS_PER_TICK);
+      net.advance(MS_PER_TICK);
+    }
+    packets.length = 0;
+    // Both peers lose all new traffic, forcing the full retained history out.
+    net.dropRate = 1;
+    for (let frame = 0; frame < 15; frame++) {
+      for (const runner of runners) runner.update(MS_PER_TICK);
+      net.advance(MS_PER_TICK);
+    }
+    expect(runners[0]!.state).toBe('stalled');
+    expect(packets.some((packet) => packet.turns.some((turn) => turn.commands.length > 0))).toBe(
+      true,
+    );
+    expect(Math.max(...packets.map(wireBytes))).toBeLessThanOrEqual(TRANSPORT_CHUNK_BYTES);
+  });
+
+  it('drains a backlog of human clicks without dropping commands or overflowing packets', () => {
+    const net = new LocalNetwork(2);
+    const scheduled = new Map<number, Command[]>();
+    let largest = 0;
+    const submit = net.submit.bind(net);
+    net.submit = (from, packet) => {
+      largest = Math.max(largest, wireBytes(packet));
+      if (from === 0) {
+        for (const turn of packet.turns) scheduled.set(turn.turn, turn.commands);
+      }
+      submit(from, packet);
+    };
+    const peers = makeMatch(net, (transport) => transport);
+    for (let click = 0; click < 100; click++) {
+      expect(peers[0]!.runner.issue(fullSelectionMove())).toBe(true);
+    }
+    run(net, peers, 120);
+    expect([...scheduled.values()].reduce((sum, commands) => sum + commands.length, 0)).toBe(100);
+    expect(largest).toBeLessThanOrEqual(TRANSPORT_CHUNK_BYTES);
+    expect(commonChecksum(peers)[0]).toBe(commonChecksum(peers)[1]);
+  });
+
+  it('fits a paced burst of maximum-size commands with room to spare', () => {
+    // Whole-army orders can fill the runner's four-command human budget. If
+    // this fails, a packet can cross chunks and get scrambled by reordering.
     const bytes = wireBytes(worstPacket(4));
     expect(
       `${bytes} bytes vs ${TRANSPORT_CHUNK_BYTES} limit: ${bytes < TRANSPORT_CHUNK_BYTES}`,
     ).toBe(`${bytes} bytes vs ${TRANSPORT_CHUNK_BYTES} limit: true`);
-    // And not merely fitting: an order of magnitude of headroom.
-    expect(bytes * 4).toBeLessThan(TRANSPORT_CHUNK_BYTES);
+    // Even with formation metadata, a full burst uses less than a third of a chunk.
+    expect(bytes * 3).toBeLessThan(TRANSPORT_CHUNK_BYTES);
   });
 
   it('fits that burst plus a hosted bot at its full budget, with headroom', () => {
@@ -310,7 +447,7 @@ describe('packets fit in one chunk', () => {
     // with the human's. The runner caps a hosted slot at
     // HOSTED_COMMANDS_PER_TURN commands of MAX_COMMAND_UNITS units; here every
     // one of them is worst-case, in every repeated turn, on top of the human's
-    // own beyond-human burst.
+    // full per-turn budget.
     const bytes = wireBytes(worstPacket(4, HOSTED_COMMANDS_PER_TURN, MAX_HOSTED_PER_PEER));
     expect(
       `${bytes} bytes vs ${TRANSPORT_CHUNK_BYTES} limit: ${bytes < TRANSPORT_CHUNK_BYTES}`,
@@ -320,19 +457,23 @@ describe('packets fit in one chunk', () => {
 
   it('reports the burst size that would actually overflow', () => {
     // Documents the real ceiling rather than asserting a number nobody checked.
-    // Human input cannot approach it; the guard is against a future change to
-    // MAX_SELECTION, the packet shape, or how many turns each packet repeats.
+    // The runner paces human input below this ceiling; the guard is against a
+    // change to the command cap, packet shape, or repeated-turn count.
     let perTurn = 1;
     while (wireBytes(worstPacket(perTurn)) <= TRANSPORT_CHUNK_BYTES) perTurn++;
     expect(perTurn).toBeGreaterThan(16);
   });
 
   it('is bounded by the caps its two producers enforce', () => {
-    // Wire commands come from two places: local human input, bounded by the
-    // selection cap, and the bots this peer hosts, bounded by the runner's
-    // per-turn budget and the unit cap. The two unit caps are one number.
-    expect(MAX_SELECTION).toBe(MAX_COMMAND_UNITS);
-    expect(MAX_SELECTION).toBeLessThanOrEqual(64);
+    // The presentation can select a whole army. Both humans and bots chunk it
+    // into bounded commands before the runner paces those commands onto the wire.
+    expect(MAX_SELECTION).toBe(SUPPLY_MAX);
+    const units = Array.from({ length: MAX_SELECTION }, (_, i) => i + 1);
+    const chunks = chunkCommands([{ type: CommandType.Move, player: 0, units, x: 0, y: 0 }]);
+    expect(chunks.flatMap((command) => ('units' in command ? command.units : []))).toEqual(units);
+    for (const command of chunks) {
+      expect('units' in command && command.units.length <= MAX_COMMAND_UNITS).toBe(true);
+    }
 
     // And no roster the lobby can put on a two-peer wire hosts more bots on one
     // peer than the worst packet above was sized for — which the runner now

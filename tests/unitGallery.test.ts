@@ -1,15 +1,19 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import { loadAnimatedModel, type AnimatedModel } from '../src/render/models/animated.js';
 import {
   galleryAnimationAt,
   galleryTapAt,
+  GALLERY_TEAM_COLOURS,
+  parseUnitCatalog,
   previewGroundOffset,
   proportionalPreviewScale,
+  UnitGallery,
   type GalleryTapClip,
 } from '../src/render/unitGallery.js';
 
@@ -50,6 +54,189 @@ interface CatalogEntry {
 interface Catalog {
   models: CatalogEntry[];
 }
+
+afterEach(() => vi.restoreAllMocks());
+
+describe('unit gallery team colours', () => {
+  it('offers all four team colours for all 54 catalog models in palette order', async () => {
+    const catalog = JSON.parse(await readFile(join(MODEL_ROOT, 'all-units.json'), 'utf8'));
+    const models = parseUnitCatalog(catalog);
+    expect(GALLERY_TEAM_COLOURS).toEqual(['Blue', 'Teal', 'Red', 'Orange']);
+    expect(models).toHaveLength(54);
+    for (const model of models) {
+      expect(model.skins).toEqual(
+        GALLERY_TEAM_COLOURS.map(
+          (colour) => `${model.file.slice(0, -4)}-${colour.toLowerCase()}.ktx2`,
+        ),
+      );
+    }
+    const malformed = structuredClone(catalog);
+    malformed.models[0].skins = [models[0]!.skins[0], models[0]!.skins[2]];
+    expect(() => parseUnitCatalog(malformed)).toThrow('malformed');
+    malformed.models[0].skins = [...models[0]!.skins].reverse();
+    expect(() => parseUnitCatalog(malformed)).toThrow('malformed');
+  });
+
+  interface SkinPreview {
+    texture: THREE.Texture | null;
+    material: THREE.MeshLambertMaterial;
+    skins: [string, string, string, string];
+  }
+
+  interface SkinController {
+    session: { cancelled: boolean; completed: number; failed: number; total: number };
+    status: { textContent: string };
+    previews: Map<number, SkinPreview>;
+    selectColour(skin: number): Promise<void>;
+    updateProgress(session: SkinController['session']): void;
+    acquireSkinLoader(): KTX2Loader;
+    releaseSkinLoader(): void;
+  }
+
+  function skinController() {
+    const gallery = new UnitGallery(
+      {} as HTMLElement,
+      {} as THREE.WebGLRenderer,
+    ) as unknown as SkinController;
+    const texture = new THREE.CompressedTexture([], 4, 4);
+    const material = new THREE.MeshLambertMaterial({ map: texture });
+    const preview: SkinPreview = {
+      texture,
+      material,
+      skins: ['unit-blue.ktx2', 'unit-teal.ktx2', 'unit-red.ktx2', 'unit-orange.ktx2'],
+    };
+    gallery.previews.set(0, preview);
+    gallery.session = { cancelled: false, completed: 1, failed: 0, total: 1 };
+    gallery.status = { textContent: '' };
+    vi.spyOn(KTX2Loader.prototype, 'detectSupport').mockImplementation(function (this: KTX2Loader) {
+      return this;
+    });
+    return { gallery, preview, texture };
+  }
+
+  it('keeps the newest selected skin when earlier texture loads finish later', async () => {
+    const { gallery, preview, texture } = skinController();
+    const oldDispose = vi.spyOn(texture, 'dispose');
+    const loaderDispose = vi.spyOn(KTX2Loader.prototype, 'dispose');
+    const requests = new Map<string, (texture: THREE.CompressedTexture) => void>();
+    vi.spyOn(KTX2Loader.prototype, 'loadAsync').mockImplementation(
+      (url) => new Promise((resolve) => requests.set(url, resolve)),
+    );
+    const teal = new THREE.CompressedTexture([], 4, 4);
+    const orange = new THREE.CompressedTexture([], 4, 4);
+    const staleDispose = vi.spyOn(teal, 'dispose');
+    const first = gallery.selectColour(1);
+    const latest = gallery.selectColour(3);
+    expect(KTX2Loader.prototype.detectSupport).toHaveBeenCalledOnce();
+    requests.get('/units/unit-orange.ktx2')!(orange);
+    await latest;
+    expect(preview.material.map).toBe(orange);
+    expect(preview.material.color.getHex()).toBe(0xffffff);
+    expect(orange.colorSpace).toBe(THREE.SRGBColorSpace);
+    expect(loaderDispose).not.toHaveBeenCalled();
+    requests.get('/units/unit-teal.ktx2')!(teal);
+    await first;
+    expect(preview.material.map).toBe(orange);
+    expect(preview.texture).toBe(orange);
+    expect(oldDispose).toHaveBeenCalledOnce();
+    expect(staleDispose).toHaveBeenCalledOnce();
+    expect(loaderDispose).toHaveBeenCalledOnce();
+    preview.material.dispose();
+    orange.dispose();
+  });
+
+  it('shares the initial transcoder with a reopened session until cancelled loads finish', async () => {
+    const { gallery, preview, texture } = skinController();
+    const loaderDispose = vi.spyOn(KTX2Loader.prototype, 'dispose');
+    const requests = new Map<string, (texture: THREE.CompressedTexture) => void>();
+    vi.spyOn(KTX2Loader.prototype, 'loadAsync').mockImplementation(
+      (url) => new Promise((resolve) => requests.set(url, resolve)),
+    );
+    // The initial model worker holds a loader lease while a colour switch and
+    // close/reopen overlap it. Cancelling a session cannot kill its tasks.
+    gallery.acquireSkinLoader();
+    const cancelled = gallery.selectColour(1);
+    gallery.session.cancelled = true;
+    gallery.session = { cancelled: false, completed: 1, failed: 0, total: 1 };
+    const reopened = gallery.selectColour(3);
+    expect(KTX2Loader.prototype.detectSupport).toHaveBeenCalledOnce();
+    const orange = new THREE.CompressedTexture([], 4, 4);
+    requests.get('/units/unit-orange.ktx2')!(orange);
+    await reopened;
+    const teal = new THREE.CompressedTexture([], 4, 4);
+    const cancelledDispose = vi.spyOn(teal, 'dispose');
+    requests.get('/units/unit-teal.ktx2')!(teal);
+    await cancelled;
+    expect(cancelledDispose).toHaveBeenCalledOnce();
+    expect(preview.material.map).toBe(orange);
+    expect(loaderDispose).not.toHaveBeenCalled();
+    gallery.releaseSkinLoader();
+    expect(loaderDispose).toHaveBeenCalledOnce();
+    // Once the last lease finishes, a later open gets one fresh loader.
+    gallery.acquireSkinLoader();
+    expect(KTX2Loader.prototype.detectSupport).toHaveBeenCalledTimes(2);
+    gallery.releaseSkinLoader();
+    expect(loaderDispose).toHaveBeenCalledTimes(2);
+    preview.material.dispose();
+    texture.dispose();
+    orange.dispose();
+  });
+
+  it('disposes a texture that finishes after the gallery session closes', async () => {
+    const { gallery, preview, texture } = skinController();
+    let resolve!: (texture: THREE.CompressedTexture) => void;
+    vi.spyOn(KTX2Loader.prototype, 'loadAsync').mockImplementation(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    const replacement = new THREE.CompressedTexture([], 4, 4);
+    const dispose = vi.spyOn(replacement, 'dispose');
+    const pending = gallery.selectColour(1);
+    gallery.session.cancelled = true;
+    resolve(replacement);
+    await pending;
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(preview.material.map).toBe(texture);
+    preview.material.dispose();
+    texture.dispose();
+  });
+
+  it('keeps the skin loading message until all existing previews have the new colour', async () => {
+    const { gallery, preview } = skinController();
+    gallery.session.completed = 0;
+    let resolve!: (texture: THREE.CompressedTexture) => void;
+    vi.spyOn(KTX2Loader.prototype, 'loadAsync').mockImplementation(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    const replacement = new THREE.CompressedTexture([], 4, 4);
+    const pending = gallery.selectColour(3);
+    gallery.session.completed = 1;
+    gallery.updateProgress(gallery.session);
+    expect(gallery.status.textContent).toBe('Loading Orange team skins…');
+    resolve(replacement);
+    await pending;
+    expect(gallery.status.textContent).toBe('1 models ready · Orange skins');
+    preview.material.dispose();
+    replacement.dispose();
+  });
+
+  it('uses the selected team fallback colour if its authored skin cannot load', async () => {
+    const { gallery, preview, texture } = skinController();
+    const dispose = vi.spyOn(texture, 'dispose');
+    vi.spyOn(KTX2Loader.prototype, 'loadAsync').mockRejectedValue(new Error('missing skin'));
+    await gallery.selectColour(1);
+    expect(preview.texture).toBeNull();
+    expect(preview.material.map).toBeNull();
+    expect(preview.material.color.getHex()).toBe(0x35d6bd);
+    expect(dispose).toHaveBeenCalledOnce();
+    preview.material.dispose();
+  });
+});
 
 describe('unit gallery proportional scale', () => {
   it("preserves Athena2's size ratio across different GLB source units", () => {

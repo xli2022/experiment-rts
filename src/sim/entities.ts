@@ -126,6 +126,9 @@ export class EntityPool {
   // --- buildings ---
   readonly buildState = new Uint8Array(ENTITY_CAPACITY);
   readonly buildProgress = new Int32Array(ENTITY_CAPACITY);
+  readonly buildingLevel = new Uint8Array(ENTITY_CAPACITY);
+  readonly upgrading = new Uint8Array(ENTITY_CAPACITY);
+  readonly upgradeProgress = new Int32Array(ENTITY_CAPACITY);
   /** Top-left tile of a building footprint. Meaningless for units. */
   readonly tileX = new Int32Array(ENTITY_CAPACITY);
   readonly tileY = new Int32Array(ENTITY_CAPACITY);
@@ -261,6 +264,9 @@ export class EntityPool {
     this.chill[index] = 0;
     this.buildState[index] = def.isBuilding ? BuildState.Site : BuildState.Complete;
     this.buildProgress[index] = 0;
+    this.buildingLevel[index] = 1;
+    this.upgrading[index] = 0;
+    this.upgradeProgress[index] = 0;
     this.tileX[index] = 0;
     this.tileY[index] = 0;
     this.carrying[index] = 0;
@@ -299,7 +305,7 @@ export class EntityPool {
 
   /** True if the handle still refers to the entity it was issued for. */
   isAlive(id: EntityId): boolean {
-    if (id < 0) return false;
+    if (!Number.isInteger(id) || id < 0 || id > 0x7fffffff) return false;
     const index = idIndex(id);
     if (index >= this.count) return false;
     return this.alive[index] === 1 && this.generation[index] === idGeneration(id);
@@ -370,9 +376,10 @@ export class EntityPool {
    *
    * Only fields that influence future simulation are included. Purely cosmetic
    * state is excluded so that a rendering-only change cannot report a false
-   * desync. `pathNodes` is deliberately omitted — it is derived from position
-   * and destination, so including it would just add noise, but `pathLen` and
-   * `pathCursor` are included because they gate movement.
+   * desync. Remaining path nodes are state too: a route was computed against
+   * earlier positions and occupancy and cannot be rebuilt from the current
+   * position and destination alone. Consumed nodes and unused storage do not
+   * influence future movement and are omitted.
    */
   checksum(h: number): number {
     let x = h;
@@ -380,6 +387,7 @@ export class EntityPool {
     x = checksumArray(x, this.alive, this.count);
     x = checksumArray(x, this.generation, this.count);
     x = checksumArray(x, this.type, this.count);
+    x = checksumArray(x, this.owner, this.count);
     x = checksumArray(x, this.serial, this.count);
     x = checksumArray(x, this.nextSerial, this.nextSerial.length);
     x = checksumArray(x, this.posX, this.count);
@@ -398,6 +406,9 @@ export class EntityPool {
     x = checksumArray(x, this.chill, this.count);
     x = checksumArray(x, this.buildState, this.count);
     x = checksumArray(x, this.buildProgress, this.count);
+    x = checksumArray(x, this.buildingLevel, this.count);
+    x = checksumArray(x, this.upgrading, this.count);
+    x = checksumArray(x, this.upgradeProgress, this.count);
     // Footprint tiles are what `GameMap.occupied` is derived from, so hashing
     // them here is what lets the map skip hashing 16k tiles every tick.
     x = checksumArray(x, this.tileX, this.count);
@@ -421,6 +432,13 @@ export class EntityPool {
     x = checksumArray(x, this.prodQueue, this.count * MAX_PRODUCTION_QUEUE);
     x = checksumArray(x, this.pathLen, this.count);
     x = checksumArray(x, this.pathCursor, this.count);
+    x = checksumArray(x, this.pathPending, this.count);
+    for (let i = 0; i < this.count; i++) {
+      if (this.alive[i] !== 1) continue;
+      for (let step = this.pathCursor[i]!; step < this.pathLen[i]!; step++) {
+        x = checksumU32(x, this.pathNode(i, step));
+      }
+    }
     x = checksumArray(x, this.flowGoal, this.count);
     x = checksumArray(x, this.pathCooldown, this.count);
     // The free list decides future entity ids, so it is part of the state.

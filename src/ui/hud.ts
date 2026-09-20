@@ -10,7 +10,7 @@
  * exactly what a canvas is good at and exactly what DOM is bad at.
  */
 
-import { abilityText, defOf } from '../config/rules.js';
+import { abilityText, buildingUpgrade, defOf, unitRole } from '../config/rules.js';
 import { toFloat } from '../sim/fixed.js';
 import { BuildState, EntityType, NEUTRAL, TICKS_PER_SECOND, type PlayerId } from '../sim/types.js';
 import type { World } from '../sim/world.js';
@@ -28,6 +28,9 @@ export interface CommandButton {
   key: string;
   label: string;
   cost?: number;
+  description?: string;
+  /** Short visible reason a command requires a building upgrade or idle queue. */
+  requirement?: string;
   enabled: boolean;
   active?: boolean;
   onClick: () => void;
@@ -63,6 +66,7 @@ export class Hud {
   pointerOverUi = false;
 
   private lastButtonSignature = '';
+  private commandButtons: readonly CommandButton[] = [];
   private minimapFrame = 0;
 
   /** One row per partner in the ally strip, in slot order. */
@@ -153,6 +157,7 @@ export class Hud {
           <div id="prod-queue"></div>
         </div>
         <div id="command-grid"></div>
+        <div class="selection-shortcuts" title="F1 cycles idle workers. Press F2 again to center the camera on your army.">F1 idle worker &nbsp;·&nbsp; F2 all army</div>
       </div>
 
       <!--
@@ -170,7 +175,7 @@ export class Hud {
       <button class="panel interactive" id="mute-btn" type="button"
               title="Mute (M)" aria-label="Toggle sound"></button>
       <button class="panel interactive" id="fullscreen-btn" type="button"
-              title="Fullscreen (F)" aria-label="Toggle fullscreen"></button>
+              title="Fullscreen (F outside the build menu)" aria-label="Toggle fullscreen"></button>
       <button class="panel interactive" id="surrender-btn" type="button"
               title="Surrender" aria-label="Surrender">🏳️</button>
 
@@ -327,7 +332,7 @@ export class Hud {
     const active = isFullscreen();
     // Arrows pointing inward mean "shrink", outward mean "grow".
     this.fullscreenBtn.textContent = active ? '⤡' : '⛶';
-    this.fullscreenBtn.title = active ? 'Exit fullscreen (F)' : 'Fullscreen (F)';
+    this.fullscreenBtn.title = `${active ? 'Exit fullscreen' : 'Fullscreen'} (F outside the build menu)`;
   }
 
   updateResources(world: World): void {
@@ -354,6 +359,7 @@ export class Hud {
   }
 
   updateSelection(world: World, selected: ReadonlySet<number>): void {
+    this.selectionTitle.title = '';
     if (selected.size === 0) {
       this.selectionTitle.textContent = 'Nothing selected';
       this.selectionDetail.textContent = '';
@@ -377,7 +383,10 @@ export class Hud {
       const i = [...selected][0]!;
       const type = world.pool.type[i]! as EntityType;
       const def = defOf(type);
-      this.selectionTitle.textContent = def.name;
+      this.selectionTitle.textContent = buildingUpgrade(type)
+        ? `${def.name} · Level ${world.pool.buildingLevel[i]}`
+        : def.name;
+      this.selectionTitle.title = unitRole(type);
       const parts = [`${world.pool.hp[i]} / ${def.maxHp} HP`];
       // What it hits for. Worth showing because it is now the true figure —
       // nothing scales it per matchup — so comparing two units on the panel
@@ -403,6 +412,7 @@ export class Hud {
       if (world.pool.prodCount[i]! > 0) {
         parts.push(`training ${world.pool.prodCount[i]} queued`);
       }
+      if (world.pool.upgrading[i] === 1) parts.push('upgrading to level 2');
       this.selectionDetail.textContent = parts.join(' · ');
     } else {
       const summary = [...counts.entries()]
@@ -419,7 +429,7 @@ export class Hud {
   }
 
   /**
-   * Show what a selected building is training, and how far along it is.
+   * Show what a selected building is training or upgrading, and its progress.
    *
    * A production queue with no visible progress is the single most common thing
    * players ask about in an RTS — "is it building?" — so the bar reports the
@@ -429,16 +439,28 @@ export class Hud {
     const single = selected.size === 1 ? [...selected][0]! : -1;
     const pool = world.pool;
 
-    if (
-      single < 0 ||
-      pool.alive[single] !== 1 ||
-      pool.owner[single] !== this.localPlayer ||
-      pool.prodCount[single]! === 0
-    ) {
+    if (single < 0 || pool.alive[single] !== 1 || pool.owner[single] !== this.localPlayer) {
       this.production.hidden = true;
       return;
     }
 
+    const upgrade = buildingUpgrade(pool.type[single]! as EntityType);
+    if (pool.upgrading[single] === 1 && upgrade) {
+      const progress = Math.min(1, pool.upgradeProgress[single]! / Math.max(1, upgrade.buildTicks));
+      const remaining = Math.max(0, upgrade.buildTicks - pool.upgradeProgress[single]!);
+      this.production.hidden = false;
+      this.production.classList.toggle('blocked', false);
+      this.prodLabel.textContent = 'Upgrading to level 2';
+      this.prodEta.textContent = `${(remaining / TICKS_PER_SECOND).toFixed(1)}s`;
+      this.prodFill.style.width = `${(progress * 100).toFixed(1)}%`;
+      this.prodQueue.textContent = 'Training paused during upgrade';
+      this.prodQueue.hidden = false;
+      return;
+    }
+    if (pool.prodCount[single] === 0) {
+      this.production.hidden = true;
+      return;
+    }
     this.production.hidden = false;
 
     const current = pool.prodAt(single, 0);
@@ -485,22 +507,34 @@ export class Hud {
    * pointerup never fires.
    */
   setCommands(buttons: CommandButton[]): void {
+    // Identical cards can belong to different selected buildings. Keep the DOM
+    // stable across frames, but always dispatch to the current selection.
+    this.commandButtons = buttons;
     const signature = buttons
-      .map((b) => `${b.key}:${b.label}:${b.enabled ? 1 : 0}:${b.active ? 1 : 0}`)
+      .map(
+        (b) =>
+          `${b.key}:${b.label}:${b.cost ?? ''}:${b.description ?? ''}:${b.requirement ?? ''}:${b.enabled ? 1 : 0}:${b.active ? 1 : 0}`,
+      )
       .join('|');
     if (signature === this.lastButtonSignature) return;
     this.lastButtonSignature = signature;
 
     this.commandGrid.innerHTML = '';
-    for (const button of buttons) {
+    for (const [index, button] of buttons.entries()) {
       const el = document.createElement('button');
       el.className = `cmd${button.active ? ' active' : ''}`;
       el.disabled = !button.enabled;
+      el.title = button.description ?? '';
       el.innerHTML =
-        `<span class="cmd-key">${button.key}</span>` +
-        `<span>${button.label}</span>` +
-        (button.cost !== undefined ? `<span class="cmd-cost">${button.cost}</span>` : '');
-      el.addEventListener('click', button.onClick);
+        `<kbd class="cmd-key">${button.key}</kbd>` +
+        `<span class="cmd-body"><span class="cmd-label">${button.label}</span>` +
+        (button.requirement ? `<span class="cmd-requirement">${button.requirement}</span>` : '') +
+        (button.cost !== undefined ? `<span class="cmd-cost">${button.cost}</span>` : '') +
+        '</span>';
+      el.addEventListener('click', () => {
+        const current = this.commandButtons[index];
+        if (current?.enabled) current.onClick();
+      });
       this.commandGrid.append(el);
     }
   }

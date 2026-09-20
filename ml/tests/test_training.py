@@ -1,5 +1,7 @@
 """The loops end to end, at toy size: they run, write what they should, and play a match."""
 
+import json
+
 import torch
 
 from rtsml import evaluate, imitation, ppo
@@ -17,6 +19,18 @@ def test_imitation_smoke(tmp_path):
     ckpt = load_checkpoint(tmp_path / "best.pt")
     assert ckpt["kind"] == "bc" and "nll" in ckpt["metrics"]
     assert (tmp_path / "log.jsonl").read_text().count("\n") >= 1
+
+
+def test_imitation_trains_a_final_buffer_smaller_than_its_capacity(tmp_path):
+    assert imitation.main([
+        "--procs", "1", "--envs", "1", "--steps", "4", "--buffer", "64",
+        "--batch", "4", "--val-labels", "4", "--max-ticks", "100",
+        "--noop-keep", "1", "--d", "32", "--heads", "2", "--layers", "1",
+        "--torso", "64", "--device", "cpu", "--out", str(tmp_path),
+    ]) == 0
+    rounds = [json.loads(line) for line in (tmp_path / "log.jsonl").read_text().splitlines()]
+    assert len(rounds) == 1 and rounds[0]["labels"] == 4
+    assert rounds[0]["loss"] > 0
 
 
 def test_ppo_smoke_from_scratch_and_from_a_checkpoint(tmp_path):

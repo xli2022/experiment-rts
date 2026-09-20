@@ -1,3 +1,4 @@
+import pytest
 import torch
 
 from rtsml import sampling as S
@@ -5,6 +6,7 @@ from rtsml.export import example_inputs
 from rtsml.model import ACT_INPUTS, Policy
 from rtsml.spec import (
     BUILD,
+    CANCEL_UPGRADE,
     MULTI_SELECT,
     NOOP,
     SINGLE_SELECT,
@@ -12,7 +14,34 @@ from rtsml.spec import (
     USES_ENTITY_TYPE,
     USES_LOCATION,
     USES_TARGET,
+    UPGRADE_BUILDING,
 )
+from rtsml.util import load_checkpoint
+
+
+def test_pre_upgrade_checkpoints_are_rejected(tmp_path):
+    path = tmp_path / "old.pt"
+    torch.save({"spec_version": 2}, path)
+    with pytest.raises(RuntimeError, match="trained for spec 2"):
+        load_checkpoint(path)
+
+
+@pytest.mark.parametrize("kind", [UPGRADE_BUILDING, CANCEL_UPGRADE])
+def test_upgrade_actions_select_exactly_one_building(tiny_policy, kind):
+    obs, noise, temperature = random_obs(2, 23)
+    obs["mask_type"].zero_()
+    obs["mask_type"][:, kind] = 1
+    obs["mask_selection"].zero_()
+    obs["mask_selection"][:, kind, 3] = 1
+    obs["entity_mask"][:, 3] = 1
+    with torch.no_grad():
+        actions = tiny_policy.act(obs, noise, temperature)
+        evaluated = tiny_policy.evaluate(obs, actions)
+    expected = torch.full_like(actions, -1)
+    expected[:, 0] = kind
+    expected[:, 5] = 3
+    assert torch.equal(actions, expected)
+    torch.testing.assert_close(evaluated["logp"], torch.zeros(2))
 
 
 def random_obs(batch: int, seed: int) -> dict[str, torch.Tensor]:
@@ -21,6 +50,20 @@ def random_obs(batch: int, seed: int) -> dict[str, torch.Tensor]:
     obs = {name: inputs[name] for name in ACT_INPUTS if name not in ("noise", "temperature")}
     obs["critic"] = torch.randn((batch, SPEC.critic_len), generator=g)
     return obs, inputs["noise"], inputs["temperature"]
+
+
+def test_evaluation_scores_the_temperature_used_for_sampling(tiny_policy):
+    obs, _, _ = random_obs(2, 19)
+    actions = torch.full((2, SPEC.action_ints), -1, dtype=torch.int64)
+    actions[:, 0] = NOOP
+    with torch.no_grad():
+        logits = tiny_policy.type_logits(tiny_policy.encode(obs))
+        out = tiny_policy.evaluate(obs, actions, temperature=0.5)
+    expected = S.categorical_logp(logits / 0.5, obs["mask_type"].bool(), actions[:, 0])
+    torch.testing.assert_close(out["logp"], expected)
+    torch.testing.assert_close(
+        out["entropy"], S.categorical_entropy(logits / 0.5, obs["mask_type"].bool()),
+    )
 
 
 def assert_legal(obs: dict[str, torch.Tensor], actions: torch.Tensor) -> None:

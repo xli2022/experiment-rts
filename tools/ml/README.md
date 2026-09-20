@@ -4,15 +4,17 @@ Everything here runs under Bun (or `vite-node`) and talks to the Python
 package in `../../ml`. The codec — what a bot sees and what it can say — lives
 in `src/ai/neural`; these are the loops around it.
 
-| script        | does                                                                                               |
-| ------------- | -------------------------------------------------------------------------------------------------- |
-| `spec.ts`     | prints `SPEC` as JSON; `npm run ml:spec > ml/rtsml/spec.json`, checked by `tests/spec.test.ts`     |
-| `env.ts`      | `MatchEnv`: a headless match one decision at a time, with policy, scripted, teacher and idle slots |
-| `protocol.ts` | the frame layout on the pipe to Python                                                             |
-| `serve.ts`    | many `MatchEnv`s behind stdin/stdout; `rtsml.env.BunVectorEnv` spawns one per core                 |
-| `record.ts`   | a few teacher matches to disk, for a fixed validation set                                          |
-| `bench.ts`    | decisions per second, and an observation hash to compare engines                                   |
-| `arena.ts`    | scripted bot against scripted bot from both seats                                                  |
+| script             | does                                                                                               |
+| ------------------ | -------------------------------------------------------------------------------------------------- |
+| `spec.ts`          | prints `SPEC` as JSON; `npm run ml:spec > ml/rtsml/spec.json`, checked by `tests/spec.test.ts`     |
+| `env.ts`           | `MatchEnv`: a headless match one decision at a time, with policy, scripted, teacher and idle slots |
+| `protocol.ts`      | the frame layout on the pipe to Python                                                             |
+| `serve.ts`         | many `MatchEnv`s behind stdin/stdout; `rtsml.env.BunVectorEnv` spawns one per core                 |
+| `record.ts`        | a few teacher matches to disk, for a fixed validation set                                          |
+| `recording.ts`     | streams one aligned teacher shard with bounded memory and separate valid/invalid label counts      |
+| `teacher-probe.ts` | checks label coverage by action, production type and upgrade without writing observation data      |
+| `bench.ts`         | decisions per second, and an observation hash to compare engines                                   |
+| `arena.ts`         | scripted bot against scripted bot from both seats                                                  |
 
 ## The pipe
 
@@ -47,9 +49,28 @@ out as labels) or `idle`. `arena.ts` takes the same names:
 npm run ml:arena -- --a scripted@10 --b scripted@20 --seeds 8
 ```
 
-The think interval is not a strength dial — measured, `@20` beats `@10` from
-either seat — so the rungs are distinct opponents rather than a ladder; see
+The think interval is not a strength dial — historical measurements had `@20`
+beating `@10` from either seat — so the rungs are distinct opponents rather than a ladder; see
 `ml/README.md`.
+
+A teacher captures its label, visibility, observation and masks at the same
+four-tick decision boundary, then issues the command on the following tick,
+matching neural input timing. Tick zero has an invalid label. Commands absent
+from the policy vocabulary, stale illegal commands and Build commands that
+would decode to a different site are labelled `-1` and skipped. Build can
+resume the exact owned unfinished site without charging minerals again.
+
+`bun run tools/ml/teacher-probe.ts 2 600` checks two seeds on each layout for
+up to ten minutes of game time, rotating the teacher's team and controlling
+both allied slots on Quarters. It emits one JSON report per match, including
+valid/non-Noop/dropped counts and command, building, upgrade and unit coverage.
+
+`npm run ml:record -- --layout lanes --matches 4 --out ml/data/validation-lanes`
+streams fixed matches to binary shards and JSON indexes. `lanes` is the
+default; use `quarters` or `mix` explicitly. The recorded seat rotates within
+each layout. Each frame's tick is the captured decision tick; Noops and
+dropped labels have separate counts. Terminal decisions that cannot issue
+before reset are excluded, matching the live bridge.
 
 ## Engines
 

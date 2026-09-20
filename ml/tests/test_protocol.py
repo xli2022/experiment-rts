@@ -1,8 +1,9 @@
 import io
 
 import numpy as np
+import pytest
 
-from rtsml.protocol import Kind, decode_frame, encode_frame, read_frame
+from rtsml.protocol import Kind, decode_frame, encode_frame, read_frame, write_frame
 
 
 def test_round_trip_with_arrays():
@@ -47,3 +48,24 @@ def test_read_frame_survives_fragmented_reads():
     assert first.kind == Kind.OBS
     np.testing.assert_array_equal(first.arrays[0], payload)
     assert second.kind == Kind.CLOSE
+
+
+class ShortWriter(io.BytesIO):
+    def write(self, data):
+        return super().write(data[:3])
+
+
+def test_write_frame_survives_partial_pipe_writes():
+    stream = ShortWriter()
+    frame = encode_frame(Kind.STEP, {}, [("actions", np.arange(100, dtype=np.int32))])
+    write_frame(stream, frame)
+    assert stream.getvalue() == frame
+
+
+def test_write_frame_rejects_a_pipe_that_makes_no_progress():
+    class ClosedWriter:
+        def write(self, data):
+            return 0
+
+    with pytest.raises(BrokenPipeError, match="stopped accepting"):
+        write_frame(ClosedWriter(), b"frame")

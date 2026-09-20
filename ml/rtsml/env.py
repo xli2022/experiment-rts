@@ -11,14 +11,14 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
-from .protocol import Kind, encode_frame, read_frame
+from .protocol import Kind, encode_frame, read_frame, write_frame
 from .spec import SPEC
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -140,8 +140,7 @@ class _Process:
         self.observed = 0
 
     def send(self, frame: bytes) -> None:
-        self.stdin.write(frame)
-        self.stdin.flush()
+        write_frame(self.stdin, frame)
 
     def recv(self):
         frame = read_frame(self.stdout)
@@ -196,7 +195,7 @@ class BunVectorEnv:
             raise ValueError(f"actions must be {(len(self.last), SPEC.action_ints)}, got {actions.shape}")
         actions = np.ascontiguousarray(actions, dtype=np.int32)
         row = 0
-        threads = []
+        sends = []
         for p, (proc, group) in enumerate(zip(self.procs, self.configs)):
             block = np.full((len(group), self.max_observed, SPEC.action_ints), -1, dtype=np.int32)
             for e, cfg in enumerate(group):
@@ -204,24 +203,19 @@ class BunVectorEnv:
                 block[e, :observed] = actions[row : row + observed]
                 row += observed
             frame = encode_frame(Kind.STEP, {"maxObserved": self.max_observed}, [("actions", block.reshape(-1))])
-            t = threading.Thread(target=proc.send, args=(frame,))
-            t.start()
-            threads.append(t)
-        for t in threads:
-            t.join()
+            sends.append((proc, frame))
+        # Futures re-raise pipe failures on the caller. A raw Thread silently
+        # discarded them, then _collect waited for a reply to an unsent step.
+        with ThreadPoolExecutor(max_workers=len(self.procs)) as pool:
+            futures = [pool.submit(proc.send, frame) for proc, frame in sends]
+            for future in futures:
+                future.result()
         return self._collect()
 
     def _collect(self) -> Batch:
-        frames = [None] * len(self.procs)
-
-        def read(i: int) -> None:
-            frames[i] = self.procs[i].recv()
-
-        threads = [threading.Thread(target=read, args=(i,)) for i in range(len(self.procs))]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+        with ThreadPoolExecutor(max_workers=len(self.procs)) as pool:
+            futures = [pool.submit(proc.recv) for proc in self.procs]
+            frames = [future.result() for future in futures]
 
         arrays: dict[str, list[np.ndarray]] = {name: [] for name in ARRAY_NAMES}
         reward, done, truncated, reset, winner, tick, issued, slots = [], [], [], [], [], [], [], []

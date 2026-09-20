@@ -33,7 +33,7 @@ interface Field {
 }
 
 /** A clear corridor well away from either base, and `n` Burstbots at one end. */
-function field(n = 1): Field {
+function field(n = 1, type = EntityType.Burstbot): Field {
   const sim = new Simulation(0x51ce7a11);
   const { pool, map } = sim.world;
   const start = map.starts[0]!;
@@ -54,7 +54,7 @@ function field(n = 1): Field {
   for (let k = 0; k < n; k++) {
     ids.push(
       pool.spawn(
-        EntityType.Burstbot,
+        type,
         0 as PlayerId,
         Math.round((c.x + 0.5) * FIX),
         Math.round((c.y + 0.5 + k * 0.6) * FIX),
@@ -106,6 +106,31 @@ function firedThisTick(f: Field): boolean {
 }
 
 describe('attack-move', () => {
+  it('has aircraft stop in weapon range and resume only after the fight ends', () => {
+    const f = field(1, EntityType.Beamdrone);
+    const pool = f.sim.world.pool;
+    const foe = enemyAt(f, 5);
+    pool.order[foe] = Order.Hold;
+    f.sim.step([command(f, CommandType.AttackMove)]);
+    for (let t = 0; t < 50 && !firedThisTick(f); t++) f.sim.step([]);
+    expect(firedThisTick(f)).toBe(true);
+    const firingX = pool.posX[f.unit]!;
+    const firingY = pool.posY[f.unit]!;
+
+    for (let t = 0; t < 15; t++) {
+      pool.hp[foe] = defOf(EntityType.Worker).maxHp;
+      f.sim.step([]);
+      expect(pool.posX[f.unit]).toBe(firingX);
+      expect(pool.posY[f.unit]).toBe(firingY);
+    }
+
+    pool.destroy(pool.idAt(foe));
+    play(f, 200);
+    expect(pool.alive[f.unit]).toBe(1);
+    expect(pool.order[f.unit]).toBe(Order.None);
+    expect(Math.abs(xOf(f) - (f.dest.x + 0.5))).toBeLessThan(0.5);
+  });
+
   it('walks to the destination when nothing is in the way', () => {
     const f = field();
     f.sim.step([command(f, CommandType.AttackMove)]);

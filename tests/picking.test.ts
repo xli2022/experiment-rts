@@ -13,7 +13,8 @@ import { defOf } from '../src/config/rules.js';
 import { toFloat } from '../src/sim/fixed.js';
 import { Simulation } from '../src/sim/tick.js';
 import { EntityType, type PlayerId } from '../src/sim/types.js';
-import { pickAt, RING_OVERSIZE, Selection } from '../src/input/selection.js';
+import { pickAt, pickInBox, RING_OVERSIZE, Selection } from '../src/input/selection.js';
+import { Visibility } from '../src/vision/visibility.js';
 
 const FIX = 65536;
 
@@ -48,6 +49,50 @@ function clearSpot(sim: Simulation): { x: number; y: number } {
 }
 
 describe('clicking a unit', () => {
+  it('excludes fog-hidden targets from clicks and box selection', () => {
+    const sim = new Simulation(0x51ce7a11);
+    const world = sim.world;
+    const enemy = world.map.starts[1]!;
+    const x = enemy.tileX + 0.5;
+    const z = enemy.tileY + 0.5;
+    const camera = cameraOver(x, z);
+    const visibility = new Visibility(world.map);
+    visibility.update(world, 0);
+    const canSelect = (index: number): boolean => visibility.canSee(world, index, 0);
+    const point = ndcOf(camera, x, z);
+
+    expect(pickAt(world, camera, point.x, point.y, 0)).toBeGreaterThanOrEqual(0);
+    expect(pickAt(world, camera, point.x, point.y, 0, canSelect)).toBe(-1);
+    expect(pickInBox(world, camera, -0.5, -0.5, 0.5, 0.5, 0).length).toBeGreaterThan(0);
+    expect(pickInBox(world, camera, -0.5, -0.5, 0.5, 0.5, 0, canSelect)).toEqual([]);
+
+    world.pool.spawn(EntityType.Burstbot, 0, Math.round(x * FIX), Math.round(z * FIX));
+    visibility.update(world, 0);
+    expect(pickAt(world, camera, point.x, point.y, 0, canSelect)).toBeGreaterThanOrEqual(0);
+  });
+
+  it('prunes hidden selections and cannot recall their position until they return to sight', () => {
+    const sim = new Simulation(0x51ce7a11);
+    const spot = clearSpot(sim);
+    const world = sim.world;
+    const id = world.pool.spawn(EntityType.Burstbot, 1, spot.x * FIX, spot.y * FIX);
+    const index = id & 0xffff;
+    let visible = true;
+    const selection = new Selection(0, () => visible);
+    selection.set([index], world);
+    selection.assignGroup(1, world);
+    visible = false;
+    expect(selection.ids(world)).toEqual([]);
+    expect(selection.centroid(world)).toBeNull();
+    expect(selection.recallGroup(1, world)).toBe('missing');
+    expect(selection.single()).toBe(-1);
+    selection.set([index], world);
+    expect(selection.indices.size).toBe(0);
+    visible = true;
+    expect(selection.recallGroup(1, world)).toBe('selected');
+    expect(selection.ids(world)).toEqual([id]);
+  });
+
   it('hits inside the ring and misses outside it', () => {
     for (const type of [EntityType.Burstbot, EntityType.Slicebot, EntityType.Beamdrone]) {
       const sim = new Simulation(0x51ce7a11);

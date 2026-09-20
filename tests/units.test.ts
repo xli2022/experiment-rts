@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { DEFS, defOf } from '../src/config/rules.js';
+import { DEFS, defOf, productionOptions } from '../src/config/rules.js';
 import { ENTITY_TYPE_COUNT, EntityType, type PlayerId } from '../src/sim/types.js';
 import { HeadlessMatch } from '../src/ai/headless.js';
 import { duelMatch } from '../src/sim/match.js';
@@ -39,24 +39,40 @@ describe('entity definitions', () => {
     }
   });
 
-  it('leaves exactly two flyers, one from each production building', () => {
+  it('trains both flyers exclusively from the Airport', () => {
     const flyers = DEFS.filter((d) => d.flying).map((d) => d.type);
     expect(flyers).toEqual([EntityType.Beamdrone, EntityType.Plasmodrone]);
-    expect(defOf(EntityType.Barracks).produces).toContain(EntityType.Beamdrone);
-    expect(defOf(EntityType.Foundry).produces).toContain(EntityType.Plasmodrone);
+    expect(defOf(EntityType.Airport).produces).toEqual(flyers);
+    for (const building of [EntityType.Barracks, EntityType.Factory]) {
+      for (const type of defOf(building).produces) expect(defOf(type).flying).toBe(false);
+    }
   });
 
-  it('keeps the light line on the Barracks and the heavy line behind the Foundry', () => {
-    const barracks = defOf(EntityType.Barracks).produces;
-    expect(barracks).toContain(EntityType.Burstbot);
-    expect(barracks).toContain(EntityType.Slicebot);
-    expect(barracks).toContain(EntityType.Beamdrone);
-    // The tech step has to be worth taking: nothing the Foundry makes may be
-    // cheaper than the dearest thing the Barracks already makes.
-    const dearestLight = Math.max(...barracks.map((t) => defOf(t).mineralCost));
-    for (const heavy of defOf(EntityType.Foundry).produces) {
-      expect(defOf(heavy).mineralCost).toBeGreaterThan(dearestLight);
-    }
+  it('offers distinct infantry and vehicle openings with local level-two unlocks', () => {
+    expect(productionOptions(EntityType.Barracks)).toEqual([
+      EntityType.Slicebot,
+      EntityType.Burstbot,
+      EntityType.Firespout,
+    ]);
+    expect(productionOptions(EntityType.Barracks, 2)).toEqual([
+      EntityType.Slicebot,
+      EntityType.Burstbot,
+      EntityType.Firespout,
+      EntityType.Arclight,
+      EntityType.Fixomatic,
+    ]);
+    expect(productionOptions(EntityType.Factory)).toEqual([
+      EntityType.Boomwalker,
+      EntityType.Sentry,
+      EntityType.Piercebot,
+    ]);
+    expect(productionOptions(EntityType.Factory, 2)).toEqual([
+      EntityType.Boomwalker,
+      EntityType.Sentry,
+      EntityType.Piercebot,
+      EntityType.DarkGolem,
+      EntityType.IceGolem,
+    ]);
   });
 });
 

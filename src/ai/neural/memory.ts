@@ -117,16 +117,14 @@ export class EntityMemory {
     this.entries.length = kept;
   }
 
-  /** Is any tile the entity was last seen standing on currently in view? */
+  /** Is the tile that would reveal the remembered entity currently in view? */
   private groundSeen(world: World, vis: Visibility, entry: Remembered): boolean {
-    const footprint = entry.isBuilding ? Math.max(1, defOf(entry.type).footprint) : 1;
-    const map = world.map;
-    for (let y = entry.tileY; y < entry.tileY + footprint; y++) {
-      for (let x = entry.tileX; x < entry.tileX + footprint; x++) {
-        if (map.inBounds(x, y) && vis.isVisibleTile(map.index(x, y))) return true;
-      }
-    }
-    return false;
+    // Refreshing above tests the canonical centre tile, even for buildings.
+    // Seeing only a footprint's edge cannot prove the building has gone: its
+    // centre may still be hidden, so a live building would not be refreshed.
+    return vis.isVisibleTile(
+      world.map.tileOfPosFor(entry.posX, entry.posY, world.flipOf(this.viewer)),
+    );
   }
 
   get(id: EntityId): Remembered | undefined {

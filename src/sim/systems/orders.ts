@@ -13,13 +13,21 @@
  * UI may grey a button out, but only this file decides what actually happens.
  */
 
-import { defOf, GROUP_PATH_THRESHOLD, MAX_PRODUCTION_QUEUE } from '../../config/rules.js';
+import {
+  buildingUpgrade,
+  defOf,
+  GROUP_PATH_THRESHOLD,
+  MAX_PRODUCTION_QUEUE,
+  productionOptions,
+} from '../../config/rules.js';
 import { CommandType, type Command } from '../commands.js';
-import { ARRIVE_BEST_NONE, idIndex } from '../entities.js';
+import { ARRIVE_BEST_NONE, ENTITY_CAPACITY, idIndex } from '../entities.js';
 import { FIX_HALF, fromInt } from '../fixed.js';
 import { nearestWalkable } from '../pathing/astar.js';
+import { lineOfSightClear } from '../pathing/los.js';
 import {
   BuildState,
+  ENTITY_TYPE_COUNT,
   EntityType,
   NO_ENTITY,
   Order,
@@ -34,24 +42,42 @@ import type { World } from '../world.js';
  */
 export function executeCommand(world: World, cmd: Command): void {
   const player = cmd.player;
-  if (player < 0 || player >= world.players.length) return;
+  if (!Number.isInteger(player) || player < 0 || player >= world.players.length) return;
   if (world.player(player).defeated) return;
 
   switch (cmd.type) {
     case CommandType.Move:
     case CommandType.AttackMove: {
-      if (!standableTarget(world, player, cmd.x, cmd.y, targetOut)) break;
-      const grouped = cmd.units.length >= GROUP_PATH_THRESHOLD;
-      const order = cmd.type === CommandType.Move ? Order.Move : Order.AttackMove;
-      const { x: gx, y: gy } = targetOut;
+      const formationOffset = cmd.formationOffset === undefined ? 0 : cmd.formationOffset;
+      // Offsets cross the wire. Bound the spiral's work before touching any
+      // entity, including when a malformed command arrives outside networking.
+      if (
+        !Number.isInteger(formationOffset) ||
+        formationOffset < 0 ||
+        formationOffset >= ENTITY_CAPACITY ||
+        formationOffset + cmd.units.length > ENTITY_CAPACITY
+      )
+        break;
       const flip = world.flipOf(player);
+      if (world.map.tileOfPosFor(cmd.x, cmd.y, flip) < 0) break;
+      const groundTarget = standableTarget(world, player, cmd.x, cmd.y, targetOut);
+      // A final short chunk belongs to the same army and shared flow field.
+      const grouped = cmd.units.length >= GROUP_PATH_THRESHOLD || formationOffset > 0;
+      const order = cmd.type === CommandType.Move ? Order.Move : Order.AttackMove;
+      const { x: groundX, y: groundY } = targetOut;
       // Formation slots go out in creation order, oldest unit first. The
       // command lists units in whatever order the selection or the bot built
       // it, and that order is not mirrored between the two halves of a match
       // once slots have been recycled; creation order is.
       const units = ownedUnits(world, cmd.units, player);
       for (let k = 0; k < units.length; k++) {
-        spreadDestination(world, cmd.units.length > 1 ? k : 0, gx, gy, flip, destOut);
+        const flying = defOf(world.pool.type[units[k]!]! as EntityType).flying;
+        if (!flying && !groundTarget) continue;
+        // Aircraft can stand over rock and buildings, including places too
+        // deep inside a cliff for a ground unit's destination to be snapped.
+        const gx = flying ? cmd.x : groundX;
+        const gy = flying ? cmd.y : groundY;
+        spreadDestination(world, formationOffset + k, gx, gy, flip, destOut, flying);
         setMoveOrder(world, units[k]!, order, destOut.x, destOut.y, grouped, gx, gy);
       }
       break;
@@ -135,6 +161,14 @@ export function executeCommand(world: World, cmd: Command): void {
 
     case CommandType.CancelBuild:
       executeCancelBuild(world, cmd.building, player);
+      break;
+
+    case CommandType.UpgradeBuilding:
+      executeUpgrade(world, cmd.building, player);
+      break;
+
+    case CommandType.CancelUpgrade:
+      executeCancelUpgrade(world, cmd.building, player);
       break;
 
     case CommandType.SetRally: {
@@ -300,8 +334,8 @@ const SPREAD_STEP = fromInt(1);
  * Offset a group's destination so its members do not all target one tile.
  *
  * Falls back to the raw target whenever the spread tile is not somewhere a unit
- * could stand, which keeps a formation ordered against a cliff edge from
- * scattering its flank into the rock.
+ * could stand or approach directly from the shared goal. Large formations must
+ * not put their farthest slots across a cliff from the flow field's destination.
  *
  * That fallback needs the walkability check and not just the bounds check it
  * used to do: `tileOfPos` answers "is this on the map", and solid rock is very
@@ -316,6 +350,7 @@ function spreadDestination(
   y: number,
   flip: boolean,
   out: { x: number; y: number },
+  flying = false,
 ): void {
   out.x = x;
   out.y = y;
@@ -329,7 +364,12 @@ function spreadDestination(
   const sy = (y + sign * slotOut.y * SPREAD_STEP) | 0;
   const tile = world.map.tileOfPosFor(sx, sy, flip);
   if (tile < 0) return;
-  if (!world.map.isWalkable(world.map.tileXOf(tile), world.map.tileYOf(tile))) return;
+  if (
+    !flying &&
+    (!world.map.isWalkable(world.map.tileXOf(tile), world.map.tileYOf(tile)) ||
+      !lineOfSightClear(world.map, x, y, sx, sy, flip))
+  )
+    return;
   out.x = sx;
   out.y = sy;
 }
@@ -404,6 +444,7 @@ function executeBuild(
   if (pool.owner[wi] !== player) return;
   if (pool.type[wi] !== EntityType.Worker) return;
 
+  if (!Number.isInteger(building) || building < 0 || building >= ENTITY_TYPE_COUNT) return;
   const def = defOf(building);
   if (!def.isBuilding || building === EntityType.MineralPatch) return;
 
@@ -535,10 +576,10 @@ function executeTrain(
   if (!pool.isAlive(buildingId)) return;
   const bi = idIndex(buildingId);
   if (pool.owner[bi] !== player) return;
-  if (pool.buildState[bi] !== 2) return; // must be finished
+  if (pool.buildState[bi] !== BuildState.Complete || pool.upgrading[bi] === 1) return;
 
-  const bDef = defOf(pool.type[bi]! as EntityType);
-  if (!bDef.produces.includes(unit)) return;
+  if (!productionOptions(pool.type[bi]! as EntityType, pool.buildingLevel[bi]!).includes(unit))
+    return;
   if (pool.prodCount[bi]! >= MAX_PRODUCTION_QUEUE) return;
 
   const uDef = defOf(unit);
@@ -561,9 +602,36 @@ function executeCancelTrain(
   if (!pool.isAlive(buildingId)) return;
   const bi = idIndex(buildingId);
   if (pool.owner[bi] !== player) return;
-  if (slot < 0 || slot >= pool.prodCount[bi]!) return;
+  if (!Number.isInteger(slot) || slot < 0 || slot >= pool.prodCount[bi]!) return;
 
   const type = pool.prodAt(bi, slot);
   world.player(player).minerals += defOf(type).mineralCost; // full refund
   pool.prodRemove(bi, slot);
+}
+
+function executeUpgrade(world: World, buildingId: EntityId, player: PlayerId): void {
+  const pool = world.pool;
+  if (!pool.isAlive(buildingId)) return;
+  const bi = idIndex(buildingId);
+  if (pool.owner[bi] !== player || pool.buildState[bi] !== BuildState.Complete) return;
+  if (pool.buildingLevel[bi] !== 1 || pool.upgrading[bi] !== 0 || pool.prodCount[bi] !== 0) return;
+  const upgrade = buildingUpgrade(pool.type[bi]! as EntityType);
+  if (!upgrade) return;
+  const ps = world.player(player);
+  if (ps.minerals < upgrade.mineralCost) return;
+  ps.minerals -= upgrade.mineralCost;
+  pool.upgrading[bi] = 1;
+  pool.upgradeProgress[bi] = 0;
+}
+
+function executeCancelUpgrade(world: World, buildingId: EntityId, player: PlayerId): void {
+  const pool = world.pool;
+  if (!pool.isAlive(buildingId)) return;
+  const bi = idIndex(buildingId);
+  if (pool.owner[bi] !== player || pool.upgrading[bi] !== 1) return;
+  const upgrade = buildingUpgrade(pool.type[bi]! as EntityType);
+  if (!upgrade) return;
+  world.player(player).minerals += upgrade.mineralCost;
+  pool.upgrading[bi] = 0;
+  pool.upgradeProgress[bi] = 0;
 }

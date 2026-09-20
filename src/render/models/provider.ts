@@ -30,6 +30,8 @@ export interface ModelPart {
   /** Offset from the entity origin, in world units. Y is up. */
   offset: [number, number, number];
   rotation?: [number, number, number];
+  /** Extra structure added by a completed building upgrade. */
+  minLevel?: 2;
 }
 
 export interface ModelSpec {
@@ -44,6 +46,8 @@ export interface ModelSpec {
   radius: number;
   /** Height above ground, for health bar placement. */
   height: number;
+  /** Health-bar height after the building's second level is complete. */
+  level2Height?: number;
 }
 
 export interface ModelProvider {

@@ -354,7 +354,9 @@ def main(argv: list[str] | None = None) -> int:
             keep = select_labels(batch.arrays, rng, args.noop_keep)
             buffer.add(batch.arrays, keep)
             labels += int(keep.sum())
-            if len(buffer) < args.buffer:
+            # The final round can be smaller than the configured buffer. It
+            # still contains requested training labels, even when steps < buffer.
+            if len(buffer) < args.buffer and labels < args.steps:
                 continue
             loss = train_on(policy, opt, buffer.materialise(), args.batch, args.epochs, device, rng, args.ent)
             buffer.clear()

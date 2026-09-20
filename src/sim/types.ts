@@ -142,12 +142,11 @@ export enum EntityType {
   // ids stay put — the defs table is indexed by this enum.
   Beamdrone = 8,
   // The rest of the robot line, appended for the same reason. Barracks chassis
-  // first, then the Foundry that unlocks the heavy ones, then the heavies —
-  // which is the order a player meets them, but nothing reads that into the
-  // numbers: what a building trains is `EntityDef.produces`.
+  // first, then the Factory, then the heavies. Production unlocks are defined
+  // by `productionOptions`; numeric ids do not encode a tech level.
   Boomwalker = 9,
   Fixomatic = 10,
-  Foundry = 11,
+  Factory = 11,
   Firespout = 12,
   Arclight = 13,
   Piercebot = 14,
@@ -155,9 +154,10 @@ export enum EntityType {
   DarkGolem = 16,
   IceGolem = 17,
   Plasmodrone = 18,
+  Airport = 19,
 }
 
-export const ENTITY_TYPE_COUNT = 19;
+export const ENTITY_TYPE_COUNT = 20;
 
 /** What an entity is currently trying to do. Drives the system dispatch. */
 export enum Order {

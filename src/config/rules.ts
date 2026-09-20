@@ -130,7 +130,7 @@ export interface EntityDef {
   readonly buildTicks: number;
   readonly supplyCost: number;
   readonly supplyProvided: number;
-  /** Unit types this building can train, in menu order. */
+  /** Full potential roster in menu order; use productionOptions for level unlocks. */
   readonly produces: readonly EntityType[];
 }
 
@@ -168,7 +168,7 @@ export const DEFS: readonly EntityDef[] = [
     attackForeswing: 0,
     attackCooldown: seconds(1.0),
     mineralCost: 50,
-    buildTicks: seconds(12),
+    buildTicks: seconds(10),
     supplyCost: 1,
     supplyProvided: 0,
     produces: NONE,
@@ -200,7 +200,7 @@ export const DEFS: readonly EntityDef[] = [
     attackForeswing: 0,
     attackCooldown: seconds(0.8),
     mineralCost: 50,
-    buildTicks: seconds(17),
+    buildTicks: seconds(12),
     supplyCost: 1,
     supplyProvided: 0,
     produces: NONE,
@@ -234,7 +234,7 @@ export const DEFS: readonly EntityDef[] = [
     attackForeswing: seconds(0.45),
     attackCooldown: seconds(1.2),
     mineralCost: 75,
-    buildTicks: seconds(20),
+    buildTicks: seconds(16),
     supplyCost: 2,
     supplyProvided: 0,
     produces: NONE,
@@ -266,9 +266,10 @@ export const DEFS: readonly EntityDef[] = [
     attackForeswing: 0,
     attackCooldown: 0,
     mineralCost: 400,
-    buildTicks: seconds(55),
+    buildTicks: seconds(45),
     supplyCost: 0,
-    supplyProvided: 10,
+    // Room for the opening economy and a small army before the first depot.
+    supplyProvided: 15,
     produces: [EntityType.Worker],
   },
   {
@@ -298,7 +299,7 @@ export const DEFS: readonly EntityDef[] = [
     attackForeswing: 0,
     attackCooldown: 0,
     mineralCost: 100,
-    buildTicks: seconds(25),
+    buildTicks: seconds(18),
     supplyCost: 0,
     // Generous on purpose: at 8 supply each, reaching the 200 cap needs roughly
     // two dozen depots, and that many structures ring a base so densely that
@@ -333,16 +334,15 @@ export const DEFS: readonly EntityDef[] = [
     attackForeswing: 0,
     attackCooldown: 0,
     mineralCost: 150,
-    buildTicks: seconds(45),
+    buildTicks: seconds(30),
     supplyCost: 0,
     supplyProvided: 0,
     produces: [
-      EntityType.Burstbot,
       EntityType.Slicebot,
-      EntityType.Boomwalker,
-      EntityType.Beamdrone,
-      EntityType.Fixomatic,
+      EntityType.Burstbot,
       EntityType.Firespout,
+      EntityType.Arclight,
+      EntityType.Fixomatic,
     ],
   },
   {
@@ -372,7 +372,7 @@ export const DEFS: readonly EntityDef[] = [
     attackForeswing: 0,
     attackCooldown: seconds(0.8),
     mineralCost: 100,
-    buildTicks: seconds(28),
+    buildTicks: seconds(24),
     supplyCost: 0,
     supplyProvided: 0,
     produces: NONE,
@@ -441,7 +441,7 @@ export const DEFS: readonly EntityDef[] = [
     attackForeswing: 0,
     attackCooldown: seconds(1.0),
     mineralCost: 100,
-    buildTicks: seconds(24),
+    buildTicks: seconds(20),
     supplyCost: 2,
     supplyProvided: 0,
     produces: NONE,
@@ -478,12 +478,12 @@ export const DEFS: readonly EntityDef[] = [
     chillTicks: 0,
     repairAmount: 0,
     detonates: true,
-    // 45 into one target is a bad trade for 75 minerals; 45 into six clumped
-    // Burstbots is three dead units. That gap is the unit.
+    // 45 into one target is a bad trade for 75 minerals; a blast into packed
+    // Burstbots can pay for itself many times. That gap is the unit.
     attackForeswing: seconds(0.3),
     attackCooldown: seconds(1.0),
     mineralCost: 75,
-    buildTicks: seconds(18),
+    buildTicks: seconds(14),
     supplyCost: 2,
     supplyProvided: 0,
     produces: NONE,
@@ -521,15 +521,17 @@ export const DEFS: readonly EntityDef[] = [
     detonates: false,
     attackForeswing: 0,
     attackCooldown: seconds(0.5),
-    mineralCost: 100,
-    buildTicks: seconds(22),
-    supplyCost: 2,
+    // An early support choice can replace one fighter without postponing
+    // the entire army. It still needs an escort and cannot repair buildings.
+    mineralCost: 75,
+    buildTicks: seconds(18),
+    supplyCost: 1,
     supplyProvided: 0,
     produces: NONE,
   },
   {
-    type: EntityType.Foundry,
-    name: 'Foundry',
+    type: EntityType.Factory,
+    name: 'Factory',
     isBuilding: true,
     collides: true,
     flying: false,
@@ -554,18 +556,17 @@ export const DEFS: readonly EntityDef[] = [
     attackForeswing: 0,
     attackCooldown: 0,
     // Dearer and slower than a Barracks, which is the whole tech decision: the
-    // minerals and the 55 seconds are an army you did not build meanwhile.
+    // minerals and the 40 seconds are an army you did not build meanwhile.
     mineralCost: 200,
-    buildTicks: seconds(55),
+    buildTicks: seconds(40),
     supplyCost: 0,
     supplyProvided: 0,
     produces: [
-      EntityType.Piercebot,
-      EntityType.Arclight,
+      EntityType.Boomwalker,
       EntityType.Sentry,
+      EntityType.Piercebot,
       EntityType.DarkGolem,
       EntityType.IceGolem,
-      EntityType.Plasmodrone,
     ],
   },
   {
@@ -577,12 +578,12 @@ export const DEFS: readonly EntityDef[] = [
     // A barrel on crab legs with one wide nozzle out the front, and a plate
     // over the front of the barrel. Built to walk into things.
     //
-    // The heaviest thing the Barracks makes, and the only splash weapon
+    // The heaviest thing the Barracks makes, and its repeatable splash weapon
     // available without teching. What keeps that honest is the 2.2 reach: a
     // Burstbot outranges it by more than double and a Piercebot by nearly
     // four times, so it only ever gets to do its job to something that let it
     // close.
-    maxHp: 130,
+    maxHp: 115,
     radius: fromFloat(0.5),
     footprint: 0,
     speedPerTick: speed(2.7),
@@ -593,7 +594,10 @@ export const DEFS: readonly EntityDef[] = [
     minRange: 0,
     // The nozzle is level with the ground and does not tilt.
     canHitAir: false,
-    damage: 14,
+    // Packed light infantry still takes the full splash. Ten per hit leaves
+    // room for armoured front lines and spread, stationary ranged defenders to
+    // answer this level-one unit without first rushing air tech.
+    damage: 10,
     splashRadius: fromFloat(1.6),
     maxTargets: 1,
     pierce: false,
@@ -604,7 +608,7 @@ export const DEFS: readonly EntityDef[] = [
     attackForeswing: seconds(0.25),
     attackCooldown: seconds(0.9),
     mineralCost: 100,
-    buildTicks: seconds(24),
+    buildTicks: seconds(20),
     supplyCost: 2,
     supplyProvided: 0,
     produces: NONE,
@@ -615,22 +619,22 @@ export const DEFS: readonly EntityDef[] = [
     isBuilding: false,
     collides: true,
     flying: false,
-    maxHp: 120,
+    maxHp: 130,
     radius: fromFloat(0.525),
     footprint: 0,
     speedPerTick: speed(2.9),
     accelFraction: fromFloat(0.22),
     turnPerTick: fromFloat(0.5),
     sightRange: fromFloat(8),
-    attackRange: fromFloat(4.5),
+    attackRange: fromFloat(5.0),
     minRange: 0,
     // Three coils on its back, pointing up and out. An arc does not care
     // whether what it earths through is standing on the ground.
     canHitAir: true,
-    damage: 9,
+    damage: 10,
     splashRadius: 0,
-    // One coil, one enemy. Against a single target 8.2 damage per second for
-    // 150 minerals is the worst rate in the game; against three it is the best.
+    // One coil, one enemy. Weak against a single target, efficient against
+    // a spread-out squad or light air that a ground splash weapon cannot hit.
     maxTargets: 3,
     pierce: false,
     armor: 0,
@@ -640,7 +644,7 @@ export const DEFS: readonly EntityDef[] = [
     attackForeswing: seconds(0.3),
     attackCooldown: seconds(1.1),
     mineralCost: 150,
-    buildTicks: seconds(28),
+    buildTicks: seconds(23),
     supplyCost: 3,
     supplyProvided: 0,
     produces: NONE,
@@ -659,11 +663,11 @@ export const DEFS: readonly EntityDef[] = [
     accelFraction: fromFloat(0.18),
     turnPerTick: fromFloat(0.35),
     sightRange: fromFloat(9),
-    // The longest reach on the field, and two tiles past a Turret.
+    // Long reach for picking apart armoured front lines behind an escort.
     attackRange: fromFloat(8.0),
     minRange: 0,
     canHitAir: true,
-    damage: 20,
+    damage: 26,
     splashRadius: 0,
     maxTargets: 1,
     // The rail is horizontal and the bolt does not stop. Everything standing
@@ -677,7 +681,7 @@ export const DEFS: readonly EntityDef[] = [
     attackForeswing: seconds(0.5),
     attackCooldown: seconds(2.0),
     mineralCost: 125,
-    buildTicks: seconds(26),
+    buildTicks: seconds(22),
     supplyCost: 3,
     supplyProvided: 0,
     produces: NONE,
@@ -700,7 +704,7 @@ export const DEFS: readonly EntityDef[] = [
     // The barrel points at the sky. It cannot be aimed at its own feet.
     minRange: fromFloat(2.5),
     canHitAir: false,
-    damage: 30,
+    damage: 36,
     splashRadius: fromFloat(2.2),
     maxTargets: 1,
     pierce: false,
@@ -709,9 +713,9 @@ export const DEFS: readonly EntityDef[] = [
     repairAmount: 0,
     detonates: false,
     attackForeswing: seconds(0.6),
-    attackCooldown: seconds(2.6),
+    attackCooldown: seconds(2.4),
     mineralCost: 175,
-    buildTicks: seconds(32),
+    buildTicks: seconds(27),
     supplyCost: 3,
     supplyProvided: 0,
     produces: NONE,
@@ -739,7 +743,7 @@ export const DEFS: readonly EntityDef[] = [
     maxTargets: 1,
     pierce: false,
     // 4 off every hit. A Burstbot's 6 becomes 2, so the cheap line unit needs
-    // three times as long; a Sentry's 30 becomes 26 and barely notices.
+    // three times as long; a Sentry's 36 becomes 32 and barely notices.
     armor: 4,
     chillTicks: 0,
     repairAmount: 0,
@@ -747,7 +751,7 @@ export const DEFS: readonly EntityDef[] = [
     attackForeswing: seconds(0.5),
     attackCooldown: seconds(1.5),
     mineralCost: 250,
-    buildTicks: seconds(40),
+    buildTicks: seconds(32),
     supplyCost: 5,
     supplyProvided: 0,
     produces: NONE,
@@ -783,8 +787,8 @@ export const DEFS: readonly EntityDef[] = [
     attackForeswing: seconds(0.4),
     attackCooldown: seconds(1.4),
     mineralCost: 225,
-    buildTicks: seconds(38),
-    supplyCost: 5,
+    buildTicks: seconds(30),
+    supplyCost: 4,
     supplyProvided: 0,
     produces: NONE,
   },
@@ -819,10 +823,42 @@ export const DEFS: readonly EntityDef[] = [
     attackForeswing: seconds(0.4),
     attackCooldown: seconds(1.6),
     mineralCost: 225,
-    buildTicks: seconds(36),
+    buildTicks: seconds(30),
     supplyCost: 4,
     supplyProvided: 0,
     produces: NONE,
+  },
+  {
+    type: EntityType.Airport,
+    name: 'Airport',
+    isBuilding: true,
+    collides: true,
+    flying: false,
+    maxHp: 1000,
+    radius: fromFloat(1.5),
+    footprint: 3,
+    speedPerTick: 0,
+    accelFraction: fromFloat(0.22),
+    turnPerTick: 0,
+    sightRange: fromFloat(7),
+    attackRange: 0,
+    minRange: 0,
+    canHitAir: true,
+    damage: 0,
+    splashRadius: 0,
+    maxTargets: 1,
+    pierce: false,
+    armor: 0,
+    chillTicks: 0,
+    repairAmount: 0,
+    detonates: false,
+    attackForeswing: 0,
+    attackCooldown: 0,
+    mineralCost: 200,
+    buildTicks: seconds(35),
+    supplyCost: 0,
+    supplyProvided: 0,
+    produces: [EntityType.Beamdrone, EntityType.Plasmodrone],
   },
 ];
 
@@ -861,6 +897,74 @@ for (let i = 0; i < DEFS.length; i++) {
 
 export function defOf(type: EntityType): EntityDef {
   return DEFS[type]!;
+}
+
+export interface BuildingUpgrade {
+  readonly mineralCost: number;
+  readonly buildTicks: number;
+}
+
+const BARRACKS_UPGRADE: BuildingUpgrade = { mineralCost: 100, buildTicks: seconds(20) };
+const FACTORY_UPGRADE: BuildingUpgrade = { mineralCost: 150, buildTicks: seconds(30) };
+const BARRACKS_LEVEL_ONE = DEFS[EntityType.Barracks]!.produces.slice(0, 3);
+const FACTORY_LEVEL_ONE = DEFS[EntityType.Factory]!.produces.slice(0, 3);
+
+/** The sole level-one to level-two upgrade, when this building has one. */
+export function buildingUpgrade(type: EntityType): BuildingUpgrade | undefined {
+  if (type === EntityType.Barracks) return BARRACKS_UPGRADE;
+  if (type === EntityType.Factory) return FACTORY_UPGRADE;
+  return undefined;
+}
+
+/** Units this individual building may train at its current level. */
+export function productionOptions(type: EntityType, level = 1): readonly EntityType[] {
+  if (level < 2) {
+    if (type === EntityType.Barracks) return BARRACKS_LEVEL_ONE;
+    if (type === EntityType.Factory) return FACTORY_LEVEL_ONE;
+  }
+  return defOf(type).produces;
+}
+
+/** Tactical guidance shown before training and when inspecting a unit. */
+const ROLES: Readonly<Record<EntityType, string>> = {
+  [EntityType.Worker]: 'Mines minerals and constructs buildings. Keep it out of combat.',
+  [EntityType.Burstbot]:
+    'Affordable ranged fire and anti-air. Spread out against splash; avoid armoured golems.',
+  [EntityType.Slicebot]:
+    'Fast melee flanker and frontline escort. Close on ranged units; cannot hit air.',
+  [EntityType.CommandPost]:
+    'Trains workers and receives minerals. Build near an expansion to grow your economy.',
+  [EntityType.Depot]: 'Raises your supply limit. Build before your production runs out of room.',
+  [EntityType.Barracks]: 'Trains infantry. Upgrade to level 2 for Arclight and Fixomatic support.',
+  [EntityType.Turret]: 'Defends against ground and air. Vulnerable to long-range siege.',
+  [EntityType.MineralPatch]:
+    'Send workers here to gather minerals; nearby Command Posts shorten the return trip.',
+  [EntityType.Beamdrone]:
+    'Fast flying raider. Cross cliffs to reach exposed workers; avoid massed anti-air.',
+  [EntityType.Boomwalker]:
+    'One-use blast against packed ground troops. Flank into a crowd; cannot hit air.',
+  [EntityType.Fixomatic]:
+    'Repairs nearby allied robots. Escort with fighters; cannot attack or repair buildings.',
+  [EntityType.Factory]:
+    'Trains vehicles and artillery. Upgrade to level 2 for Dark Golem and Ice Golem.',
+  [EntityType.Firespout]:
+    'Short-range splash brawler against ground swarms. Vulnerable to air and long-range fire.',
+  [EntityType.Arclight]:
+    'Hits three separate enemies, including air. Effective against spread-out squads; weak one on one.',
+  [EntityType.Piercebot]:
+    'Long-range piercing fire and heavy hits against armour. Keep a frontline between it and melee.',
+  [EntityType.Sentry]:
+    'Long-range splash breaks fortified positions. Needs an escort for its dead zone; cannot hit air.',
+  [EntityType.DarkGolem]:
+    'Armoured frontline tank against small hits. Vulnerable to heavy shots and air.',
+  [EntityType.IceGolem]: 'Slows a target so your army can catch it. Supports melee and covers air.',
+  [EntityType.Plasmodrone]:
+    'Heavy flying splash against clustered armies. Expensive and vulnerable to focused anti-air.',
+  [EntityType.Airport]: 'Trains Beamdrone and Plasmodrone aircraft. No upgrade required.',
+};
+
+export function unitRole(type: EntityType): string {
+  return ROLES[type];
 }
 
 /**
@@ -930,7 +1034,9 @@ export function abilityText(def: EntityDef): string[] {
 // Global economy and match rules
 // ---------------------------------------------------------------------------
 
-export const STARTING_MINERALS = 50;
+// A Barracks and a Worker immediately, or save toward an expansion. The
+// first decision should be a build order, rather than waiting for a delivery.
+export const STARTING_MINERALS = 200;
 export const STARTING_WORKERS = 6;
 
 /** Hard ceiling on supply regardless of how many depots are built. */

@@ -309,6 +309,10 @@ function moveFlyers(world: World): void {
 
     const order = pool.order[i]!;
     if (order === Order.None || order === Order.Hold) continue;
+    // A flying attack-mover has no route for combat to clear. Hand pursuit to
+    // engageNearby explicitly, or it keeps flying past the target while firing
+    // and can receive a second movement step from that pass on the same tick.
+    if (order === Order.AttackMove && shouldPursue(world, i, def)) continue;
 
     // Chase orders track the target's live position; ground orders head for the
     // commanded point.
@@ -380,7 +384,31 @@ function followFlowFields(world: World, fields: FlowFieldCache): void {
     // for the rest of the match, since only their own spread point counts as
     // arriving and they are being pushed away from it. Measured on open ground:
     // 20 of 24 units in a group move never came to rest.
-    if (distToGoal <= FORMATION_APPROACH) {
+    const flip = world.flipOf(pool.owner[i]!);
+    // Large selections spread beyond the old three-tile handoff. Include the
+    // slot's distance from the shared goal or far-side units keep steering back
+    // into the centre before they ever get close enough to their own slot.
+    const approachReach = Math.max(
+      FORMATION_APPROACH,
+      vecDist(
+        pool.orderX[i]!,
+        pool.orderY[i]!,
+        tileCentreX(world.map, goal),
+        tileCentreY(world.map, goal),
+      ) + ARRIVAL_REACH,
+    );
+    if (
+      distToGoal <= FORMATION_APPROACH ||
+      (distToGoal <= approachReach &&
+        lineOfSightClear(
+          world.map,
+          pool.posX[i]!,
+          pool.posY[i]!,
+          pool.orderX[i]!,
+          pool.orderY[i]!,
+          flip,
+        ))
+    ) {
       stepToward(
         world,
         i,
@@ -393,7 +421,6 @@ function followFlowFields(world: World, fields: FlowFieldCache): void {
     }
 
     const field = fields.get(world.map, goal);
-    const flip = world.flipOf(pool.owner[i]!);
     const here = world.map.tileOfPosFor(pool.posX[i]!, pool.posY[i]!, flip);
     if (here < 0 || field.isStranded(here)) {
       // No route from here — give up rather than jitter against a wall.

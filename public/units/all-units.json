@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "models": [
     {
       "unit": "Footman",
@@ -7,7 +7,9 @@
       "file": "kevin.glb",
       "skins": [
         "kevin-blue.ktx2",
-        "kevin-red.ktx2"
+        "kevin-teal.ktx2",
+        "kevin-red.ktx2",
+        "kevin-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -41,7 +43,9 @@
       "file": "archer.glb",
       "skins": [
         "archer-blue.ktx2",
-        "archer-red.ktx2"
+        "archer-teal.ktx2",
+        "archer-red.ktx2",
+        "archer-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -75,7 +79,9 @@
       "file": "valkyrie.glb",
       "skins": [
         "valkyrie-blue.ktx2",
-        "valkyrie-red.ktx2"
+        "valkyrie-teal.ktx2",
+        "valkyrie-red.ktx2",
+        "valkyrie-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -109,7 +115,9 @@
       "file": "dark-mage.glb",
       "skins": [
         "dark-mage-blue.ktx2",
-        "dark-mage-red.ktx2"
+        "dark-mage-teal.ktx2",
+        "dark-mage-red.ktx2",
+        "dark-mage-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -143,7 +151,9 @@
       "file": "ice-mage.glb",
       "skins": [
         "ice-mage-blue.ktx2",
-        "ice-mage-red.ktx2"
+        "ice-mage-teal.ktx2",
+        "ice-mage-red.ktx2",
+        "ice-mage-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -177,7 +187,9 @@
       "file": "blunderbuss.glb",
       "skins": [
         "blunderbuss-blue.ktx2",
-        "blunderbuss-red.ktx2"
+        "blunderbuss-teal.ktx2",
+        "blunderbuss-red.ktx2",
+        "blunderbuss-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -211,7 +223,9 @@
       "file": "boomerang.glb",
       "skins": [
         "boomerang-blue.ktx2",
-        "boomerang-red.ktx2"
+        "boomerang-teal.ktx2",
+        "boomerang-red.ktx2",
+        "boomerang-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -245,7 +259,9 @@
       "file": "priest.glb",
       "skins": [
         "priest-blue.ktx2",
-        "priest-red.ktx2"
+        "priest-teal.ktx2",
+        "priest-red.ktx2",
+        "priest-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -279,7 +295,9 @@
       "file": "knight.glb",
       "skins": [
         "knight-blue.ktx2",
-        "knight-red.ktx2"
+        "knight-teal.ktx2",
+        "knight-red.ktx2",
+        "knight-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -313,7 +331,9 @@
       "file": "griffin-rider.glb",
       "skins": [
         "griffin-rider-blue.ktx2",
-        "griffin-rider-red.ktx2"
+        "griffin-rider-teal.ktx2",
+        "griffin-rider-red.ktx2",
+        "griffin-rider-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -348,7 +368,9 @@
       "file": "rider.glb",
       "skins": [
         "rider-blue.ktx2",
-        "rider-red.ktx2"
+        "rider-teal.ktx2",
+        "rider-red.ktx2",
+        "rider-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -382,7 +404,9 @@
       "file": "fire-mage.glb",
       "skins": [
         "fire-mage-blue.ktx2",
-        "fire-mage-red.ktx2"
+        "fire-mage-teal.ktx2",
+        "fire-mage-red.ktx2",
+        "fire-mage-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -416,7 +440,9 @@
       "file": "sniper.glb",
       "skins": [
         "sniper-blue.ktx2",
-        "sniper-red.ktx2"
+        "sniper-teal.ktx2",
+        "sniper-red.ktx2",
+        "sniper-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -450,7 +476,9 @@
       "file": "bomb.glb",
       "skins": [
         "bomb-blue.ktx2",
-        "bomb-red.ktx2"
+        "bomb-teal.ktx2",
+        "bomb-red.ktx2",
+        "bomb-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -484,7 +512,9 @@
       "file": "revolver.glb",
       "skins": [
         "revolver-blue.ktx2",
-        "revolver-red.ktx2"
+        "revolver-teal.ktx2",
+        "revolver-red.ktx2",
+        "revolver-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -518,7 +548,9 @@
       "file": "sword-machine.glb",
       "skins": [
         "sword-machine-blue.ktx2",
-        "sword-machine-red.ktx2"
+        "sword-machine-teal.ktx2",
+        "sword-machine-red.ktx2",
+        "sword-machine-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -552,7 +584,9 @@
       "file": "flamethrower.glb",
       "skins": [
         "flamethrower-blue.ktx2",
-        "flamethrower-red.ktx2"
+        "flamethrower-teal.ktx2",
+        "flamethrower-red.ktx2",
+        "flamethrower-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -586,7 +620,9 @@
       "file": "cannon.glb",
       "skins": [
         "cannon-blue.ktx2",
-        "cannon-red.ktx2"
+        "cannon-teal.ktx2",
+        "cannon-red.ktx2",
+        "cannon-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -620,7 +656,9 @@
       "file": "beam-ship.glb",
       "skins": [
         "beam-ship-blue.ktx2",
-        "beam-ship-red.ktx2"
+        "beam-ship-teal.ktx2",
+        "beam-ship-red.ktx2",
+        "beam-ship-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -654,7 +692,9 @@
       "file": "tesla-coil.glb",
       "skins": [
         "tesla-coil-blue.ktx2",
-        "tesla-coil-red.ktx2"
+        "tesla-coil-teal.ktx2",
+        "tesla-coil-red.ktx2",
+        "tesla-coil-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -688,7 +728,9 @@
       "file": "healing-machine.glb",
       "skins": [
         "healing-machine-blue.ktx2",
-        "healing-machine-red.ktx2"
+        "healing-machine-teal.ktx2",
+        "healing-machine-red.ktx2",
+        "healing-machine-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -722,7 +764,9 @@
       "file": "flying-machine.glb",
       "skins": [
         "flying-machine-blue.ktx2",
-        "flying-machine-red.ktx2"
+        "flying-machine-teal.ktx2",
+        "flying-machine-red.ktx2",
+        "flying-machine-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -756,7 +800,9 @@
       "file": "ballista.glb",
       "skins": [
         "ballista-blue.ktx2",
-        "ballista-red.ktx2"
+        "ballista-teal.ktx2",
+        "ballista-red.ktx2",
+        "ballista-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -790,7 +836,9 @@
       "file": "dark-golem.glb",
       "skins": [
         "dark-golem-blue.ktx2",
-        "dark-golem-red.ktx2"
+        "dark-golem-teal.ktx2",
+        "dark-golem-red.ktx2",
+        "dark-golem-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -824,7 +872,9 @@
       "file": "ice-golem.glb",
       "skins": [
         "ice-golem-blue.ktx2",
-        "ice-golem-red.ktx2"
+        "ice-golem-teal.ktx2",
+        "ice-golem-red.ktx2",
+        "ice-golem-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -858,7 +908,9 @@
       "file": "lizard.glb",
       "skins": [
         "lizard-blue.ktx2",
-        "lizard-red.ktx2"
+        "lizard-teal.ktx2",
+        "lizard-red.ktx2",
+        "lizard-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -892,7 +944,9 @@
       "file": "squirrel.glb",
       "skins": [
         "squirrel-blue.ktx2",
-        "squirrel-red.ktx2"
+        "squirrel-teal.ktx2",
+        "squirrel-red.ktx2",
+        "squirrel-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -926,7 +980,9 @@
       "file": "wolf.glb",
       "skins": [
         "wolf-blue.ktx2",
-        "wolf-red.ktx2"
+        "wolf-teal.ktx2",
+        "wolf-red.ktx2",
+        "wolf-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -960,7 +1016,9 @@
       "file": "baby-dragon.glb",
       "skins": [
         "baby-dragon-blue.ktx2",
-        "baby-dragon-red.ktx2"
+        "baby-dragon-teal.ktx2",
+        "baby-dragon-red.ktx2",
+        "baby-dragon-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -994,7 +1052,9 @@
       "file": "infestor.glb",
       "skins": [
         "infestor-blue.ktx2",
-        "infestor-red.ktx2"
+        "infestor-teal.ktx2",
+        "infestor-red.ktx2",
+        "infestor-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1028,7 +1088,9 @@
       "file": "parasite.glb",
       "skins": [
         "parasite-blue.ktx2",
-        "parasite-red.ktx2"
+        "parasite-teal.ktx2",
+        "parasite-red.ktx2",
+        "parasite-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1062,7 +1124,9 @@
       "file": "flying-parasite.glb",
       "skins": [
         "flying-parasite-blue.ktx2",
-        "flying-parasite-red.ktx2"
+        "flying-parasite-teal.ktx2",
+        "flying-parasite-red.ktx2",
+        "flying-parasite-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1096,7 +1160,9 @@
       "file": "mushroom.glb",
       "skins": [
         "mushroom-blue.ktx2",
-        "mushroom-red.ktx2"
+        "mushroom-teal.ktx2",
+        "mushroom-red.ktx2",
+        "mushroom-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1130,7 +1196,9 @@
       "file": "frog.glb",
       "skins": [
         "frog-blue.ktx2",
-        "frog-red.ktx2"
+        "frog-teal.ktx2",
+        "frog-red.ktx2",
+        "frog-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1164,7 +1232,9 @@
       "file": "spider.glb",
       "skins": [
         "spider-blue.ktx2",
-        "spider-red.ktx2"
+        "spider-teal.ktx2",
+        "spider-red.ktx2",
+        "spider-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1198,7 +1268,9 @@
       "file": "giant-slime.glb",
       "skins": [
         "giant-slime-blue.ktx2",
-        "giant-slime-red.ktx2"
+        "giant-slime-teal.ktx2",
+        "giant-slime-red.ktx2",
+        "giant-slime-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1232,7 +1304,9 @@
       "file": "big-slime.glb",
       "skins": [
         "big-slime-blue.ktx2",
-        "big-slime-red.ktx2"
+        "big-slime-teal.ktx2",
+        "big-slime-red.ktx2",
+        "big-slime-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1266,7 +1340,9 @@
       "file": "slime.glb",
       "skins": [
         "slime-blue.ktx2",
-        "slime-red.ktx2"
+        "slime-teal.ktx2",
+        "slime-red.ktx2",
+        "slime-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1300,7 +1376,9 @@
       "file": "treant.glb",
       "skins": [
         "treant-blue.ktx2",
-        "treant-red.ktx2"
+        "treant-teal.ktx2",
+        "treant-red.ktx2",
+        "treant-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1335,7 +1413,9 @@
       "file": "fire-dragon.glb",
       "skins": [
         "fire-dragon-blue.ktx2",
-        "fire-dragon-red.ktx2"
+        "fire-dragon-teal.ktx2",
+        "fire-dragon-red.ktx2",
+        "fire-dragon-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1370,7 +1450,9 @@
       "file": "ice-dragon.glb",
       "skins": [
         "ice-dragon-blue.ktx2",
-        "ice-dragon-red.ktx2"
+        "ice-dragon-teal.ktx2",
+        "ice-dragon-red.ktx2",
+        "ice-dragon-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1405,7 +1487,9 @@
       "file": "zombie.glb",
       "skins": [
         "zombie-blue.ktx2",
-        "zombie-red.ktx2"
+        "zombie-teal.ktx2",
+        "zombie-red.ktx2",
+        "zombie-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1439,7 +1523,9 @@
       "file": "bone-archer.glb",
       "skins": [
         "bone-archer-blue.ktx2",
-        "bone-archer-red.ktx2"
+        "bone-archer-teal.ktx2",
+        "bone-archer-red.ktx2",
+        "bone-archer-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1473,7 +1559,9 @@
       "file": "vampire.glb",
       "skins": [
         "vampire-blue.ktx2",
-        "vampire-red.ktx2"
+        "vampire-teal.ktx2",
+        "vampire-red.ktx2",
+        "vampire-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1507,7 +1595,9 @@
       "file": "necromancer.glb",
       "skins": [
         "necromancer-blue.ktx2",
-        "necromancer-red.ktx2"
+        "necromancer-teal.ktx2",
+        "necromancer-red.ktx2",
+        "necromancer-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1541,7 +1631,9 @@
       "file": "skeleton.glb",
       "skins": [
         "skeleton-blue.ktx2",
-        "skeleton-red.ktx2"
+        "skeleton-teal.ktx2",
+        "skeleton-red.ktx2",
+        "skeleton-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1575,7 +1667,9 @@
       "file": "inferno.glb",
       "skins": [
         "inferno-blue.ktx2",
-        "inferno-red.ktx2"
+        "inferno-teal.ktx2",
+        "inferno-red.ktx2",
+        "inferno-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1609,7 +1703,9 @@
       "file": "reaper.glb",
       "skins": [
         "reaper-blue.ktx2",
-        "reaper-red.ktx2"
+        "reaper-teal.ktx2",
+        "reaper-red.ktx2",
+        "reaper-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1643,7 +1739,9 @@
       "file": "skeleton-mage.glb",
       "skins": [
         "skeleton-mage-blue.ktx2",
-        "skeleton-mage-red.ktx2"
+        "skeleton-mage-teal.ktx2",
+        "skeleton-mage-red.ktx2",
+        "skeleton-mage-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1677,7 +1775,9 @@
       "file": "death-knight.glb",
       "skins": [
         "death-knight-blue.ktx2",
-        "death-knight-red.ktx2"
+        "death-knight-teal.ktx2",
+        "death-knight-red.ktx2",
+        "death-knight-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1711,7 +1811,9 @@
       "file": "banshee.glb",
       "skins": [
         "banshee-blue.ktx2",
-        "banshee-red.ktx2"
+        "banshee-teal.ktx2",
+        "banshee-red.ktx2",
+        "banshee-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1745,7 +1847,9 @@
       "file": "sphinx.glb",
       "skins": [
         "sphinx-blue.ktx2",
-        "sphinx-red.ktx2"
+        "sphinx-teal.ktx2",
+        "sphinx-red.ktx2",
+        "sphinx-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1780,7 +1884,9 @@
       "file": "skeletal-dragon.glb",
       "skins": [
         "skeletal-dragon-blue.ktx2",
-        "skeletal-dragon-red.ktx2"
+        "skeletal-dragon-teal.ktx2",
+        "skeletal-dragon-red.ktx2",
+        "skeletal-dragon-orange.ktx2"
       ],
       "clips": {
         "run": {
@@ -1815,7 +1921,9 @@
       "file": "frost-lich.glb",
       "skins": [
         "frost-lich-blue.ktx2",
-        "frost-lich-red.ktx2"
+        "frost-lich-teal.ktx2",
+        "frost-lich-red.ktx2",
+        "frost-lich-orange.ktx2"
       ],
       "clips": {
         "run": {

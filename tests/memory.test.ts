@@ -15,7 +15,7 @@ import { duelMatch } from '../src/sim/match.js';
 import { Simulation } from '../src/sim/tick.js';
 import { EntityType, NO_ENTITY } from '../src/sim/types.js';
 import type { World } from '../src/sim/world.js';
-import { Visibility } from '../src/vision/visibility.js';
+import { VISIBLE, Visibility } from '../src/vision/visibility.js';
 
 /** A duel world with the starting workers moved far out of the way. */
 function quietWorld(): { sim: Simulation; world: World } {
@@ -52,6 +52,30 @@ function look(world: World, vis: Visibility, mem: EntityMemory, ticks = 1): void
 }
 
 describe('entity memory', () => {
+  it.each([0, 1])('keeps a building when only its edge is visible to seat %i', (viewer) => {
+    const { world } = quietWorld();
+    const vis = new Visibility(world.map);
+    const mem = new EntityMemory(viewer);
+    const depot = world.placeBuilding(EntityType.Depot, 1 - viewer, 60, 60);
+    const i = depot & 0xffff;
+    const centre = world.map.tileOfPosFor(
+      world.pool.posX[i]!,
+      world.pool.posY[i]!,
+      world.flipOf(viewer),
+    );
+    vis.state[centre] = VISIBLE;
+    mem.update(world, vis);
+    expect(mem.get(depot)).toBeDefined();
+
+    world.tick++;
+    vis.state.fill(0);
+    const corner =
+      world.map.index(60, 60) === centre ? world.map.index(61, 61) : world.map.index(60, 60);
+    vis.state[corner] = VISIBLE;
+    mem.update(world, vis);
+    expect(mem.get(depot)).toBeDefined();
+  });
+
   it('remembers a unit it saw and forgets it after a while', () => {
     const { world } = quietWorld();
     const vis = new Visibility(world.map);

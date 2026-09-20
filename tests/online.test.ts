@@ -212,6 +212,61 @@ function watchWire(net: FakeRoomNetwork): {
 }
 
 describe('the handshake over a room', () => {
+  it('rejects malformed handshake data without throwing from the message callback', async () => {
+    const net = new FakeRoomNetwork({ latencyMs: 10 });
+    const joining = joinOnlineRoom(
+      { roomCode: ROOM, seed: SEED, mode: 'm' },
+      1000,
+      net.provider('peer-a'),
+    );
+    const other = net.join('peer-b', ROOM);
+    net.advance(20);
+    void other.makeAction('hello').send(null, { target: 'peer-a' });
+    expect(() => net.advance(20)).not.toThrow();
+    await expect(joining).rejects.toThrow('invalid game handshake');
+    expect(net.members(ROOM)).not.toContain('peer-a');
+  });
+
+  it("agrees on slot zero's seed when callers propose different seeds", async () => {
+    const net = new FakeRoomNetwork({ latencyMs: 10, jitterMs: 30 });
+    const joins = ['peer-z', 'peer-a'].map((id, i) =>
+      joinOnlineRoom({ roomCode: ROOM, seed: 100 + i, mode: 'm' }, 1000, net.provider(id)),
+    );
+    const results = await settle(net, joins);
+    expect(results.map((result) => result.seed)).toEqual([101, 101]);
+  });
+
+  it('never resolves against a peer that chose someone else during simultaneous joins', async () => {
+    vi.useFakeTimers();
+    try {
+      for (let seed = 1; seed <= 8; seed++) {
+        const net = new FakeRoomNetwork({ seed, latencyMs: 10, jitterMs: 30 });
+        const results = new Map<string, JoinResult>();
+        const joins = ['peer-a', 'peer-b', 'peer-c'].map((id) =>
+          joinOnlineRoom({ roomCode: ROOM, seed: SEED, mode: 'm' }, 1000, net.provider(id)).then(
+            (result) => {
+              results.set(id, result);
+            },
+            () => undefined,
+          ),
+        );
+        for (let frame = 0; frame < 40; frame++) {
+          net.advance(50);
+          await Promise.resolve();
+        }
+        vi.advanceTimersByTime(1000);
+        await Promise.all(joins);
+        for (const [id, result] of results) {
+          const partner = results.get(pairedId(result)!);
+          expect(partner, `${id} settled against ${pairedId(result)}`).toBeDefined();
+          expect(pairedId(partner!)).toBe(id);
+        }
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('settles both peers on complementary slots, however discovery is ordered', async () => {
     for (let seed = 1; seed <= 8; seed++) {
       const net = new FakeRoomNetwork({ seed, latencyMs: 30, jitterMs: 40 });

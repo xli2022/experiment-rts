@@ -150,7 +150,9 @@ export class NeuralAgent implements Agent {
         if (
           command.type === CommandType.Train ||
           command.type === CommandType.CancelTrain ||
-          command.type === CommandType.SetRally
+          command.type === CommandType.SetRally ||
+          command.type === CommandType.UpgradeBuilding ||
+          command.type === CommandType.CancelUpgrade
         ) {
           this.recent.lastUnits.add(command.building);
         }

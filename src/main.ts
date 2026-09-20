@@ -9,8 +9,9 @@
  */
 
 import * as THREE from 'three';
-import { defOf } from './config/rules.js';
+import { buildingUpgrade, defOf, productionOptions, unitRole } from './config/rules.js';
 import { AgentDriver } from './ai/driver.js';
+import { chunkCommands } from './ai/agent.js';
 import { createHostedAgents, type AgentDeps } from './ai/factory.js';
 import { NeuralAgent, type NeuralRuntimeStats, type NeuralStats } from './ai/neural/agent.js';
 import { loadNeuralRuntime } from './ai/neural/browser.js';
@@ -28,6 +29,7 @@ import {
   BuildState,
   EntityType,
   NO_ENTITY,
+  TICKS_PER_SECOND,
   type PlayerId,
   type TeamId,
 } from './sim/types.js';
@@ -49,7 +51,8 @@ import { onFullscreenChange } from './ui/fullscreen.js';
 const BUILD_MENU: { type: EntityType; key: string }[] = [
   { type: EntityType.Depot, key: 'D' },
   { type: EntityType.Barracks, key: 'B' },
-  { type: EntityType.Foundry, key: 'Y' },
+  { type: EntityType.Factory, key: 'F' },
+  { type: EntityType.Airport, key: 'P' },
   { type: EntityType.Turret, key: 'T' },
   // A Command Post can go anywhere, like any other structure — what makes the
   // expansion sites worth walking to is the mineral line already sitting there.
@@ -60,28 +63,29 @@ const BUILD_MENU: { type: EntityType; key: string }[] = [
  * Explicit production bindings; authored names do not necessarily have unique
  * initials.
  *
- * Unique *within a card*, not globally — the card is contextual, so a Foundry
+ * Unique *within a card*, not globally — the card is contextual, so a Factory
  * and a Barracks are never on screen at once and are free to reuse a letter.
- * `D` is the drone each of them makes. What is genuinely reserved is `M`, `F`
- * and `V`, which `handleKey` answers before the card ever sees them, and `X`,
- * which is always Cancel.
+ * `M` and `V` are global toggles, and `X` is always Cancel. `U` upgrades a
+ * production building. `F` builds a Factory from the worker card and toggles
+ * fullscreen outside that context.
  */
 const TRAIN_HOTKEYS: Readonly<Partial<Record<EntityType, string>>> = {
   [EntityType.Worker]: 'W',
   // Barracks.
   [EntityType.Burstbot]: 'B',
   [EntityType.Slicebot]: 'S',
-  [EntityType.Boomwalker]: 'O',
-  [EntityType.Beamdrone]: 'D',
-  [EntityType.Fixomatic]: 'R',
-  // Foundry.
   [EntityType.Firespout]: 'L',
   [EntityType.Arclight]: 'A',
+  [EntityType.Fixomatic]: 'R',
+  // Factory.
+  [EntityType.Boomwalker]: 'O',
   [EntityType.Piercebot]: 'P',
   [EntityType.Sentry]: 'N',
   [EntityType.DarkGolem]: 'G',
   [EntityType.IceGolem]: 'I',
-  [EntityType.Plasmodrone]: 'D',
+  // Airport.
+  [EntityType.Beamdrone]: 'D',
+  [EntityType.Plasmodrone]: 'P',
 };
 
 function trainHotkey(type: EntityType): string {
@@ -148,6 +152,7 @@ class Game {
   private pointerNdc = new THREE.Vector2();
   private lastFrameMs = 0;
   private finished = false;
+  private conceded = false;
   private neuralWarned = false;
   /** True once the local player has been told they are out of a running match. */
   private knockedOut = false;
@@ -202,7 +207,7 @@ class Game {
       }
     });
 
-    this.selection = new Selection(this.localPlayer);
+    this.selection = new Selection(this.localPlayer, this.canSeeEntity);
     this.hud = new Hud(
       uiRoot,
       this.mapSize,
@@ -259,6 +264,9 @@ class Game {
         );
       },
       onDesync: (tick) => {
+        this.finished = true;
+        this.stopAgents();
+        this.hud.setSurrenderAvailable(false);
         this.gallery.close();
         this.hud.showDialog(
           'Desynchronised',
@@ -350,15 +358,22 @@ class Game {
   // Input
   // -------------------------------------------------------------------------
 
+  private readonly canSeeEntity = (index: number): boolean =>
+    this.fog.shouldDraw(this.sim.world, index, this.localPlayer);
+
   private attachInput(canvas: HTMLCanvasElement): void {
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-    canvas.addEventListener('pointermove', (e) => {
+    const updatePointer = (e: PointerEvent): void => {
       const rect = canvas.getBoundingClientRect();
       this.pointerNdc.set(
         ((e.clientX - rect.left) / rect.width) * 2 - 1,
         -((e.clientY - rect.top) / rect.height) * 2 + 1,
       );
+    };
+
+    canvas.addEventListener('pointermove', (e) => {
+      updatePointer(e);
       this.camera.overUi = this.hud.pointerOverUi;
 
       if (this.dragStart) this.updateMarquee(e.clientX, e.clientY);
@@ -367,6 +382,7 @@ class Game {
 
     canvas.addEventListener('pointerdown', (e) => {
       if (this.hud.pointerOverUi || this.finished) return;
+      updatePointer(e);
       if (e.button === 0) {
         if (this.placing !== null) {
           this.placeBuilding();
@@ -387,6 +403,7 @@ class Game {
 
     window.addEventListener('pointerup', (e) => {
       if (e.button !== 0 || !this.dragStart) return;
+      updatePointer(e);
       const dx = Math.abs(e.clientX - this.dragStart.x);
       const dy = Math.abs(e.clientY - this.dragStart.y);
       // A short drag is a click, not a box — otherwise a slightly shaky click
@@ -401,7 +418,14 @@ class Game {
   }
 
   private handleKey(e: KeyboardEvent): void {
-    if (e.target instanceof HTMLInputElement) return;
+    const target = e.target as HTMLElement | null;
+    if (
+      target?.isContentEditable ||
+      target?.tagName === 'INPUT' ||
+      target?.tagName === 'TEXTAREA' ||
+      target?.tagName === 'SELECT'
+    )
+      return;
     if (this.gallery.isOpen) return;
     // A dialog already swallows the pointer; it has to swallow the keyboard
     // too. The surrender confirmation is the first one a player answers
@@ -409,9 +433,44 @@ class Game {
     // and a command-card letter was queueing a unit in the match they were
     // deciding whether to concede.
     if (this.hud.dialogOpen) return;
+    // These are discrete actions. Holding a key must not queue whole-army
+    // orders faster than the command channel can send them, or toggle settings.
+    if (e.repeat) {
+      if (
+        (e.code === 'F1' || e.code === 'F2') &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        !e.shiftKey
+      )
+        e.preventDefault();
+      return;
+    }
 
     if (e.code === 'Escape') {
       this.cancelModes();
+      return;
+    }
+
+    if (e.code === 'F1' || e.code === 'F2') {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+      e.preventDefault();
+      if (this.finished || this.sim.world.player(this.localPlayer).defeated) return;
+      const worker = e.code === 'F1';
+      const result = worker
+        ? this.selection.selectIdleWorker(this.sim.world)
+          ? 'again'
+          : 'missing'
+        : this.selection.selectArmy(this.sim.world);
+      if (result === 'missing') return;
+      this.cancelModes();
+      this.dragStart = null;
+      this.hud.marquee.style.display = 'none';
+      if (result === 'again') {
+        const at = this.selection.centroid(this.sim.world);
+        if (at) this.camera.lookAt(at.x, at.z);
+      }
+      audio.play('select', 0.7);
       return;
     }
 
@@ -430,13 +489,19 @@ class Game {
       return;
     }
 
-    // Global toggles first, so they work regardless of what is selected.
+    // Mute and fog are global toggles, independent of the command card.
     if (e.code === 'KeyM') {
       this.hud.toggleMute();
       return;
     }
     if (e.code === 'KeyF') {
-      void this.hud.toggleFullscreen();
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      // Selection can change between frames. Resolve the current build menu
+      // before deciding whether F means Factory or fullscreen, including when
+      // the Factory button is disabled because minerals are short.
+      this.commandButtons = this.buildCommandCard();
+      if (this.dispatchCommandKey(e.code)) e.preventDefault();
+      else void this.hud.toggleFullscreen();
       return;
     }
     // Does nothing in a match that was not offered the button, so it costs the
@@ -475,7 +540,10 @@ class Game {
         }
         break;
       case 'KeyA':
-        if (this.selection.hasOwnUnits(this.sim.world)) this.attackMovePending = true;
+        if (this.selection.hasOwnUnits(this.sim.world)) {
+          this.cancelModes();
+          this.attackMovePending = true;
+        }
         break;
       default:
         break;
@@ -529,6 +597,7 @@ class Game {
       this.pointerNdc.x,
       this.pointerNdc.y,
       this.localPlayer,
+      this.canSeeEntity,
     );
     if (hit < 0) {
       if (!additive) this.selection.clear();
@@ -561,6 +630,7 @@ class Game {
       Math.max(ax, bx),
       Math.max(ay, by),
       this.localPlayer,
+      this.canSeeEntity,
     );
     if (additive) this.selection.add(found, this.sim.world);
     else this.selection.set(found, this.sim.world);
@@ -593,6 +663,7 @@ class Game {
       this.pointerNdc.x,
       this.pointerNdc.y,
       this.localPlayer,
+      this.canSeeEntity,
     );
 
     if (hit >= 0) {
@@ -724,7 +795,8 @@ class Game {
   ): void {
     // A mixed selection does both: the buildings take the rally, the units take
     // the move. They never compete, since buildings cannot move anyway.
-    if (!attackMove && !alreadyRallied && this.setRallyPoints(x, z)) return;
+    if (!attackMove && !alreadyRallied) this.setRallyPoints(x, z);
+    if (!this.selection.hasOwnUnits(this.sim.world)) return;
     const units = this.selection.ids(this.sim.world);
     if (units.length === 0) return;
     this.projectiles.spawnClickMarker(x, z, attackMove ? 0xff7a4a : 0x7dff9b);
@@ -808,7 +880,7 @@ class Game {
   }
 
   private issue(command: Command): void {
-    this.runner.issue(command);
+    for (const chunk of chunkCommands([command])) this.runner.issue(chunk);
   }
 
   /** Stop the hosted bots once the match is settled; the runner keeps stepping regardless. */
@@ -870,6 +942,7 @@ class Game {
    */
   private surrender(): void {
     if (this.finished) return;
+    this.conceded = true;
     this.issue({ type: CommandType.Surrender, player: this.localPlayer });
   }
 
@@ -937,11 +1010,11 @@ class Game {
    */
   private consumeSimulationStep(): void {
     this.entities.captureSnapshot(this.sim.world);
-    this.projectiles.captureFromEvents(this.sim.world, this.entities);
-    this.projectiles.spawnDeaths(this.sim.world);
+    this.fog.update(this.sim.world, this.localPlayer);
+    this.projectiles.captureFromEvents(this.sim.world, this.entities, this.canSeeEntity);
+    this.projectiles.spawnDeaths(this.sim.world, this.canSeeEntity);
     this.entities.noteEvents(this.sim.world, this.elapsedS);
     this.playTickSounds();
-    this.fog.update(this.sim.world, this.localPlayer);
     // After the presentation has read the tick, so a bot's commands for the
     // next turn are queued from the same state the player is looking at.
     if (!this.finished) {
@@ -974,6 +1047,7 @@ class Game {
     for (let k = 0; k + 1 < shots.length && shotsPlayed < 3; k += 2) {
       const i = shots[k]!;
       if (world.pool.alive[i] !== 1) continue;
+      if (!this.canSeeEntity(i) && !this.canSeeEntity(shots[k + 1]!)) continue;
       const near = nearness(toFloat(world.pool.posX[i]!), toFloat(world.pool.posY[i]!));
       if (near <= 0.05) continue;
       audio.play('shot', near * 0.8);
@@ -983,6 +1057,7 @@ class Game {
     let deathsPlayed = 0;
     for (const i of world.events.deaths) {
       if (deathsPlayed >= 2) break;
+      if (!this.canSeeEntity(i)) continue;
       if (world.pool.type[i] === EntityType.MineralPatch) continue;
       const near = nearness(toFloat(world.pool.posX[i]!), toFloat(world.pool.posY[i]!));
       if (near <= 0.05) continue;
@@ -1014,13 +1089,20 @@ class Game {
       world.pool.buildState[single] === BuildState.Complete
     ) {
       const def = defOf(world.pool.type[single]! as EntityType);
+      const level = world.pool.buildingLevel[single]!;
+      const available = productionOptions(def.type, level);
+      const upgrading = world.pool.upgrading[single] === 1;
       for (const unit of def.produces) {
         const unitDef = defOf(unit);
+        const locked = !available.includes(unit);
+        const requirement = locked ? 'Level 2' : upgrading ? 'Upgrading' : undefined;
         buttons.push({
           key: trainHotkey(unit),
           label: unitDef.name,
           cost: unitDef.mineralCost,
-          enabled: minerals >= unitDef.mineralCost,
+          description: `${unitRole(unit)} · ${unitDef.buildTicks / TICKS_PER_SECOND}s to train · ${unitDef.supplyCost} supply${locked ? ` · Requires ${def.name} level 2` : upgrading ? ' · Training resumes after the upgrade' : ''}`,
+          requirement,
+          enabled: !locked && !upgrading && minerals >= unitDef.mineralCost,
           onClick: () =>
             this.issue({
               type: CommandType.Train,
@@ -1029,6 +1111,43 @@ class Game {
               unit,
             }),
         });
+      }
+      const upgrade = buildingUpgrade(def.type);
+      if (upgrade && level < 2) {
+        const idle = world.pool.prodCount[single] === 0;
+        const unlocks = productionOptions(def.type, 2)
+          .filter((unit) => !productionOptions(def.type, 1).includes(unit))
+          .map((unit) => defOf(unit).name)
+          .join(' and ');
+        buttons.push(
+          upgrading
+            ? {
+                key: 'X',
+                label: 'Cancel upgrade',
+                description: `Cancel the level 2 upgrade and refund ${upgrade.mineralCost} minerals`,
+                enabled: true,
+                onClick: () =>
+                  this.issue({
+                    type: CommandType.CancelUpgrade,
+                    player: this.localPlayer,
+                    building: world.pool.idAt(single),
+                  }),
+              }
+            : {
+                key: 'U',
+                label: 'Upgrade L2',
+                cost: upgrade.mineralCost,
+                requirement: idle ? undefined : 'Idle queue',
+                description: `Unlock ${unlocks} · ${upgrade.buildTicks / TICKS_PER_SECOND}s · Requires an idle training queue; training pauses during the upgrade`,
+                enabled: idle && minerals >= upgrade.mineralCost,
+                onClick: () =>
+                  this.issue({
+                    type: CommandType.UpgradeBuilding,
+                    player: this.localPlayer,
+                    building: world.pool.idAt(single),
+                  }),
+              },
+        );
       }
       // Cancel the unit at the head of the queue. Without this a player whose
       // supply cannot fit the finished unit has no way out except building a
@@ -1084,10 +1203,14 @@ class Game {
           key: entry.key,
           label: def.name,
           cost: def.mineralCost,
+          description: `${unitRole(entry.type)} · ${def.buildTicks / TICKS_PER_SECOND}s to build${def.supplyProvided > 0 ? ` · +${def.supplyProvided} supply` : ''}`,
           enabled: minerals >= def.mineralCost,
           active: this.placing === entry.type,
           onClick: () => {
-            this.placing = this.placing === entry.type ? null : entry.type;
+            const next = this.placing === entry.type ? null : entry.type;
+            this.cancelModes();
+            this.placing = next;
+            this.updateGhost();
           },
         });
       }
@@ -1100,6 +1223,7 @@ class Game {
         enabled: true,
         active: this.attackMovePending,
         onClick: () => {
+          this.cancelModes();
           this.attackMovePending = true;
         },
       });
@@ -1134,7 +1258,7 @@ class Game {
       // spectate two bots, and the only exit from that is a page reload. The
       // solo co-op route puts an AI in the partner's seat, so this is reachable
       // from a button whose confirmation says the match is over for you.
-      if (isSoloMatch(world.config)) {
+      if (isSoloMatch(world.config) && this.conceded) {
         this.finished = true;
         this.stopAgents();
         this.hud.setSurrenderAvailable(false);

@@ -23,8 +23,8 @@ import { loadAnimatedModel, type AnimatedModel } from './animated.js';
 export interface UnitModelSpec {
   type: EntityType;
   file: string;
-  /** Team skin per player index. */
-  skins: [string, string];
+  /** Authored skins in player-palette order: blue, teal, red, orange. */
+  skins: [string, string, string, string];
   /** Authored size in Athena2 world units, from the catalog's `runSize`. */
   runSize: readonly [number, number, number];
   /**
@@ -68,23 +68,33 @@ export interface UnitModelSpec {
 const ROBOT_SCALE = 0.78;
 
 export const UNIT_MODELS: readonly UnitModelSpec[] = [
-  // Barracks.
+  // Authored robot models. Production buildings and levels live in rules.ts.
   {
     type: EntityType.Burstbot,
     file: 'revolver.glb',
-    skins: ['revolver-blue.ktx2', 'revolver-red.ktx2'],
+    skins: [
+      'revolver-blue.ktx2',
+      'revolver-teal.ktx2',
+      'revolver-red.ktx2',
+      'revolver-orange.ktx2',
+    ],
     runSize: [0.94, 0.88, 1.12],
   },
   {
     type: EntityType.Slicebot,
     file: 'sword-machine.glb',
-    skins: ['sword-machine-blue.ktx2', 'sword-machine-red.ktx2'],
+    skins: [
+      'sword-machine-blue.ktx2',
+      'sword-machine-teal.ktx2',
+      'sword-machine-red.ktx2',
+      'sword-machine-orange.ktx2',
+    ],
     runSize: [1.1, 1.36, 1.75],
   },
   {
     type: EntityType.Boomwalker,
     file: 'bomb.glb',
-    skins: ['bomb-blue.ktx2', 'bomb-red.ktx2'],
+    skins: ['bomb-blue.ktx2', 'bomb-teal.ktx2', 'bomb-red.ktx2', 'bomb-orange.ktx2'],
     runSize: [0.49, 1.18, 0.71],
     // Authored, it is by some way the narrowest thing in the line — 0.38 of a
     // tile across, half its own collision circle. A unit whose entire job is to
@@ -94,56 +104,95 @@ export const UNIT_MODELS: readonly UnitModelSpec[] = [
   {
     type: EntityType.Beamdrone,
     file: 'beam-ship.glb',
-    skins: ['beam-ship-blue.ktx2', 'beam-ship-red.ktx2'],
+    skins: [
+      'beam-ship-blue.ktx2',
+      'beam-ship-teal.ktx2',
+      'beam-ship-red.ktx2',
+      'beam-ship-orange.ktx2',
+    ],
     runSize: [2.07, 1.35, 1.38],
   },
   {
     type: EntityType.Fixomatic,
     file: 'healing-machine.glb',
-    skins: ['healing-machine-blue.ktx2', 'healing-machine-red.ktx2'],
+    skins: [
+      'healing-machine-blue.ktx2',
+      'healing-machine-teal.ktx2',
+      'healing-machine-red.ktx2',
+      'healing-machine-orange.ktx2',
+    ],
     runSize: [0.95, 1.35, 1.25],
   },
   {
     type: EntityType.Firespout,
     file: 'flamethrower.glb',
-    skins: ['flamethrower-blue.ktx2', 'flamethrower-red.ktx2'],
+    skins: [
+      'flamethrower-blue.ktx2',
+      'flamethrower-teal.ktx2',
+      'flamethrower-red.ktx2',
+      'flamethrower-orange.ktx2',
+    ],
     runSize: [0.82, 1.32, 1.29],
   },
-  // Foundry.
   {
     type: EntityType.Piercebot,
     file: 'ballista.glb',
-    skins: ['ballista-blue.ktx2', 'ballista-red.ktx2'],
+    skins: [
+      'ballista-blue.ktx2',
+      'ballista-teal.ktx2',
+      'ballista-red.ktx2',
+      'ballista-orange.ktx2',
+    ],
     runSize: [1.01, 1.01, 1.75],
   },
   {
     type: EntityType.Arclight,
     file: 'tesla-coil.glb',
-    skins: ['tesla-coil-blue.ktx2', 'tesla-coil-red.ktx2'],
+    skins: [
+      'tesla-coil-blue.ktx2',
+      'tesla-coil-teal.ktx2',
+      'tesla-coil-red.ktx2',
+      'tesla-coil-orange.ktx2',
+    ],
     runSize: [1.48, 1.37, 1.07],
   },
   {
     type: EntityType.Sentry,
     file: 'cannon.glb',
-    skins: ['cannon-blue.ktx2', 'cannon-red.ktx2'],
+    skins: ['cannon-blue.ktx2', 'cannon-teal.ktx2', 'cannon-red.ktx2', 'cannon-orange.ktx2'],
     runSize: [1.12, 1.71, 1.19],
   },
   {
     type: EntityType.DarkGolem,
     file: 'dark-golem.glb',
-    skins: ['dark-golem-blue.ktx2', 'dark-golem-red.ktx2'],
+    skins: [
+      'dark-golem-blue.ktx2',
+      'dark-golem-teal.ktx2',
+      'dark-golem-red.ktx2',
+      'dark-golem-orange.ktx2',
+    ],
     runSize: [2.06, 1.84, 1.55],
   },
   {
     type: EntityType.IceGolem,
     file: 'ice-golem.glb',
-    skins: ['ice-golem-blue.ktx2', 'ice-golem-red.ktx2'],
+    skins: [
+      'ice-golem-blue.ktx2',
+      'ice-golem-teal.ktx2',
+      'ice-golem-red.ktx2',
+      'ice-golem-orange.ktx2',
+    ],
     runSize: [2.51, 1.68, 1.21],
   },
   {
     type: EntityType.Plasmodrone,
     file: 'flying-machine.glb',
-    skins: ['flying-machine-blue.ktx2', 'flying-machine-red.ktx2'],
+    skins: [
+      'flying-machine-blue.ktx2',
+      'flying-machine-teal.ktx2',
+      'flying-machine-red.ktx2',
+      'flying-machine-orange.ktx2',
+    ],
     runSize: [1.85, 1.69, 1.43],
     // The one place the art and the cost list disagree. Authored, the heavy
     // gunship has a narrower span than the Beamdrone it shares the sky with,
@@ -156,7 +205,7 @@ export const UNIT_MODELS: readonly UnitModelSpec[] = [
 export interface LoadedUnitModel {
   type: EntityType;
   model: AnimatedModel;
-  /** Team texture per player index, or null where none is available. */
+  /** Texture per player-palette entry (blue, teal, red, orange), or null if unavailable. */
   textures: (THREE.Texture | null)[];
   /** Multiplier taking the asset's own units to world units. */
   scale: number;

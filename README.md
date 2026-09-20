@@ -20,57 +20,75 @@ suite — see [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml).
 
 ## Playing
 
-|                   |                                                                |
-| ----------------- | -------------------------------------------------------------- |
-| Pan               | Arrow keys, screen edges, middle-drag, or the minimap          |
-| Zoom              | mouse wheel                                                    |
-| Select            | click, or drag a box                                           |
-| Add to selection  | `Shift` + click                                                |
-| Order             | right-click — attack an enemy, mine a patch, or move           |
-| Attack-move       | `A` then click                                                 |
-| Stop / Hold       | `S` / `H`                                                      |
-| Control groups    | `Ctrl`+`1`–`9` to assign, `1`–`9` to recall                    |
-| Build / train     | the letter shown on each command-card button                   |
-| Finish a building | right-click your own half-built structure with a worker        |
-| Surrender         | the flag button top-right — confirmed, and it cannot be undone |
-| Fullscreen        | `F`, or the button top-right                                   |
-| Mute              | `M`                                                            |
-| Model gallery     | `All units` button on the home screen                          |
-| Cancel            | `Esc`                                                          |
+|                   |                                                                  |
+| ----------------- | ---------------------------------------------------------------- |
+| Pan               | Arrow keys, screen edges, middle-drag, or the minimap            |
+| Zoom              | mouse wheel                                                      |
+| Select            | click, or drag a box                                             |
+| Add to selection  | `Shift` + click                                                  |
+| Order             | right-click — attack an enemy, mine a patch, or move             |
+| Attack-move       | `A` then click                                                   |
+| Stop / Hold       | `S` / `H`                                                        |
+| Control groups    | `Ctrl`+`1`–`9` to assign, `1`–`9` to recall                      |
+| Idle worker       | `F1` cycles idle workers and centers the camera                  |
+| Entire army       | `F2` selects your army, including support; press again to center |
+| Build / train     | the letter shown on each command-card button                     |
+| Build Factory     | `F` with a worker selected                                       |
+| Finish a building | right-click your own half-built structure with a worker          |
+| Surrender         | the flag button top-right — confirmed, and it cannot be undone   |
+| Fullscreen        | `F` outside the worker build menu, or the button top-right       |
+| Mute              | `M`                                                              |
+| Model gallery     | `All units` button on the home screen                            |
+| Cancel            | `Esc`                                                            |
 
 Workers gather minerals and construct buildings. The Command Post trains
-workers, Supply Depots raise the supply cap, Barracks train the light robots,
-the Foundry unlocks the heavy ones, and Turrets defend. Build a second Command
+workers, Supply Depots raise the supply cap, Barracks train infantry and support,
+Factories build ground machines, Airports build flyers, and Turrets defend. Build a second Command
 Post on an expansion to mine two lines at once. You lose when your last
 structure falls — in co-op, when the last structure on your _side_ falls.
 
+Start with **200 minerals, six workers and 15 supply**: enough to start a
+Barracks and train a worker immediately. A Barracks takes 30 seconds; its first
+Burstbot takes another 12. Hover over build and train buttons for each unit's
+role, training time and supply needs. Both sides use the same economy.
+
 ### The twelve robots
 
-Six come out of the **Barracks** (150 minerals). They are the army you have in
-the first few minutes, and the cheapest of them is still worth building in the
-last few.
+**Barracks** costs 150 minerals and takes 30 seconds to build.
 
-|                         | Damage        | Range | Health | Supply | Cost | Ability                                   |
-| ----------------------- | ------------- | ----- | ------ | ------ | ---- | ----------------------------------------- |
-| **Burstbot** (ranged)   | 6 every 0.8s  | 5.0   | 45     | 1      | 50   | —                                         |
-| **Slicebot** (melee)    | 13 every 1.2s | 0.9   | 90     | 2      | 75   | Cannot touch air                          |
-| **Boomwalker** (siege)  | 45 every 1.0s | 0.7   | 50     | 2      | 75   | **Detonates**, splash 2.0; cannot hit air |
-| **Beamdrone** (air)     | 10 every 1.0s | 3.5   | 70     | 2      | 100  | Flies; ignores terrain                    |
-| **Fixomatic** (support) | —             | 4.5   | 60     | 2      | 100  | **Repairs 8 HP/s** to another robot       |
-| **Firespout** (brawler) | 14 every 0.9s | 2.2   | 130    | 2      | 100  | **Splash 1.6**; cannot hit air            |
+| Unit          | Level | Damage        | Range | Health | Supply | Cost | Ability                             |
+| ------------- | ----- | ------------- | ----- | ------ | ------ | ---- | ----------------------------------- |
+| **Slicebot**  | 1     | 13 every 1.2s | 0.9   | 90     | 2      | 75   | Cannot hit air                      |
+| **Burstbot**  | 1     | 6 every 0.8s  | 5.0   | 45     | 1      | 50   | Ranged infantry                     |
+| **Firespout** | 1     | 10 every 0.9s | 2.2   | 115    | 2      | 100  | **Splash 1.6**; cannot hit air      |
+| **Arclight**  | 2     | 10 every 1.1s | 5.0   | 130    | 3      | 150  | **Hits 3 enemies at once**          |
+| **Fixomatic** | 2     | —             | 4.5   | 60     | 1      | 75   | **Repairs 8 HP/s** to another robot |
 
-Six more need a **Foundry** (200 minerals, 55 seconds). It buys nothing on its
-own, which is the decision: the minerals and the time are an army you did not
-build meanwhile.
+**Factory** costs 200 minerals and takes 40 seconds to build.
 
-|                          | Damage        | Range | Health | Supply | Cost | Ability                                  |
-| ------------------------ | ------------- | ----- | ------ | ------ | ---- | ---------------------------------------- |
-| **Piercebot** (skirmish) | 20 every 2.0s | 8.0   | 80     | 3      | 125  | **Pierces the line** — the longest reach |
-| **Arclight** (multi)     | 9 every 1.1s  | 4.5   | 120    | 3      | 150  | **Hits 3 enemies at once**               |
-| **Sentry** (artillery)   | 30 every 2.6s | 9.0   | 100    | 3      | 175  | **Splash 2.2**, min range 2.5; no air    |
-| **Ice Golem** (control)  | 18 every 1.4s | 4.0   | 330    | 5      | 225  | **Chills 2.5s** — half speed             |
-| **Plasmodrone** (air)    | 22 every 1.6s | 4.5   | 220    | 4      | 225  | Flies; **splash 1.8**                    |
-| **Dark Golem** (tank)    | 34 every 1.5s | 1.1   | 420    | 5      | 250  | **Armour 4** off every hit it takes      |
+| Unit           | Level | Damage        | Range | Health | Supply | Cost | Ability                                   |
+| -------------- | ----- | ------------- | ----- | ------ | ------ | ---- | ----------------------------------------- |
+| **Boomwalker** | 1     | 45 every 1.0s | 0.7   | 50     | 2      | 75   | **Detonates**, splash 2.0; cannot hit air |
+| **Sentry**     | 1     | 36 every 2.4s | 9.0   | 100    | 3      | 175  | **Splash 2.2**, min range 2.5; no air     |
+| **Piercebot**  | 1     | 26 every 2.0s | 8.0   | 80     | 3      | 125  | **Pierces the line**                      |
+| **Dark Golem** | 2     | 34 every 1.5s | 1.1   | 420    | 5      | 250  | **Armour 4** off every hit                |
+| **Ice Golem**  | 2     | 18 every 1.4s | 4.0   | 330    | 4      | 225  | **Chills 2.5s**, halving speed            |
+
+Each Barracks or Factory starts at level 1. Select an idle building and press
+**U** to upgrade it: **100 minerals / 20 seconds** for Barracks, or
+**150 minerals / 30 seconds** for Factory. Its training queue must be empty;
+training pauses during the upgrade. **X** cancels an active upgrade and refunds
+its full cost. Level 2 adds the new units while retaining all level-1 options.
+Levels belong to individual buildings, and upgraded buildings gain visible
+roof structures. New buildings still start at level 1.
+
+**Airport** costs 200 minerals and takes 35 seconds to build. It has one level
+and trains both flying units.
+
+| Unit            | Damage        | Range | Health | Supply | Cost | Ability                |
+| --------------- | ------------- | ----- | ------ | ------ | ---- | ---------------------- |
+| **Beamdrone**   | 10 every 1.0s | 3.5   | 70     | 2      | 100  | Flies; ignores terrain |
+| **Plasmodrone** | 22 every 1.6s | 4.5   | 220    | 4      | 225  | Flies; **splash 1.8**  |
 
 A unit deals its listed damage to everything it hits — there is no hidden
 per-matchup multiplier, and the figure on the info panel is the figure you get.
@@ -86,7 +104,7 @@ damage this attacker deals to that defender:
   out beats a Sentry and does nothing against an Arclight.
 - **Armour** is subtracted from every incoming hit, whoever threw it. A
   Burstbot's 6 becomes 2 against a Dark Golem, which is three times as long to
-  kill it; a Sentry's 30 becomes 26 and hardly notices. No hit ever falls below
+  kill it; a Sentry's 36 becomes 32 and hardly notices. No hit ever falls below
   1, so armour is a bad matchup rather than immunity.
 - **Chill** does not touch damage at all. It halves what the target can move at
   for 2.5 seconds, which is how a Slicebot gets to reach a Burstbot.
@@ -124,8 +142,10 @@ corner and a team to each side of it. Allies:
   everything you still own with it: you are out, and you watch.
 
 Pick which AI plays in the lobby — every mode with an AI in it offers the same
-two, and the choice follows you between them. **Scripted** plays one fixed,
-tuned strategy and reads the whole map. **Neural** is a learned player that
+two, and the choice follows you between them. **Scripted** builds a mixed army,
+adds repair support, and adjusts its composition to enemies in allied sight.
+It scouts the map's starting positions and expansion sites, and targets enemy
+structures only when they are in allied sight. **Neural** is a learned player that
 sees only what you would — fog of war and its own memory — and runs its model
 in your browser; the chip is live only in a build that ships a model (see
 "Training the neural bot" below). It plays every mode with an AI in it, online
@@ -153,10 +173,13 @@ The layout is generated, not authored: the whole map is carved with a brush that
 opens every tile _and its 180-degree opposite_, so the two halves are identical
 by construction rather than by inspection.
 
-Two **expansions** sit in pockets off the lanes, one nearer each player, with a
+Two **natural expansions** sit in pockets off the lanes, one nearer each player, with a
 mineral line already on them and room for a Command Post. Nobody owns one until
 they build there, and the patches are smaller than a main — so taking one is a
 decision about when your home line stops keeping up, not a free upgrade.
+Two more **contested expansions** sit at the outer-lane/river crossroads,
+equally far from both starting bases. The shorter outer routes make raiding or
+claiming those mineral lines a practical alternative to fighting only in mid.
 
 **Four Quarters** (2v2, co-op). A base in each corner and a team along each
 edge, so your partner is next door and your opponents are across the map. Each
@@ -164,8 +187,13 @@ team gets a **back lane** of its own along its edge, which is what makes helping
 a partner a short walk rather than a trip through the middle; two **flanks** run
 down the left and right edges, and two **diagonals** cross at the centre. Six
 expansions: a natural for each base, plus a contested pair halfway down each
-flank. Same generator and the same mirrored brush, so the two sides are exact
+flank. Direct connectors from the naturals to the flanks let defenders rotate
+without returning home. Same generator and the same mirrored brush, so the two sides are exact
 180-degree rotations of each other.
+
+The [opening and map tuning notes](docs/gameplay-tuning.md) and
+[scripted AI and training tuning notes](docs/gameplay-tuning-pass-2.md) record
+the balance changes, measurements, and commands for repeating the probes.
 
 ## Multiplayer without a server
 
@@ -300,6 +328,26 @@ in the repository. Put the PNGs in
 ```sh
 npm run textures
 ```
+
+Every authored unit has blue, teal, red and orange skins. Duels use blue/red;
+co-op uses all four colours. The All Units gallery's **Team colour** selector
+previews each set. Teal and orange are deterministic tints of the existing
+blue/red team paint, preserving shared materials and the original UV layout.
+Regenerate just these two sets from the committed KTX2 files on a fresh clone:
+
+```sh
+npm run textures:teams
+# Optional: inspect one unit, or divide a full encode among processes.
+npm run textures:teams -- --unit revolver --preview test-results/team-textures
+npm run textures:teams -- --shard 0/3
+```
+
+`npm run textures` also regenerates teal/orange after encoding source PNGs.
+When encoding PNGs with `--shard`, wait for all shards, then run
+`npm run textures:teams` once. The derived skins retain sRGB ETC1S mipmaps;
+their source texels already contain the UV flip, so they are not flipped again.
+The pixel tint preserves alpha, brightness and shared details before normal
+lossy ETC1S compression.
 
 Complete Athena2 rigs can be imported with the same pipeline. The importer
 uses Athena2's 64-file `Assets/Art/Units/Animations` inventory as its source
@@ -693,7 +741,7 @@ things about this were learned the hard way:
 - **Every entity type needs a procedural model, including the ones with art.**
   The instanced pools are built from `DEFS`, not from a list written out by
   hand. They were a hand-written list once, and a type added to the game and not
-  to it had no mesh at all: the Foundry shipped invisible, and the nine robots
+  to it had no mesh at all: the Factory shipped invisible, and the nine robots
   beside it had nothing to fall back to if their GLB failed to load. A structure
   has no authored model, so its procedural mesh is the only thing that ever
   draws it.
@@ -740,9 +788,9 @@ git-ignored: a unit's PNGs are around 1.3 MB each against 140 KB for the KTX2
 the game loads, and the PNGs neither ship nor take part in a build. Adding a
 unit means dropping its PNGs there, running `npm run textures`, and committing
 the `.ktx2` under `public/units/`. The encoder is deterministic — re-encoding
-the original art reproduces the committed files byte for byte — so nothing is
-lost by keeping the sources outside the repository, but they are the only way
-back to an editable image, so keep them wherever the originals live.
+the original art reproduces the committed files byte for byte. Keep the
+original PNGs for lossless editing; the teal/orange generator can also decode
+the shipped blue/red KTX2 files without those sources.
 
 Athena2 imports are scripted by `scripts/import-athena2-models.mjs`. The 64 files
 under Athena2's `Animations` directory are the source inventory and baked timing
@@ -769,7 +817,7 @@ Human, Robot, Monster, or Undead assignment for every published model and the
 gallery groups cards in that authored faction order. The importer
 stages PNGs under the ignored `assets/textures/` by default (or a disposable
 `--texture-stage` path);
-`npm run textures` remains the only KTX2 encoder, and the staging directory can
+`npm run textures` encodes source art and derives the extra team skins, and the staging directory can
 be removed after encoding.
 
 ### Verifying determinism
@@ -890,11 +938,13 @@ than SCTP retransmitting in one round trip. The bandwidth saved would be nil.
 **The constraint this creates:** Trystero splits payloads over ~16 KB into chunks
 and reassembles them _by arrival order_, with no sequence number — so a
 multi-chunk message is scrambled by the very reordering we asked for. Packets
-stay far under that because `MAX_SELECTION` is 24, a hosted bot is capped at
-`HOSTED_COMMANDS_PER_TURN`, and a networked transport hosts at most
+stay far under that because every command is capped at `MAX_COMMAND_UNITS`
+(24). Human selections can contain 200 units; large orders are split into
+commands, and networked human queues drain four commands per turn. A hosted bot
+is capped at `HOSTED_COMMANDS_PER_TURN`, and a networked transport hosts at most
 `MAX_HOSTED_PER_PEER` bot per peer — `hostingProblem`, the one roster check the
 runner and `Game` share — but it is an invariant now, not a coincidence.
-`tests/wire.test.ts` fails loudly if a change to the selection cap or the
+`tests/wire.test.ts` fails loudly if a change to the command cap or the
 packet shape breaks it, and the fake room reproduces the scramble itself.
 
 Reordering itself is harmless for a second, independent reason: the receive path
@@ -949,8 +999,9 @@ to keep it honest.
 **One scripted bot.** Easy, Normal and Hard were three tunings of it; Hard is
 the one that survives, with its constants as the one `TUNING`, and the lobby's
 AI row offers Scripted or Neural. The merge is pinned by `tests/agent.test.ts`
-against fixtures recorded from the pre-merge build — every command Hard decided
-on every think of two whole matches, replayed and asked again.
+against deterministic replay fixtures — every command on every think of two
+whole matches, replayed and asked again. Fixtures are regenerated after verified
+gameplay changes; the original pre-merge comparison remains in Git history.
 
 **Two bots on a side are not two bots.** Run naively, an AI team is much weaker
 than one bot with twice the economy: each half picks its own target, commits on
@@ -969,18 +1020,21 @@ Three other things the bot was simply missing, each worth more than any tuning:
 - **It attacked the lowest-index enemy building**, which never changed. An army
   that had fought its way into a base would walk back out past a Barracks to keep
   pounding a Command Post it had already passed. The target is now the hostile
-  structure nearest the team's army.
+  visible structure nearest the team's army; when none is visible it scouts
+  public starting positions and expansion sites.
 - **It trained workers from one Command Post.** An expansion's mineral line
   therefore sat empty for minutes after it finished. Every base trains now, and
-  the worker target scales with how many there are to work.
+  the worker target scales with the live mineral patches near completed bases.
 
 Production queues two deep normally and to the cap once minerals pile up: at two
 deep, every bot in a four-player match floated six to eight thousand minerals for
 the last five minutes — an army it had paid for and never received.
 
-Nothing the scripted bot is given is special: no bonus income, no extra units,
-no cheating on fog — it reads the whole map, which a human cannot, and that is
-the one asymmetry. `THINK_INTERVAL` is the same for every bot — every bot must
+The scripted bot gets no bonus income or extra units. Enemy composition,
+structure targeting and resource collection use current allied sight; the map's
+starting positions and expansion coordinates supply its scouting plan. Existing
+army orders are retained when their destination is unchanged, so thinking does
+not repeatedly interrupt attack windups. `THINK_INTERVAL` is the same for every bot — every bot must
 think on the same tick, or whoever thinks first gets a whole interval of head
 start, which measurably decided a mirror matchup — and it is not a strength
 dial either; see "The simulation is rotation-equivariant" for the measurement.
@@ -1018,8 +1072,9 @@ leaned on:
   corner instead of its centre.
 - **The human vocabulary, one command at a time.** A decision is
   `[type, entityType, target, cell, sub, selection × 24]`: every command the
-  UI can produce except Surrender, with the UI's own limits — 24 units, one
+  UI can produce except Surrender, with the same per-command limits — 24 units, one
   building per Train, cancel slot zero, a worker and a top-left tile per Build.
+  A human's larger army selection produces several such commands.
   `decode` turns one into a `Command`, `encode` turns a command back into the
   decision that would have produced it (the imitation labels), and
   `computeMasks` says what is legal _now_, from the simulation's own rules.
@@ -1059,16 +1114,17 @@ Two things the pipeline depends on that are easy to break from either side:
   onnxruntime is an exact comparison of integers rather than a tolerance. The
   noise layout is `NOISE_SEGMENTS` in `spec.ts`; change a head and both sides
   change with it.
-- **The teacher sees everything, so a label is checked before it is taught.**
-  The scripted bot reads the whole map and decides before the student's frame
-  is built; `encode` against the student's frame plus `legalise` against its
-  masks drops what the student could not have said — a Train the bank no longer
-  covers, a Build in fog — as type −1. What remains is what a human watching
-  the same screen could have done.
+- **Teacher observations and commands share a decision boundary.** The frame
+  is captured when the teacher chooses its next command, before that command
+  is issued on the next tick. Encoding and legality checks against that frame
+  drop commands outside the student's vocabulary or masks as type −1, including
+  stale queued orders and formation offsets the action codec cannot express.
+  The recorder reports this coverage separately from valid non-Noop labels.
 
 **The think interval is not a strength dial.** `scripted@10` is the bot the
-game ships; measured over eight seeds from both seats, `@20` beats it 8–0 and
-`@40` beats it 5–3 while `@30` loses 8–0 — the interval changes _when_ the bot
+game ships. Historical measurements before the latest AI changes had `@20`
+beating it 8–0 and `@40` beating it 5–3 while `@30` lost 8–0. Those results
+are not current difficulty ratings: the interval changes _when_ the bot
 commits, and some cadences suit its strategy. The rungs are distinct
 reproducible opponents, the league weights each by how often the learner still
 loses to it, and `HALF_SPEED_THINK_INTERVAL` exists only so the seat-fairness
@@ -1191,8 +1247,9 @@ cannot touch a flyer. `tests/units.test.ts` stages a real fight for every armed
 pair and asserts the blow equals the listed damage, which is the only way to
 catch a multiplier creeping back in between the def and `applyDamage`.
 
-**This makes the Burstbot the best buy at equal supply, and by a wide margin.**
-Measured, 6 supply a side, both armies attack-moving into each other:
+**Historical result immediately after removing the counter triangle:** the
+Burstbot was the best buy at equal supply. These measurements used the old
+roster values, with 6 supply a side and both armies attack-moving:
 
 |           | dps/supply | hp/supply | range | result                                 |
 | --------- | ---------- | --------- | ----- | -------------------------------------- |
@@ -1200,9 +1257,10 @@ Measured, 6 supply a side, both armies attack-moving into each other:
 | Slicebot  | 5.42       | 45        | 0.9   | —                                      |
 | Beamdrone | 5.00       | 35        | 3.5   | —                                      |
 
-The triangle was carrying the roster. Nothing is wrong with the _code_ — the
-numbers in `config/rules.ts` were tuned around a 2x that no longer exists, and
-retuning them is the outstanding job.
+Those values had been tuned around a 2x multiplier. Subsequent changes are
+recorded in the [opening balance pass](docs/gameplay-tuning.md) and
+[scripted AI tuning pass](docs/gameplay-tuning-pass-2.md); use the current
+unit table and combat probe for today's matchups.
 
 #### Acquiring a target is also an instruction to walk to it
 

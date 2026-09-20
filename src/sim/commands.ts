@@ -4,8 +4,8 @@
  * In deterministic lockstep, peers never exchange entity state. They exchange
  * *intent*, and each peer applies the same intents to its own identical
  * simulation. That is why bandwidth is flat whether the battle has twenty units
- * or two thousand: a 200-unit attack-move is one command carrying a list of ids,
- * not 200 position updates every frame.
+ * or two thousand: an army attack-move sends a few bounded lists of entity ids,
+ * not a position update for every unit on every frame.
  *
  * Two consequences shape everything below:
  *
@@ -24,11 +24,10 @@ import type { EntityId, EntityType, PlayerId } from './types.js';
 /**
  * The most units one command may name.
  *
- * This is the UI's selection cap and the size a hosted bot chunks its orders
- * into, and both matter for the same reason: it bounds how large a packet can
- * get, and `tests/wire.test.ts` checks that the worst case still fits in one
- * transport chunk. The simulation itself accepts any length — the bound is a
- * property of the producers, enforced where commands are made.
+ * Humans and hosted bots split large selections into commands of this size.
+ * It bounds how large a packet can get, and `tests/wire.test.ts` checks that
+ * the worst case still fits in one transport chunk. The simulation itself
+ * accepts any length — the bound is enforced where commands are made.
  */
 export const MAX_COMMAND_UNITS = 24;
 
@@ -45,6 +44,8 @@ export enum CommandType {
   Surrender = 9,
   SetRally = 10,
   CancelBuild = 11,
+  UpgradeBuilding = 12,
+  CancelUpgrade = 13,
 }
 
 interface Base {
@@ -57,6 +58,8 @@ export interface MoveCommand extends Base {
   units: EntityId[];
   x: Fix;
   y: Fix;
+  /** First formation slot when a larger order is split; omitted means zero. */
+  formationOffset?: number;
 }
 
 export interface AttackMoveCommand extends Base {
@@ -64,6 +67,8 @@ export interface AttackMoveCommand extends Base {
   units: EntityId[];
   x: Fix;
   y: Fix;
+  /** First formation slot when a larger order is split; omitted means zero. */
+  formationOffset?: number;
 }
 
 export interface AttackCommand extends Base {
@@ -134,6 +139,18 @@ export interface SurrenderCommand extends Base {
   type: CommandType.Surrender;
 }
 
+/** Upgrade this completed, idle production building to its second level. */
+export interface UpgradeBuildingCommand extends Base {
+  type: CommandType.UpgradeBuilding;
+  building: EntityId;
+}
+
+/** Cancel an upgrade in progress, refunding its full mineral cost. */
+export interface CancelUpgradeCommand extends Base {
+  type: CommandType.CancelUpgrade;
+  building: EntityId;
+}
+
 export type Command =
   | MoveCommand
   | AttackMoveCommand
@@ -145,6 +162,8 @@ export type Command =
   | TrainCommand
   | CancelTrainCommand
   | CancelBuildCommand
+  | UpgradeBuildingCommand
+  | CancelUpgradeCommand
   | SurrenderCommand
   | SetRallyCommand;
 
@@ -167,14 +186,16 @@ export interface TurnCommands {
  *
  * Packets can arrive in any order, and two peers that apply the same commands in
  * different sequences will diverge — a move issued before an attack is not the
- * same as the reverse. Sorting by issuing player, then by command type, then by
- * the first unit id gives a total order that every peer computes identically
- * from the same set.
+ * same as the reverse. Sort by command type, then issuing player, then first
+ * unit id. Every player's own commands keep the same precedence, and all
+ * movement destinations are resolved before any new building occupies ground.
+ * Player-first ordering could place one player's building between two mirrored
+ * move commands, making only one army's formation see that new obstacle.
  */
 export function sortCommands(commands: Command[]): Command[] {
   return commands.sort((a, b) => {
-    if (a.player !== b.player) return a.player - b.player;
     if (a.type !== b.type) return a.type - b.type;
+    if (a.player !== b.player) return a.player - b.player;
     return firstUnitId(a) - firstUnitId(b);
   });
 }
@@ -194,6 +215,8 @@ function firstUnitId(c: Command): number {
     case CommandType.CancelTrain:
     case CommandType.SetRally:
     case CommandType.CancelBuild:
+    case CommandType.UpgradeBuilding:
+    case CommandType.CancelUpgrade:
       return c.building;
     case CommandType.Surrender:
       return -1;

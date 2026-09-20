@@ -18,8 +18,10 @@ export interface ScriptedOptions {
    * A different interval makes a *different* bot — one that a match against
    * the real one resolves instead of mirroring to a draw, which is what the
    * seat-fairness tests need. It is not a weaker bot: thinking every 20 ticks
-   * beats the real bot 8–0 over eight seeds, because the beat gates in
-   * `bot.ts` still fall on its thinks and it re-issues orders half as often.
+   * beat the previous strategy 8–0 over eight seeds, because the beat gates in
+   * `bot.ts` still fell on its thinks and it re-issued orders half as often.
+   * That predates the current scouting and order-suppression behavior; cadence
+   * remains a source of different matches, not a reliable strength setting.
    * The lobby never sets it — one scripted bot, one strength.
    */
   readonly thinkInterval?: number;

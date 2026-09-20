@@ -1,12 +1,65 @@
 import { describe, expect, it } from 'vitest';
 import { EntityType } from '../src/sim/types.js';
-import { FLIGHT_ALTITUDE, FLYER_BOB, flyerAltitudeAt } from '../src/render/entities.js';
+import { Simulation } from '../src/sim/tick.js';
+import { FogRenderer } from '../src/render/fog.js';
+import { ProceduralModelProvider } from '../src/render/models/procedural.js';
+import {
+  EntityRenderer,
+  FLIGHT_ALTITUDE,
+  FLYER_BOB,
+  flyerAltitudeAt,
+} from '../src/render/entities.js';
 import {
   interpolateProjectileTransform,
   projectileAgeBeforeFrameUpdate,
   projectileImpactPoint,
   projectileLaunchPoint,
+  ProjectileRenderer,
 } from '../src/render/projectiles.js';
+
+describe('effects obey fog of war', () => {
+  it('hides unseen enemy battles and deaths, but retains fire at a friendly unit', () => {
+    const { world } = new Simulation(1);
+    const pool = world.pool;
+    const own = Array.from({ length: pool.count }, (_, i) => i).find(
+      (i) => pool.owner[i] === 0 && pool.type[i] === EntityType.Worker,
+    )!;
+    const enemy = Array.from({ length: pool.count }, (_, i) => i).find(
+      (i) => pool.owner[i] === 1 && pool.type[i] === EntityType.Worker,
+    )!;
+    const fog = new FogRenderer(world.map);
+    const entities = new EntityRenderer(new ProceduralModelProvider(), world);
+    const effects = new ProjectileRenderer();
+    try {
+      fog.update(world, 0);
+      entities.captureSnapshot(world);
+      const canSee = (index: number): boolean => fog.shouldDraw(world, index, 0);
+      expect(canSee(enemy)).toBe(false);
+      world.events.shots.push(enemy, enemy);
+      world.events.deaths.push(enemy);
+      effects.captureFromEvents(world, entities, canSee);
+      effects.spawnDeaths(world, canSee);
+      effects.flushPending(world.tick, 0, 0, 16);
+      effects.update(16);
+      expect(effects.group.children.every((mesh) => (mesh as { count?: number }).count === 0)).toBe(
+        true,
+      );
+
+      world.events.shots.length = 0;
+      world.events.shots.push(enemy, own);
+      effects.captureFromEvents(world, entities, canSee);
+      effects.flushPending(world.tick, 0, 0, 16);
+      effects.update(16);
+      expect(effects.group.children.some((mesh) => (mesh as { count?: number }).count! > 0)).toBe(
+        true,
+      );
+    } finally {
+      effects.dispose();
+      entities.dispose();
+      fog.dispose();
+    }
+  });
+});
 
 describe('projectile hardpoints', () => {
   it('launches a Beamdrone bolt from its elevated underbody emitter', () => {

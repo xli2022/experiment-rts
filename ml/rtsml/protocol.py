@@ -76,7 +76,13 @@ def read_frame(stream: BinaryIO) -> Frame:
 
 
 def write_frame(stream: BinaryIO, frame: bytes) -> None:
-    stream.write(frame)
+    # Subprocess pipes are unbuffered and a write may consume only a prefix.
+    remaining = memoryview(frame)
+    while remaining:
+        written = stream.write(remaining)
+        if written is None or written <= 0:
+            raise BrokenPipeError("environment process stopped accepting a frame")
+        remaining = remaining[written:]
     stream.flush()
 
 
