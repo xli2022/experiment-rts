@@ -221,14 +221,20 @@ class Policy(nn.Module):
 
     # --- scoring given decisions ------------------------------------------------------------------
 
-    def evaluate(self, obs: dict[str, torch.Tensor], actions: torch.Tensor, temperature: float = 1.0, selection_scores: torch.Tensor | None = None) -> dict[str, torch.Tensor]:
+    def evaluate(self, obs: dict[str, torch.Tensor], actions: torch.Tensor, temperature: float = 1.0, selection_scores: torch.Tensor | None = None, *, selection_fallback: torch.Tensor | None = None) -> dict[str, torch.Tensor]:
         """Score labels or sampled PPO decisions, plus the value.
 
         Every head the action's type does not use contributes zero to both.
         PPO supplies its sampled selection latents and temperature for an exact
         joint likelihood. Without latents, imitation uses Bernoulli membership
         supervision for its teacher's selection labels.
+
+        Supplying a fixed selection_fallback branch opts into the hybrid latent
+        likelihood. Its entropy output omits multi-selection: it is a partial
+        categorical-head regularizer, not the hybrid distribution's entropy.
         """
+        if selection_fallback is not None and selection_scores is None:
+            raise ValueError("hybrid selection requires stored scores and fallback branches")
         spec = self.spec
         enc = self.encode(obs)
         type_ = actions[:, 0].clamp(min=0)
@@ -249,11 +255,16 @@ class Policy(nn.Module):
         sel_logits = self.selection_logits(enc, ctx) / temperature
         sel_mask = self.selection_mask(obs, type_, enc.row_mask)
         membership = S.membership_of(selection, spec.n_ent)
-        if selection_scores is None:
+        if selection_fallback is not None:
+            # Single-selection heads ignore these latents; mask them before the
+            # fallback exponential so an unused extreme value cannot poison grads.
+            lp_many = S.hybrid_selection_logp(sel_logits, sel_mask & use["multi"].unsqueeze(-1), selection_scores, selection_fallback)
+            ent_many = zero
+        elif selection_scores is None:
             lp_many = S.selection_logp(sel_logits, sel_mask, membership)
             ent_many = S.selection_entropy(sel_logits, sel_mask)
         else:
-            lp_many = S.selection_score_logp(sel_logits, sel_mask, selection_scores)
+            lp_many = S.selection_score_logp(sel_logits, sel_mask & use["multi"].unsqueeze(-1), selection_scores)
             ent_many = S.selection_score_entropy(sel_logits, sel_mask)
         lp_one = S.categorical_logp(sel_logits, sel_mask, selection[:, 0])
         logp = logp + torch.where(use["multi"], lp_many, torch.where(use["single"], lp_one, zero))
@@ -305,6 +316,14 @@ class Policy(nn.Module):
     def act(self, obs: dict[str, torch.Tensor], noise: torch.Tensor, temperature: torch.Tensor) -> torch.Tensor:
         """Draw one decision per row from supplied noise: [B, ACTION_INTS] int64, unused heads -1."""
         return self.sample(obs, noise, temperature)[0]
+
+    def sample_hybrid(self, obs: dict[str, torch.Tensor], noise: torch.Tensor, temperature: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """The unchanged browser action plus optional training-only hybrid latents."""
+        actions, scores = self.sample(obs, noise, temperature)
+        mask = self.selection_mask(obs, actions[:, 0], obs["entity_mask"].to(torch.bool))
+        noise_b = noise[:, S.noise_slices()["selection"]][:, self.spec.n_ent:]
+        hybrid, fallback = S.hybrid_selection_scores(scores, mask, noise_b)
+        return actions, hybrid, fallback
 
     def sample(self, obs: dict[str, torch.Tensor], noise: torch.Tensor, temperature: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """A decision and its training-only selection latents; export keeps only the decision."""

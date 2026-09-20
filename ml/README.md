@@ -147,6 +147,40 @@ membership supervision for teacher labels. Every PPO head is scored at the
 same temperature used for sampling. Historical training scores here do not
 establish the win rate of a model trained with this corrected objective.
 
+`rtsml-ppo --selection-likelihood hybrid` enables an optional training experiment;
+the default `gumbel` preserves the existing sampling and likelihood path. Both
+produce exactly the same deployed actions from the same supplied noise. No
+model shape, codec, ONNX input, or browser setting changes.
+Both modes mask unused multi-selection densities before exponentiation, so an
+irrelevant extreme latent cannot poison a single-selection action's gradients.
+
+The hybrid path stores `D = X - GumbelB` when at least one legal D is positive.
+Those Logistic scores completely determine membership, order and the top-k
+cap, so the unused common Gumbel noise can be integrated out. When all legal D
+are nonpositive, it stores X and a fixed fallback flag because the fallback
+winner depends on X. The branch is captured during sampling and never
+recomputed from updated logits. This reduces nuisance score variance while
+retaining an exact likelihood ratio for the smaller augmented action.
+
+The nonempty branch uses the **unnormalized** product Logistic density on
+`max(D) > 0`. The fallback density is the product Gumbel density of X times
+`P(GumbelB >= X)`, a factor independent of the policy at fixed X that cancels
+in ratios and gradients. If `P0 = product(sigmoid(-logits / T))`, these two
+branches integrate to `1 - P0` and `P0`; their integrated score gradients
+cancel. Conditional renormalization, switching branches during an update, or
+scoring only the projected Bernoulli membership would introduce bias.
+
+Hybrid mode omits the old constant Gumbel multi-selection entropy term. It has
+zero gradient with respect to the selection logits, and it is **not** the
+hybrid distribution's entropy. The remaining categorical-head bonus is logged
+as `partialEnt`, with `entropyKind: categorical-heads-only`; the checkpoint
+records both the likelihood choice and entropy interpretation. Imitation and
+the default PPO path remain unchanged. PPO clipping and the Huber reference
+penalty depend on the latent representation, so this experiment changes their
+finite-step surrogate even though the unclipped score-function and importance
+estimators remain exact. It is not evidence of better playing strength: compare
+bounded, matched training runs and neural-only full matches before choosing it.
+
 **The teacher uses visible threats and public scouting locations.** A teacher
 slot is the scripted bot at the student's cadence, and each
 command it releases is encoded against the student's own frame and masks. A

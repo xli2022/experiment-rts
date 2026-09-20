@@ -120,11 +120,12 @@ class Roles:
 class Rollout:
     """`steps × rows` of everything PPO needs, flattened, allocated from the first batch."""
 
-    def __init__(self, steps: int, rows: int):
+    def __init__(self, steps: int, rows: int, *, hybrid_selection: bool = False):
         self.steps, self.rows = steps, rows
         self.obs: dict[str, np.ndarray] | None = None
         self.actions = np.zeros((steps * rows, SPEC.action_ints), dtype=np.int32)
         self.selection_scores = np.zeros((steps * rows, SPEC.n_ent), dtype=np.float32)
+        self.selection_fallback = np.zeros(steps * rows, dtype=bool) if hybrid_selection else None
         self.logp = np.zeros((steps, rows), dtype=np.float32)
         self.value = np.zeros((steps, rows), dtype=np.float32)
         self.reward = np.zeros((steps, rows), dtype=np.float32)
@@ -187,7 +188,10 @@ def train_minibatch(
         obs = to_torch(rollout.obs, device, idx)
         actions = torch.from_numpy(rollout.actions[idx].astype(np.int64)).to(device)
         selection_scores = torch.from_numpy(rollout.selection_scores[idx]).to(device)
-        out = policy.evaluate(obs, actions, temperature, selection_scores)
+        selection_kwargs = {} if rollout.selection_fallback is None else {
+            "selection_fallback": torch.from_numpy(rollout.selection_fallback[idx]).to(device),
+        }
+        out = policy.evaluate(obs, actions, temperature, selection_scores, **selection_kwargs)
         logp = out["logp"]
         lp_old = torch.from_numpy(old_logp[idx]).to(device)
         a = torch.from_numpy(advantages[idx]).to(device)
@@ -203,7 +207,7 @@ def train_minibatch(
         kl = torch.zeros((), device=device)
         if reference is not None and not warming:
             with torch.no_grad():
-                lp_ref = reference.evaluate(obs, actions, temperature, selection_scores)["logp"]
+                lp_ref = reference.evaluate(obs, actions, temperature, selection_scores, **selection_kwargs)["logp"]
             kl = reference_penalty(logp, lp_ref)
             loss = loss + beta * kl
         if not torch.isfinite(loss):
@@ -283,6 +287,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--minibatch", type=int, default=256)
     parser.add_argument("--microbatch", type=int, default=0,
                         help="rows per forward/backward inside a logical minibatch; 0 disables accumulation")
+    parser.add_argument("--selection-likelihood", choices=("gumbel", "hybrid"), default="gumbel",
+                        help="training-only selection likelihood; hybrid integrates unused Gumbel noise and omits multi-selection entropy")
     # 2.5e-4 trips `--target-kl` after a few minibatches of sixty, so most of a
     # rollout is collected and thrown away, and it is still the right number.
     # 1e-4 spends the whole update inside the trust region and gets a policy
@@ -441,6 +447,8 @@ def main(argv: list[str] | None = None) -> int:
         policy = Policy(**hparams["model"]).to(device)
         reference = None
     hparams.update({"ppo": {k: v for k, v in vars(args).items() if not isinstance(v, Path)}})
+    if args.selection_likelihood == "hybrid":
+        hparams["ppo"]["entropy_kind"] = "categorical-heads-only"
     # Top level too, beside the model shape: `rtsml-export` reads it to name the
     # file, and a checkpoint that does not say which map it plays is a checkpoint
     # someone will ship to the wrong one.
@@ -476,7 +484,7 @@ def main(argv: list[str] | None = None) -> int:
                 roles = Roles(batch.slots, assignments)
                 opponents = snapshot_policies(league, roles, device, cache)
 
-            rollout = Rollout(args.rollout, len(roles.learner))
+            rollout = Rollout(args.rollout, len(roles.learner), hybrid_selection=args.selection_likelihood == "hybrid")
             results: dict[str, list[bool | None]] = {}
             policy.eval()
             for t in range(args.rollout):
@@ -484,8 +492,13 @@ def main(argv: list[str] | None = None) -> int:
                 with torch.no_grad():
                     noise = gumbel_noise(len(roles.learner), generator).to(device)
                     temperature = torch.full((len(roles.learner),), args.temperature, device=device)
-                    actions, selection_scores = policy.sample(obs, noise, temperature)
-                    out = policy.evaluate(obs, actions, args.temperature, selection_scores)
+                    if rollout.selection_fallback is None:
+                        actions, selection_scores = policy.sample(obs, noise, temperature)
+                        out = policy.evaluate(obs, actions, args.temperature, selection_scores)
+                    else:
+                        actions, selection_scores, fallback = policy.sample_hybrid(obs, noise, temperature)
+                        out = policy.evaluate(obs, actions, args.temperature, selection_scores, selection_fallback=fallback)
+                        rollout.selection_fallback[t * rollout.rows : (t + 1) * rollout.rows] = fallback.cpu().numpy()
                 full = np.full((len(batch), SPEC.action_ints), -1, dtype=np.int32)
                 full[:, 0] = NOOP
                 full[roles.learner] = actions.to(torch.int32).cpu().numpy()
@@ -619,6 +632,9 @@ def main(argv: list[str] | None = None) -> int:
                 "results": {k: [None if w is None else bool(w) for w in v] for k, v in results.items()},
                 **{k: (float(np.mean(v)) if v else math.nan) for k, v in stats.items()},
             }
+            if rollout.selection_fallback is not None:
+                record["selectionLikelihood"] = "hybrid"
+                record["entropyKind"] = "categorical-heads-only"
             if update % args.snapshot_every == 0:
                 league.add_snapshot(f"ppo{update}", policy, hparams)
                 league.save(args.out / "league.pt")
@@ -648,7 +664,7 @@ def main(argv: list[str] | None = None) -> int:
             log.flush()
             print(
                 f"update {update} reward {record['reward']:+.4f} pg {record['pg']:+.3f} vf {record['vf']:.3f} "
-                f"ent {record['ent']:.2f} kl {record['kl']:.4f} clip {record['clip']:.2f} beta {beta:.2f} "
+                f"{'partialEnt' if args.selection_likelihood == 'hybrid' else 'ent'} {record['ent']:.2f} kl {record['kl']:.4f} clip {record['clip']:.2f} beta {beta:.2f} "
                 f"({record['seconds']}s)  league: {league.summary()}"
             )
     finally:
