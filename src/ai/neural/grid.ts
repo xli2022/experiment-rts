@@ -16,13 +16,26 @@ import { GRID, SUB } from './spec.js';
 
 const CELLS = GRID * GRID;
 
-/** The building footprints a `Build` may name. */
-export const BUILD_FOOTPRINTS: readonly { type: EntityType; footprint: number }[] = [
+/**
+ * The buildings a worker can raise, in EntityType order.
+ *
+ * One list, read two ways: `BUILD_FOOTPRINTS` sizes the placement scan and
+ * `actions.ts` re-exports it as the set a `Build` may name. They were two
+ * literals, and a structure added to one of them was legal to decide on and
+ * impossible to place, or the reverse.
+ */
+export const BUILDINGS: readonly EntityType[] = [
   EntityType.CommandPost,
   EntityType.Depot,
   EntityType.Barracks,
   EntityType.Turret,
-].map((type) => ({ type, footprint: defOf(type).footprint }));
+  EntityType.Foundry,
+];
+
+/** The building footprints a `Build` may name. */
+export const BUILD_FOOTPRINTS: readonly { type: EntityType; footprint: number }[] = BUILDINGS.map(
+  (type) => ({ type, footprint: defOf(type).footprint }),
+);
 
 export class GridIndex {
   /** Canonical cell of each world tile, or -1 off the grid. */

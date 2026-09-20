@@ -53,9 +53,13 @@ export function activityOf(world: World, index: number): string | null {
       // same question a player is asking, and answering it for one kind of unit
       // and not another reads as the panel being broken rather than terse. A
       // soldier with something in range is fighting even with no order at all.
-      return pool.combatTarget[index] !== NO_ENTITY && pool.isAlive(pool.combatTarget[index]!)
-        ? 'engaging'
-        : 'idle';
+      if (pool.combatTarget[index] === NO_ENTITY || !pool.isAlive(pool.combatTarget[index]!)) {
+        return 'idle';
+      }
+      // A repairer keeps its current job in the same field, and what it is
+      // pointing a beam at is one of ours. Calling that "engaging" would have
+      // the panel report a Fixomatic mending a Dark Golem as a fight.
+      return defOf(pool.type[index]! as EntityType).repairAmount > 0 ? 'repairing' : 'engaging';
   }
 }
 

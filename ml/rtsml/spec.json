@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "decisionTicks": 4,
   "unitMemoryTicks": 300,
   "entities": {
@@ -14,6 +14,16 @@
       "type:Turret",
       "type:MineralPatch",
       "type:Beamdrone",
+      "type:Boomwalker",
+      "type:Fixomatic",
+      "type:Foundry",
+      "type:Firespout",
+      "type:Arclight",
+      "type:Piercebot",
+      "type:Sentry",
+      "type:DarkGolem",
+      "type:IceGolem",
+      "type:Plasmodrone",
       "rel:own",
       "rel:ally",
       "rel:enemy",
@@ -89,6 +99,16 @@
     "own:Turret",
     "own:MineralPatch",
     "own:Beamdrone",
+    "own:Boomwalker",
+    "own:Fixomatic",
+    "own:Foundry",
+    "own:Firespout",
+    "own:Arclight",
+    "own:Piercebot",
+    "own:Sentry",
+    "own:DarkGolem",
+    "own:IceGolem",
+    "own:Plasmodrone",
     "enemy:Worker",
     "enemy:Burstbot",
     "enemy:Slicebot",
@@ -98,6 +118,16 @@
     "enemy:Turret",
     "enemy:MineralPatch",
     "enemy:Beamdrone",
+    "enemy:Boomwalker",
+    "enemy:Fixomatic",
+    "enemy:Foundry",
+    "enemy:Firespout",
+    "enemy:Arclight",
+    "enemy:Piercebot",
+    "enemy:Sentry",
+    "enemy:DarkGolem",
+    "enemy:IceGolem",
+    "enemy:Plasmodrone",
     "prev:Noop",
     "prev:Move",
     "prev:AttackMove",
@@ -144,7 +174,7 @@
       "SetRally"
     ],
     "selectionMax": 24,
-    "entityTypes": 9,
+    "entityTypes": 19,
     "sub": 16,
     "ints": 29,
     "heads": [
@@ -173,15 +203,15 @@
       1600
     ],
     "buildCell": [
-      9,
+      19,
       1600
     ],
     "rowEntityType": [
       160,
-      9
+      19
     ],
     "buildType": [
-      9
+      19
     ]
   },
   "noise": {
@@ -198,7 +228,7 @@
       },
       {
         "name": "entityType",
-        "size": 9,
+        "size": 19,
         "distribution": "gumbel"
       },
       {
@@ -217,6 +247,6 @@
         "distribution": "gumbel"
       }
     ],
-    "length": 2116
+    "length": 2126
   }
 }

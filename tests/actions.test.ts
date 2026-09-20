@@ -16,6 +16,7 @@ import {
   actionToInts,
   allocAction,
   allocMasks,
+  BUILDINGS,
   computeMasks,
   decode,
   encode,
@@ -42,7 +43,14 @@ import { duelMatch } from '../src/sim/match.js';
 import { Rng } from '../src/sim/rng.js';
 import { executeCommand } from '../src/sim/systems/orders.js';
 import { Simulation } from '../src/sim/tick.js';
-import { BuildState, EntityType, NO_ENTITY, Order, type PlayerId } from '../src/sim/types.js';
+import {
+  BuildState,
+  EntityType,
+  ENTITY_TYPE_COUNT,
+  NO_ENTITY,
+  Order,
+  type PlayerId,
+} from '../src/sim/types.js';
 import type { World } from '../src/sim/world.js';
 import { Visibility } from '../src/vision/visibility.js';
 import { scriptedAgents } from './helpers/agents.js';
@@ -345,16 +353,12 @@ describe('the masks', () => {
     world.players[0]!.minerals = 5000;
     eyes.see(world);
     expect(eyes.masks.type[ActionType.Train]).toBe(1);
-    expect(eyes.masks.rowEntityType[rowB * 9 + EntityType.Burstbot]).toBe(1);
-    expect(eyes.masks.rowEntityType[rowB * 9 + EntityType.Worker]).toBe(0);
-    expect(eyes.masks.rowEntityType[rowP * 9 + EntityType.Worker]).toBe(1);
+    expect(eyes.masks.rowEntityType[rowB * ENTITY_TYPE_COUNT + EntityType.Burstbot]).toBe(1);
+    expect(eyes.masks.rowEntityType[rowB * ENTITY_TYPE_COUNT + EntityType.Worker]).toBe(0);
+    expect(eyes.masks.rowEntityType[rowP * ENTITY_TYPE_COUNT + EntityType.Worker]).toBe(1);
     expect(eyes.masks.type[ActionType.Build]).toBe(1);
-    for (const building of [
-      EntityType.CommandPost,
-      EntityType.Depot,
-      EntityType.Barracks,
-      EntityType.Turret,
-    ]) {
+    // Every structure a worker can raise, the Foundry included.
+    for (const building of BUILDINGS) {
       expect(eyes.masks.buildType[building]).toBe(1);
     }
     expect(eyes.masks.buildType[EntityType.Burstbot]).toBe(0);

@@ -10,7 +10,7 @@
  * exactly what a canvas is good at and exactly what DOM is bad at.
  */
 
-import { defOf } from '../config/rules.js';
+import { abilityText, defOf } from '../config/rules.js';
 import { toFloat } from '../sim/fixed.js';
 import { BuildState, EntityType, NEUTRAL, TICKS_PER_SECOND, type PlayerId } from '../sim/types.js';
 import type { World } from '../sim/world.js';
@@ -383,6 +383,11 @@ export class Hud {
       // nothing scales it per matchup — so comparing two units on the panel
       // tells a player what actually happens when they meet.
       if (def.damage > 0) parts.push(`ATK ${def.damage}`);
+      // And what else the shot does. Every one of these changes how many things
+      // an attack reaches or how much of a hit lands, so leaving them off the
+      // panel would put a player back to guessing — the exact thing removing
+      // the hidden damage triangle was meant to end.
+      for (const ability of abilityText(def)) parts.push(ability);
       if (type === EntityType.MineralPatch) {
         parts.push(`${world.pool.resourceAmount[i]} minerals left`);
       }

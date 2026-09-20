@@ -141,9 +141,23 @@ export enum EntityType {
   // Appended rather than slotted in with the other units, so existing numeric
   // ids stay put — the defs table is indexed by this enum.
   Beamdrone = 8,
+  // The rest of the robot line, appended for the same reason. Barracks chassis
+  // first, then the Foundry that unlocks the heavy ones, then the heavies —
+  // which is the order a player meets them, but nothing reads that into the
+  // numbers: what a building trains is `EntityDef.produces`.
+  Boomwalker = 9,
+  Fixomatic = 10,
+  Foundry = 11,
+  Firespout = 12,
+  Arclight = 13,
+  Piercebot = 14,
+  Sentry = 15,
+  DarkGolem = 16,
+  IceGolem = 17,
+  Plasmodrone = 18,
 }
 
-export const ENTITY_TYPE_COUNT = 9;
+export const ENTITY_TYPE_COUNT = 19;
 
 /** What an entity is currently trying to do. Drives the system dispatch. */
 export enum Order {

@@ -20,6 +20,7 @@
 import wasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.wasm?url';
 import { MapLayout } from '../../sim/types.js';
 import { isPolicyManifest, WorkerRuntime, type PolicyManifest } from './runtime.js';
+import { SPEC } from './spec.js';
 
 export function modelBaseUrl(): string {
   return `${import.meta.env.BASE_URL}models/`;
@@ -30,7 +31,15 @@ export function modelStem(layout: MapLayout): string {
   return layout === MapLayout.Quarters ? 'policy-quarters' : 'policy-lanes';
 }
 
-/** The manifest of the model this build ships for `layout`, or null when it ships none. */
+/**
+ * The manifest of the model this build ships for `layout`, or null when it
+ * ships none this build can run.
+ *
+ * A model exported for an older codec counts as none. `WorkerRuntime.load`
+ * refuses it either way, but the lobby asks this question to decide whether to
+ * *offer* the Neural chip — so without the check here a stale model left the
+ * chip lit and failed on the loading screen, after the match was agreed.
+ */
 export async function probeNeuralModel(layout: MapLayout): Promise<PolicyManifest | null> {
   try {
     const response = await fetch(`${modelBaseUrl()}${modelStem(layout)}.json`, {
@@ -38,7 +47,8 @@ export async function probeNeuralModel(layout: MapLayout): Promise<PolicyManifes
     });
     if (!response.ok) return null;
     const manifest: unknown = await response.json();
-    return isPolicyManifest(manifest) ? manifest : null;
+    if (!isPolicyManifest(manifest)) return null;
+    return manifest.specVersion === SPEC.version ? manifest : null;
   } catch {
     return null;
   }
@@ -49,7 +59,7 @@ export async function loadNeuralRuntime(layout: MapLayout): Promise<WorkerRuntim
   const manifest = await probeNeuralModel(layout);
   if (manifest === null) {
     throw new Error(
-      `This build ships no neural model for that map (public/models/${modelStem(layout)}.json is missing). See ml/README.md for how to train and export one.`,
+      `This build ships no neural model for that map that it can run (public/models/${modelStem(layout)}.json is missing, or was exported for an older codec than version ${SPEC.version}). See ml/README.md for how to train and export one.`,
     );
   }
   const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });

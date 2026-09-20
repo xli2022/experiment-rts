@@ -10,7 +10,7 @@
  * units per second and stored per tick.
  */
 
-import { fromFloat, type Fix } from '../sim/fixed.js';
+import { fromFloat, toFloat, type Fix } from '../sim/fixed.js';
 import { EntityType, Order, seconds, TICKS_PER_SECOND } from '../sim/types.js';
 
 /** Author a speed in units/second, store it as movement per tick. */
@@ -60,6 +60,13 @@ export interface EntityDef {
   /** Zero means this entity cannot attack. */
   readonly attackRange: Fix;
   /**
+   * Closest a weapon can fire, in world units. Zero for everything but the
+   * Sentry, whose barrel points at the sky: a mortar cannot depress onto
+   * something standing next to it, and that dead zone is the whole reason a
+   * siege unit needs an escort.
+   */
+  readonly minRange: Fix;
+  /**
    * Whether this entity's weapon can reach a flying target.
    *
    * False makes air a hard counter rather than a soft one, which is what the
@@ -69,6 +76,46 @@ export interface EntityDef {
    */
   readonly canHitAir: boolean;
   readonly damage: number;
+  /**
+   * Radius of the blast around an impact, in world units. Zero is a weapon that
+   * hits one thing.
+   *
+   * Splash obeys `canHitAir` exactly as the direct hit does: a blast from
+   * something that cannot reach a flyer does not reach it either.
+   */
+  readonly splashRadius: Fix;
+  /**
+   * Enemies one attack strikes at once, counting the primary target.
+   *
+   * One is an ordinary weapon. The Arclight's three coils each pick their own
+   * enemy, which is a different shape from splash — the extra targets are
+   * chosen near the *shooter*, so spreading out does not help against it.
+   */
+  readonly maxTargets: number;
+  /** Whether a shot also damages everything standing on the line to its target. */
+  readonly pierce: boolean;
+  /**
+   * Flat reduction on every point of damage this entity takes.
+   *
+   * The one stat on this table that is subtraction rather than a number in its
+   * own right, and it earns that: it is what makes massed cheap units a bad
+   * answer to a heavy one without reintroducing a hidden per-matchup
+   * multiplier. A hit never falls below `MIN_DAMAGE`, so armour slows a swarm
+   * down rather than making one immune to it, and the info panel prints it.
+   */
+  readonly armor: number;
+  /** Ticks a struck target is slowed for. Zero is a weapon that does not chill. */
+  readonly chillTicks: number;
+  /**
+   * HP restored per service to a damaged friendly unit. Zero is not a repairer.
+   *
+   * A repairer runs on the weapon clock — `attackRange` and `attackCooldown`
+   * mean what they always did — so nothing else in combat, movement or the
+   * renderer needs to know that this unit's beam is the helpful kind.
+   */
+  readonly repairAmount: number;
+  /** Whether attacking destroys the attacker. The Boomwalker is the payload. */
+  readonly detonates: boolean;
   /**
    * Whole ticks from attack start to impact.
    *
@@ -108,8 +155,16 @@ export const DEFS: readonly EntityDef[] = [
     turnPerTick: fromFloat(0.5),
     sightRange: fromFloat(7),
     attackRange: fromFloat(0.6),
+    minRange: 0,
     canHitAir: false,
     damage: 5,
+    splashRadius: 0,
+    maxTargets: 1,
+    pierce: false,
+    armor: 0,
+    chillTicks: 0,
+    repairAmount: 0,
+    detonates: false,
     attackForeswing: 0,
     attackCooldown: seconds(1.0),
     mineralCost: 50,
@@ -132,8 +187,16 @@ export const DEFS: readonly EntityDef[] = [
     turnPerTick: fromFloat(0.5),
     sightRange: fromFloat(8),
     attackRange: fromFloat(5),
+    minRange: 0,
     canHitAir: true,
     damage: 6,
+    splashRadius: 0,
+    maxTargets: 1,
+    pierce: false,
+    armor: 0,
+    chillTicks: 0,
+    repairAmount: 0,
+    detonates: false,
     attackForeswing: 0,
     attackCooldown: seconds(0.8),
     mineralCost: 50,
@@ -156,8 +219,16 @@ export const DEFS: readonly EntityDef[] = [
     turnPerTick: fromFloat(0.6),
     sightRange: fromFloat(7),
     attackRange: fromFloat(0.9),
+    minRange: 0,
     canHitAir: false,
     damage: 13,
+    splashRadius: 0,
+    maxTargets: 1,
+    pierce: false,
+    armor: 0,
+    chillTicks: 0,
+    repairAmount: 0,
+    detonates: false,
     // The authored sword clip spends its opening beats drawing the blade back.
     // Start that motion before the authoritative hit instead of after it.
     attackForeswing: seconds(0.45),
@@ -182,8 +253,16 @@ export const DEFS: readonly EntityDef[] = [
     turnPerTick: 0,
     sightRange: fromFloat(9),
     attackRange: 0,
+    minRange: 0,
     canHitAir: true,
     damage: 0,
+    splashRadius: 0,
+    maxTargets: 1,
+    pierce: false,
+    armor: 0,
+    chillTicks: 0,
+    repairAmount: 0,
+    detonates: false,
     attackForeswing: 0,
     attackCooldown: 0,
     mineralCost: 400,
@@ -206,8 +285,16 @@ export const DEFS: readonly EntityDef[] = [
     turnPerTick: 0,
     sightRange: fromFloat(6),
     attackRange: 0,
+    minRange: 0,
     canHitAir: true,
     damage: 0,
+    splashRadius: 0,
+    maxTargets: 1,
+    pierce: false,
+    armor: 0,
+    chillTicks: 0,
+    repairAmount: 0,
+    detonates: false,
     attackForeswing: 0,
     attackCooldown: 0,
     mineralCost: 100,
@@ -233,15 +320,29 @@ export const DEFS: readonly EntityDef[] = [
     turnPerTick: 0,
     sightRange: fromFloat(7),
     attackRange: 0,
+    minRange: 0,
     canHitAir: true,
     damage: 0,
+    splashRadius: 0,
+    maxTargets: 1,
+    pierce: false,
+    armor: 0,
+    chillTicks: 0,
+    repairAmount: 0,
+    detonates: false,
     attackForeswing: 0,
     attackCooldown: 0,
     mineralCost: 150,
     buildTicks: seconds(45),
     supplyCost: 0,
     supplyProvided: 0,
-    produces: [EntityType.Burstbot, EntityType.Slicebot, EntityType.Beamdrone],
+    produces: [
+      EntityType.Burstbot,
+      EntityType.Slicebot,
+      EntityType.Boomwalker,
+      EntityType.Beamdrone,
+      EntityType.Fixomatic,
+    ],
   },
   {
     type: EntityType.Turret,
@@ -257,8 +358,16 @@ export const DEFS: readonly EntityDef[] = [
     turnPerTick: fromFloat(0.9),
     sightRange: fromFloat(8),
     attackRange: fromFloat(6.5),
+    minRange: 0,
     canHitAir: true,
     damage: 11,
+    splashRadius: 0,
+    maxTargets: 1,
+    pierce: false,
+    armor: 0,
+    chillTicks: 0,
+    repairAmount: 0,
+    detonates: false,
     attackForeswing: 0,
     attackCooldown: seconds(0.8),
     mineralCost: 100,
@@ -285,8 +394,16 @@ export const DEFS: readonly EntityDef[] = [
     turnPerTick: 0,
     sightRange: 0,
     attackRange: 0,
+    minRange: 0,
     canHitAir: true,
     damage: 0,
+    splashRadius: 0,
+    maxTargets: 1,
+    pierce: false,
+    armor: 0,
+    chillTicks: 0,
+    repairAmount: 0,
+    detonates: false,
     attackForeswing: 0,
     attackCooldown: 0,
     mineralCost: 0,
@@ -310,13 +427,394 @@ export const DEFS: readonly EntityDef[] = [
     turnPerTick: fromFloat(0.7),
     sightRange: fromFloat(9),
     attackRange: fromFloat(3.5),
+    minRange: 0,
     canHitAir: true,
     damage: 10,
+    splashRadius: 0,
+    maxTargets: 1,
+    pierce: false,
+    armor: 0,
+    chillTicks: 0,
+    repairAmount: 0,
+    detonates: false,
     attackForeswing: 0,
     attackCooldown: seconds(1.0),
     mineralCost: 100,
     buildTicks: seconds(24),
     supplyCost: 2,
+    supplyProvided: 0,
+    produces: NONE,
+  },
+  {
+    type: EntityType.Boomwalker,
+    name: 'Boomwalker',
+    isBuilding: false,
+    collides: true,
+    flying: false,
+    // Two spindly legs under a canister half its own size: nothing about the
+    // model suggests it survives contact, and nothing about it suggests it is
+    // carrying a gun either. The whole unit is the warhead.
+    maxHp: 50,
+    radius: fromFloat(0.4),
+    footprint: 0,
+    // The fastest thing on the ground. A bomb that can be walked away from is
+    // not a bomb.
+    speedPerTick: speed(4.6),
+    accelFraction: fromFloat(0.3),
+    turnPerTick: fromFloat(0.7),
+    sightRange: fromFloat(7),
+    attackRange: fromFloat(0.7),
+    minRange: 0,
+    // It cannot reach a flyer, and neither can the blast. A charge that jumped
+    // would be the faction's cheapest answer to air, which is not what the art
+    // is of.
+    canHitAir: false,
+    damage: 45,
+    splashRadius: fromFloat(2.0),
+    maxTargets: 1,
+    pierce: false,
+    armor: 0,
+    chillTicks: 0,
+    repairAmount: 0,
+    detonates: true,
+    // 45 into one target is a bad trade for 75 minerals; 45 into six clumped
+    // Burstbots is three dead units. That gap is the unit.
+    attackForeswing: seconds(0.3),
+    attackCooldown: seconds(1.0),
+    mineralCost: 75,
+    buildTicks: seconds(18),
+    supplyCost: 2,
+    supplyProvided: 0,
+    produces: NONE,
+  },
+  {
+    type: EntityType.Fixomatic,
+    name: 'Fixomatic',
+    isBuilding: false,
+    collides: true,
+    flying: false,
+    maxHp: 60,
+    radius: fromFloat(0.4),
+    footprint: 0,
+    speedPerTick: speed(3.4),
+    accelFraction: fromFloat(0.22),
+    turnPerTick: fromFloat(0.6),
+    sightRange: fromFloat(8),
+    // A working range, not a weapon range: this is what the repair arms reach.
+    attackRange: fromFloat(4.5),
+    minRange: 0,
+    // Nothing to shoot with, so nothing to say about air.
+    canHitAir: true,
+    damage: 0,
+    splashRadius: 0,
+    maxTargets: 1,
+    pierce: false,
+    armor: 0,
+    chillTicks: 0,
+    // 4 HP every half second — one Burstbot's worth of damage, undone. It
+    // mends units only. Structures were deliberately left out: free repair on
+    // buildings was removed from the Worker for making any attack that did not
+    // outright kill a structure a waste of time, and handing it back to a
+    // purpose-built unit would undo that decision rather than revisit it.
+    repairAmount: 4,
+    detonates: false,
+    attackForeswing: 0,
+    attackCooldown: seconds(0.5),
+    mineralCost: 100,
+    buildTicks: seconds(22),
+    supplyCost: 2,
+    supplyProvided: 0,
+    produces: NONE,
+  },
+  {
+    type: EntityType.Foundry,
+    name: 'Foundry',
+    isBuilding: true,
+    collides: true,
+    flying: false,
+    maxHp: 1100,
+    radius: fromFloat(1.5),
+    footprint: 3,
+    speedPerTick: 0,
+    accelFraction: fromFloat(0.22),
+    turnPerTick: 0,
+    sightRange: fromFloat(7),
+    attackRange: 0,
+    minRange: 0,
+    canHitAir: true,
+    damage: 0,
+    splashRadius: 0,
+    maxTargets: 1,
+    pierce: false,
+    armor: 0,
+    chillTicks: 0,
+    repairAmount: 0,
+    detonates: false,
+    attackForeswing: 0,
+    attackCooldown: 0,
+    // Dearer and slower than a Barracks, which is the whole tech decision: the
+    // minerals and the 55 seconds are an army you did not build meanwhile.
+    mineralCost: 200,
+    buildTicks: seconds(55),
+    supplyCost: 0,
+    supplyProvided: 0,
+    produces: [
+      EntityType.Firespout,
+      EntityType.Arclight,
+      EntityType.Piercebot,
+      EntityType.Sentry,
+      EntityType.DarkGolem,
+      EntityType.IceGolem,
+      EntityType.Plasmodrone,
+    ],
+  },
+  {
+    type: EntityType.Firespout,
+    name: 'Firespout',
+    isBuilding: false,
+    collides: true,
+    flying: false,
+    // A barrel on crab legs with one wide nozzle out the front, and a plate
+    // over the front of the barrel. Built to walk into things.
+    maxHp: 130,
+    radius: fromFloat(0.5),
+    footprint: 0,
+    speedPerTick: speed(2.7),
+    accelFraction: fromFloat(0.22),
+    turnPerTick: fromFloat(0.5),
+    sightRange: fromFloat(7),
+    attackRange: fromFloat(2.2),
+    minRange: 0,
+    // The nozzle is level with the ground and does not tilt.
+    canHitAir: false,
+    damage: 14,
+    splashRadius: fromFloat(1.6),
+    maxTargets: 1,
+    pierce: false,
+    armor: 0,
+    chillTicks: 0,
+    repairAmount: 0,
+    detonates: false,
+    attackForeswing: seconds(0.25),
+    attackCooldown: seconds(0.9),
+    mineralCost: 100,
+    buildTicks: seconds(24),
+    supplyCost: 2,
+    supplyProvided: 0,
+    produces: NONE,
+  },
+  {
+    type: EntityType.Arclight,
+    name: 'Arclight',
+    isBuilding: false,
+    collides: true,
+    flying: false,
+    maxHp: 120,
+    radius: fromFloat(0.525),
+    footprint: 0,
+    speedPerTick: speed(2.9),
+    accelFraction: fromFloat(0.22),
+    turnPerTick: fromFloat(0.5),
+    sightRange: fromFloat(8),
+    attackRange: fromFloat(4.5),
+    minRange: 0,
+    // Three coils on its back, pointing up and out. An arc does not care
+    // whether what it earths through is standing on the ground.
+    canHitAir: true,
+    damage: 9,
+    splashRadius: 0,
+    // One coil, one enemy. Against a single target 8.2 damage per second for
+    // 150 minerals is the worst rate in the game; against three it is the best.
+    maxTargets: 3,
+    pierce: false,
+    armor: 0,
+    chillTicks: 0,
+    repairAmount: 0,
+    detonates: false,
+    attackForeswing: seconds(0.3),
+    attackCooldown: seconds(1.1),
+    mineralCost: 150,
+    buildTicks: seconds(28),
+    supplyCost: 3,
+    supplyProvided: 0,
+    produces: NONE,
+  },
+  {
+    type: EntityType.Piercebot,
+    name: 'Piercebot',
+    isBuilding: false,
+    collides: true,
+    flying: false,
+    // Flat and wide, almost all of it launcher. There is no armour on it.
+    maxHp: 80,
+    radius: fromFloat(0.5),
+    footprint: 0,
+    speedPerTick: speed(2.6),
+    accelFraction: fromFloat(0.18),
+    turnPerTick: fromFloat(0.35),
+    sightRange: fromFloat(9),
+    // The longest reach on the field, and two tiles past a Turret.
+    attackRange: fromFloat(8.0),
+    minRange: 0,
+    canHitAir: true,
+    damage: 20,
+    splashRadius: 0,
+    maxTargets: 1,
+    // The rail is horizontal and the bolt does not stop. Everything standing
+    // between it and what it aimed at takes the hit — which on a map made of
+    // lanes is a decision about where to stand, not a bonus.
+    pierce: true,
+    armor: 0,
+    chillTicks: 0,
+    repairAmount: 0,
+    detonates: false,
+    attackForeswing: seconds(0.5),
+    attackCooldown: seconds(2.0),
+    mineralCost: 125,
+    buildTicks: seconds(26),
+    supplyCost: 3,
+    supplyProvided: 0,
+    produces: NONE,
+  },
+  {
+    type: EntityType.Sentry,
+    name: 'Sentry',
+    isBuilding: false,
+    collides: true,
+    flying: false,
+    maxHp: 100,
+    radius: fromFloat(0.5),
+    footprint: 0,
+    speedPerTick: speed(2.4),
+    accelFraction: fromFloat(0.16),
+    turnPerTick: fromFloat(0.35),
+    sightRange: fromFloat(9),
+    // Outranges a Turret by 2.5 tiles, which is what makes it the base-cracker.
+    attackRange: fromFloat(9.0),
+    // The barrel points at the sky. It cannot be aimed at its own feet.
+    minRange: fromFloat(2.5),
+    canHitAir: false,
+    damage: 30,
+    splashRadius: fromFloat(2.2),
+    maxTargets: 1,
+    pierce: false,
+    armor: 0,
+    chillTicks: 0,
+    repairAmount: 0,
+    detonates: false,
+    attackForeswing: seconds(0.6),
+    attackCooldown: seconds(2.6),
+    mineralCost: 175,
+    buildTicks: seconds(32),
+    supplyCost: 3,
+    supplyProvided: 0,
+    produces: NONE,
+  },
+  {
+    type: EntityType.DarkGolem,
+    name: 'Dark Golem',
+    isBuilding: false,
+    collides: true,
+    flying: false,
+    // The heaviest thing either side can field: shoulder plate, two plasma
+    // stacks, and arms that reach the floor.
+    maxHp: 420,
+    radius: fromFloat(0.7),
+    footprint: 0,
+    speedPerTick: speed(2.8),
+    accelFraction: fromFloat(0.18),
+    turnPerTick: fromFloat(0.4),
+    sightRange: fromFloat(7),
+    attackRange: fromFloat(1.1),
+    minRange: 0,
+    canHitAir: false,
+    damage: 34,
+    splashRadius: 0,
+    maxTargets: 1,
+    pierce: false,
+    // 4 off every hit. A Burstbot's 6 becomes 2, so the cheap line unit needs
+    // three times as long; a Sentry's 30 becomes 26 and barely notices.
+    armor: 4,
+    chillTicks: 0,
+    repairAmount: 0,
+    detonates: false,
+    attackForeswing: seconds(0.5),
+    attackCooldown: seconds(1.5),
+    mineralCost: 250,
+    buildTicks: seconds(40),
+    supplyCost: 5,
+    supplyProvided: 0,
+    produces: NONE,
+  },
+  {
+    type: EntityType.IceGolem,
+    name: 'Ice Golem',
+    isBuilding: false,
+    collides: true,
+    flying: false,
+    maxHp: 330,
+    radius: fromFloat(0.7),
+    footprint: 0,
+    speedPerTick: speed(2.6),
+    accelFraction: fromFloat(0.18),
+    turnPerTick: fromFloat(0.4),
+    sightRange: fromFloat(8),
+    // Two cryo barrels over its shoulders, angled up. It shoots, and it can
+    // shoot at things in the air.
+    attackRange: fromFloat(4.0),
+    minRange: 0,
+    canHitAir: true,
+    damage: 18,
+    splashRadius: 0,
+    maxTargets: 1,
+    pierce: false,
+    armor: 0,
+    // What you buy is not the 12.9 damage per second — it is that whatever it
+    // hits cannot leave. See CHILL_SPEED.
+    chillTicks: seconds(2.5),
+    repairAmount: 0,
+    detonates: false,
+    attackForeswing: seconds(0.4),
+    attackCooldown: seconds(1.4),
+    mineralCost: 225,
+    buildTicks: seconds(38),
+    supplyCost: 5,
+    supplyProvided: 0,
+    produces: NONE,
+  },
+  {
+    type: EntityType.Plasmodrone,
+    name: 'Plasmodrone',
+    isBuilding: false,
+    // Flies over everything, including its own army.
+    collides: false,
+    flying: true,
+    maxHp: 220,
+    radius: fromFloat(0.7),
+    footprint: 0,
+    speedPerTick: speed(3.2),
+    accelFraction: fromFloat(0.2),
+    turnPerTick: fromFloat(0.45),
+    sightRange: fromFloat(9),
+    attackRange: fromFloat(4.5),
+    minRange: 0,
+    canHitAir: true,
+    damage: 22,
+    // Several emitters firing together, so it lands as one wide plasma bloom
+    // rather than a beam. Slower and dearer than a Beamdrone in every respect
+    // except what happens when it catches a crowd.
+    splashRadius: fromFloat(1.8),
+    maxTargets: 1,
+    pierce: false,
+    armor: 0,
+    chillTicks: 0,
+    repairAmount: 0,
+    detonates: false,
+    attackForeswing: seconds(0.4),
+    attackCooldown: seconds(1.6),
+    mineralCost: 225,
+    buildTicks: seconds(36),
+    supplyCost: 4,
     supplyProvided: 0,
     produces: NONE,
   },
@@ -338,6 +836,21 @@ for (let i = 0; i < DEFS.length; i++) {
       `${def.name}: foreswing ${def.attackForeswing} must be shorter than cooldown ${def.attackCooldown}`,
     );
   }
+  if (def.maxTargets < 1) {
+    throw new Error(`${def.name}: maxTargets ${def.maxTargets} must be at least one`);
+  }
+  if (def.minRange > 0 && def.minRange >= def.attackRange) {
+    throw new Error(`${def.name}: minimum range must be shorter than its attack range`);
+  }
+  // Every ability rides the weapon clock, so a row that has one and no clock
+  // would sit there doing nothing with no sign of why.
+  const armed = def.attackRange > 0 && def.attackCooldown > 0;
+  if (!armed && (def.splashRadius > 0 || def.pierce || def.chillTicks > 0 || def.detonates)) {
+    throw new Error(`${def.name}: has a weapon ability but no weapon`);
+  }
+  if (def.repairAmount > 0 && (!armed || def.damage > 0)) {
+    throw new Error(`${def.name}: a repairer needs a working range and deals no damage`);
+  }
 }
 
 export function defOf(type: EntityType): EntityDef {
@@ -345,16 +858,67 @@ export function defOf(type: EntityType): EntityDef {
 }
 
 /**
- * `damage` is the whole story: a unit deals it to everything it can shoot.
+ * `damage` is the whole story: a unit deals it to everything it hits.
  *
  * There used to be a rock-paper-scissors triangle here — ranged/air/melee, each
  * dealing double to one other — applied as a percentage inside `combatSystem`.
  * It is gone, and deliberately so: the multiplier existed nowhere on screen, so
- * the number a player could see was never the number they got. Damage is now a
- * single figure shown on the unit info panel, and what units beat what is
- * decided by the stats a player can read: range, speed, health, and whether the
- * weapon can reach a flyer at all (`canHitAir`).
+ * the number a player could see was never the number they got.
+ *
+ * The abilities above do not bring it back. Every one of them changes *how many
+ * things a shot reaches* or *how much of a hit survives contact* — never how
+ * much damage this attacker deals to that defender. `splashRadius`,
+ * `maxTargets` and `pierce` each widen the set of things one attack lands on,
+ * and every one of them takes the same `damage`; `armor` is subtracted from
+ * every incoming hit whoever threw it. So a player can still read two panels
+ * against each other and get the fight they expect, and `abilityText` puts each
+ * of these on the panel beside the damage figure rather than leaving it to be
+ * discovered.
  */
+
+/**
+ * Floor on a hit after armour.
+ *
+ * Armour that could zero a weapon out would make a Dark Golem literally
+ * immune to Burstbots, and "this unit cannot be hurt by that one" is a rule
+ * players discover by losing an army to it. One point a hit keeps the counter
+ * lopsided without making it absolute.
+ */
+export const MIN_DAMAGE = 1;
+
+/**
+ * What a chilled unit's top speed is multiplied by.
+ *
+ * One constant rather than a per-weapon figure: only the Ice Golem chills, and
+ * two sources with different strengths would need a rule for which one wins
+ * that nothing on screen could explain. Half speed, for `chillTicks`.
+ */
+export const CHILL_SPEED = fromFloat(0.5);
+
+/**
+ * The abilities of a unit, as the info panel says them out loud.
+ *
+ * Kept next to the numbers it reads rather than in the HUD, so a row that gains
+ * an ability gains its line here in the same edit. Empty for the units that do
+ * exactly what their damage figure says.
+ */
+export function abilityText(def: EntityDef): string[] {
+  const out: string[] = [];
+  if (def.repairAmount > 0) {
+    out.push(`repairs ${(def.repairAmount * TICKS_PER_SECOND) / def.attackCooldown} HP/s`);
+  }
+  if (def.detonates) out.push('detonates on contact');
+  if (def.splashRadius > 0) out.push(`splash ${toFloat(def.splashRadius).toFixed(1)}`);
+  if (def.maxTargets > 1) out.push(`hits ${def.maxTargets} at once`);
+  if (def.pierce) out.push('pierces the line');
+  if (def.chillTicks > 0) {
+    out.push(`chills ${(def.chillTicks / TICKS_PER_SECOND).toFixed(1)}s`);
+  }
+  if (def.armor > 0) out.push(`armour ${def.armor}`);
+  if (def.minRange > 0) out.push(`min range ${toFloat(def.minRange).toFixed(1)}`);
+  if (def.attackRange > 0 && def.damage > 0 && !def.canHitAir) out.push('no air');
+  return out;
+}
 
 // ---------------------------------------------------------------------------
 // Global economy and match rules

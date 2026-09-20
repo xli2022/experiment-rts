@@ -95,6 +95,150 @@ export class ProceduralModelProvider implements ModelProvider {
           ],
         };
 
+      case EntityType.Boomwalker:
+        return {
+          radius,
+          height: 1.1,
+          // Almost all payload, on legs that barely show. The silhouette is the
+          // warning: a player who sees this shape coming should read "get out
+          // of the way" before they read the name on the panel.
+          parts: [
+            part(new THREE.CylinderGeometry(0.34, 0.34, 0.62, 8), 'accent', [0, 0.62, 0]),
+            part(new THREE.CylinderGeometry(0.38, 0.38, 0.1, 8), 'dark', [0, 0.95, 0]),
+            part(new THREE.BoxGeometry(0.1, 0.32, 0.1), 'player', [0.14, 0.16, 0]),
+            part(new THREE.BoxGeometry(0.1, 0.32, 0.1), 'player', [-0.14, 0.16, 0]),
+          ],
+        };
+
+      case EntityType.Fixomatic:
+        return {
+          radius,
+          height: 1.2,
+          // A lens on a stalk with two working arms out front, and nothing that
+          // reads as a weapon — which is the point.
+          parts: [
+            part(new THREE.BoxGeometry(0.26, 0.4, 0.26), 'player', [0, 0.34, 0]),
+            part(new THREE.SphereGeometry(0.2, 10, 8), 'accent', [0, 0.78, 0.06]),
+            part(new THREE.BoxGeometry(0.07, 0.07, 0.5), 'dark', [0.2, 0.5, 0.24], [0.3, 0, 0]),
+            part(new THREE.BoxGeometry(0.07, 0.07, 0.5), 'dark', [-0.2, 0.5, 0.24], [0.3, 0, 0]),
+          ],
+        };
+
+      case EntityType.Firespout:
+        return {
+          radius,
+          height: 1.25,
+          // A barrel with one wide muzzle out the front, low on crab legs.
+          parts: [
+            part(new THREE.CylinderGeometry(0.34, 0.38, 0.72, 8), 'player', [0, 0.52, 0]),
+            part(
+              new THREE.CylinderGeometry(0.12, 0.17, 0.5, 8),
+              'dark',
+              [0, 0.6, 0.4],
+              [1.57, 0, 0],
+            ),
+            part(new THREE.BoxGeometry(0.72, 0.14, 0.5), 'dark', [0, 0.14, 0]),
+          ],
+        };
+
+      case EntityType.Arclight:
+        return {
+          radius,
+          height: 1.35,
+          // Three coils, because three is the number the panel promises.
+          parts: [
+            part(new THREE.SphereGeometry(0.42, 10, 8), 'player', [0, 0.52, 0]),
+            part(new THREE.CylinderGeometry(0.2, 0.2, 0.1, 8), 'accent', [0, 0.98, -0.1]),
+            part(new THREE.CylinderGeometry(0.17, 0.17, 0.1, 8), 'accent', [0.32, 0.84, -0.2]),
+            part(new THREE.CylinderGeometry(0.17, 0.17, 0.1, 8), 'accent', [-0.32, 0.84, -0.2]),
+            part(new THREE.BoxGeometry(0.6, 0.18, 0.4), 'dark', [0, 0.12, 0]),
+          ],
+        };
+
+      case EntityType.Piercebot:
+        return {
+          radius,
+          height: 0.9,
+          // Long, low and mostly rail. Nothing else on the field is this flat.
+          parts: [
+            part(new THREE.BoxGeometry(0.5, 0.26, 0.8), 'player', [0, 0.3, 0]),
+            part(new THREE.BoxGeometry(0.09, 0.09, 1.2), 'accent', [0.16, 0.52, 0.3]),
+            part(new THREE.BoxGeometry(0.09, 0.09, 1.2), 'accent', [-0.16, 0.52, 0.3]),
+            part(new THREE.BoxGeometry(0.8, 0.12, 0.5), 'dark', [0, 0.12, -0.1]),
+          ],
+        };
+
+      case EntityType.Sentry:
+        return {
+          radius,
+          height: 1.4,
+          // The barrel points straight up, which is the whole explanation of
+          // both its range and its minimum range.
+          parts: [
+            part(new THREE.BoxGeometry(0.56, 0.36, 0.56), 'player', [0, 0.32, 0]),
+            part(new THREE.CylinderGeometry(0.19, 0.22, 0.66, 8), 'dark', [0, 0.82, -0.04]),
+            part(new THREE.CylinderGeometry(0.24, 0.24, 0.1, 8), 'accent', [0, 1.18, -0.04]),
+            part(new THREE.BoxGeometry(0.74, 0.14, 0.62), 'dark', [0, 0.1, 0]),
+          ],
+        };
+
+      case EntityType.DarkGolem:
+        return {
+          radius,
+          height: 1.8,
+          // Shoulders first: the widest ground silhouette either side fields,
+          // with two lit stacks behind it.
+          parts: [
+            part(new THREE.BoxGeometry(0.8, 0.82, 0.62), 'player', [0, 0.78, 0]),
+            part(new THREE.BoxGeometry(1.14, 0.3, 0.5), 'dark', [0, 1.1, -0.02]),
+            part(new THREE.CylinderGeometry(0.11, 0.11, 0.5, 6), 'accent', [0.24, 1.44, -0.24]),
+            part(new THREE.CylinderGeometry(0.11, 0.11, 0.5, 6), 'accent', [-0.24, 1.44, -0.24]),
+            part(new THREE.BoxGeometry(0.26, 0.6, 0.26), 'dark', [0.52, 0.5, 0.16]),
+            part(new THREE.BoxGeometry(0.26, 0.6, 0.26), 'dark', [-0.52, 0.5, 0.16]),
+            part(new THREE.BoxGeometry(0.78, 0.3, 0.6), 'player', [0, 0.18, 0]),
+          ],
+        };
+
+      case EntityType.IceGolem:
+        return {
+          radius,
+          height: 1.75,
+          // The same bulk, but carrying two barrels instead of two fists.
+          parts: [
+            part(new THREE.BoxGeometry(0.78, 0.78, 0.6), 'player', [0, 0.74, 0]),
+            part(
+              new THREE.CylinderGeometry(0.14, 0.14, 0.72, 8),
+              'accent',
+              [0.42, 1.2, -0.1],
+              [0.5, 0, 0.35],
+            ),
+            part(
+              new THREE.CylinderGeometry(0.14, 0.14, 0.72, 8),
+              'accent',
+              [-0.42, 1.2, -0.1],
+              [0.5, 0, -0.35],
+            ),
+            part(new THREE.BoxGeometry(0.24, 0.54, 0.24), 'dark', [0.5, 0.46, 0.14]),
+            part(new THREE.BoxGeometry(0.24, 0.54, 0.24), 'dark', [-0.5, 0.46, 0.14]),
+            part(new THREE.BoxGeometry(0.76, 0.3, 0.58), 'player', [0, 0.18, 0]),
+          ],
+        };
+
+      case EntityType.Plasmodrone:
+        return {
+          radius,
+          height: 1.15,
+          // Wider than the Beamdrone and carrying two pods, so the two flyers
+          // are told apart by width in the one glance a fight allows.
+          parts: [
+            part(new THREE.ConeGeometry(0.36, 1.1, 6), 'player', [0, 0, 0.05], [Math.PI / 2, 0, 0]),
+            part(new THREE.BoxGeometry(1.9, 0.11, 0.42), 'player', [0, 0.05, -0.08]),
+            part(new THREE.SphereGeometry(0.22, 10, 8), 'accent', [0.72, 0.0, 0.02]),
+            part(new THREE.SphereGeometry(0.22, 10, 8), 'accent', [-0.72, 0.0, 0.02]),
+            part(new THREE.BoxGeometry(0.34, 0.14, 0.34), 'dark', [0, 0.16, -0.2]),
+          ],
+        };
+
       case EntityType.CommandPost:
         return {
           radius,
@@ -127,6 +271,23 @@ export class ProceduralModelProvider implements ModelProvider {
             // Angled roof, so barracks never read as a bigger depot.
             part(new THREE.BoxGeometry(2.2, 0.5, 1.2), 'dark', [0, 1.4, 0]),
             part(new THREE.BoxGeometry(0.8, 0.9, 0.25), 'accent', [0, 0.45, 1.35]),
+          ],
+        };
+
+      case EntityType.Foundry:
+        return {
+          radius,
+          height: 2.2,
+          // Reads as a Barracks that grew a chimney. Deliberately the same
+          // family — it is the same idea one tier up — but a player scouting a
+          // base has to be able to tell at a glance which one they are looking
+          // at, and the stack does that from any angle.
+          parts: [
+            part(new THREE.BoxGeometry(2.6, 1.3, 2.6), 'player', [0, 0.65, 0]),
+            part(new THREE.BoxGeometry(2.0, 0.4, 2.0), 'dark', [0, 1.5, 0]),
+            part(new THREE.CylinderGeometry(0.38, 0.46, 1.0, 8), 'dark', [-0.7, 2.05, -0.7]),
+            part(new THREE.CylinderGeometry(0.42, 0.42, 0.16, 8), 'accent', [-0.7, 2.6, -0.7]),
+            part(new THREE.BoxGeometry(1.1, 0.8, 0.25), 'accent', [0, 0.45, 1.35]),
           ],
         };
 

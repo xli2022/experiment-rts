@@ -6,16 +6,36 @@
  * constantly. The comparator below is a strict total order — distance first,
  * then the target's seat and creation order — so there is never a tie to break
  * arbitrarily, and two mirrored units break it the same way.
+ *
+ * ## Attacks that land on more than one thing
+ *
+ * Splash, the Arclight's three coils, and the Piercebot's line all gather a
+ * *set* of victims rather than one. Every one of them collects into `victims`
+ * and sorts it on the same key `acquireTarget` breaks ties with — the target's
+ * canonical seat and creation ordinal — before a single point of damage is
+ * applied. Slot index would have been the obvious sort and is wrong: slots are
+ * recycled from one shared free list, so two mirrored halves do not agree about
+ * them, and the order damage lands in decides the order deaths are queued,
+ * which decides the free list, which decides every entity id afterwards.
  */
 
-import { defOf } from '../../config/rules.js';
+import { CHILL_SPEED, defOf, MIN_DAMAGE, type EntityDef } from '../../config/rules.js';
 import { idIndex } from '../entities.js';
-import { fromInt, sqRange, vecLenSqRaw, vecNormalize } from '../fixed.js';
+import { fmul, fromInt, sqRange, vecLen, vecLenSqRaw, vecNormalize } from '../fixed.js';
 import { BuildState, EntityType, NEUTRAL, NO_ENTITY, Order } from '../types.js';
 import type { World } from '../world.js';
 
 export function combatSystem(world: World): void {
   const pool = world.pool;
+
+  // Chill wears off in a pass of its own, before anyone fires. Folded into the
+  // loop below it would tick down *after* the attack that applied it whenever
+  // the Ice Golem sat at a lower slot than what it shot, so the same chill
+  // lasted one tick longer or shorter depending on which of the two was
+  // spawned first — deterministic, but arbitrary, and visible on the panel.
+  for (let i = 0; i < pool.count; i++) {
+    if (pool.alive[i] === 1 && pool.chill[i]! > 0) pool.chill[i]! -= 1;
+  }
 
   for (let i = 0; i < pool.count; i++) {
     if (pool.alive[i] !== 1) continue;
@@ -25,6 +45,11 @@ export function combatSystem(world: World): void {
     const type = pool.type[i]! as EntityType;
     const def = defOf(type);
     if (def.attackRange === 0) continue;
+    // A repairer runs the same clock against the opposite list.
+    if (def.repairAmount > 0) {
+      serviceRepair(world, i, def);
+      continue;
+    }
     if (pool.owner[i] === NEUTRAL) continue;
     // Unfinished buildings cannot shoot.
     if (def.isBuilding && pool.buildState[i] !== BuildState.Complete) continue;
@@ -87,9 +112,12 @@ export function combatSystem(world: World): void {
     // Measure to the target's edge, so large buildings are hittable from where
     // they visually begin rather than from their centre.
     const reach = def.attackRange + targetDef.radius;
-    const inRange = vecLenSqRaw(dx, dy) <= sqRange(reach);
-
-    if (!inRange) continue;
+    const distSq = vecLenSqRaw(dx, dy);
+    if (distSq > sqRange(reach)) continue;
+    // Too close to depress the barrel. The unit still faces what it cannot
+    // shoot, so the player can see it is stuck rather than asleep, and
+    // movement is left alone — backing artillery off is the player's job.
+    if (def.minRange > 0 && distSq < sqRange(def.minRange)) continue;
 
     // Face the target while firing. Turrets rotate; ground units snap since
     // they are already steering toward it.
@@ -148,10 +176,271 @@ function resolveAttackImpact(world: World, attackerIndex: number, target: number
   pool.faceX[attackerIndex] = dir.x;
   pool.faceY[attackerIndex] = dir.y;
 
-  // One number, whatever it is shooting. The HUD shows `def.damage` on the
-  // info panel, and a per-matchup multiplier would have made that a lie.
-  applyDamage(world, targetIndex, def.damage);
-  world.events.shots.push(attackerIndex, targetIndex);
+  // One number, whatever it is shooting, and whatever else the shot reaches on
+  // the way. The HUD shows `def.damage` on the info panel, and a per-matchup
+  // multiplier would have made that a lie.
+  victims.length = 0;
+  addVictim(world, attackerIndex, targetIndex);
+  if (def.splashRadius > 0) gatherSplash(world, attackerIndex, targetIndex, def);
+  if (def.pierce) gatherLine(world, attackerIndex, targetIndex, def);
+  if (def.maxTargets > 1) gatherExtraTargets(world, attackerIndex, def);
+  sortVictims(world);
+
+  for (let k = 0; k < victims.length; k++) {
+    const v = victims[k]!;
+    applyDamage(world, v, def.damage);
+    if (def.chillTicks > 0) pool.chill[v] = def.chillTicks;
+    world.events.shots.push(attackerIndex, v);
+  }
+
+  // The payload went off, so the thing carrying it is gone. Queued like any
+  // other death so it is reaped with them, after every system has run.
+  if (def.detonates) {
+    pool.hp[attackerIndex] = 0;
+    world.events.deaths.push(attackerIndex);
+  }
+}
+
+/**
+ * Victims of the attack being resolved, gathered before any of them is hurt.
+ *
+ * Module scope, reused every impact: this runs inside the tick loop, and a
+ * fresh array per attack is garbage the simulation does not need to make. It is
+ * only ever live between `victims.length = 0` and the loop that drains it.
+ */
+const victims: number[] = [];
+
+/** Add a slot to `victims` if it is a legal target for this attacker and not already in. */
+function addVictim(world: World, attackerIndex: number, index: number): void {
+  if (!canVictimise(world, attackerIndex, index)) return;
+  for (let k = 0; k < victims.length; k++) if (victims[k] === index) return;
+  victims.push(index);
+}
+
+/** Whether this attacker's weapon is allowed to land on that slot at all. */
+function canVictimise(world: World, attackerIndex: number, index: number): boolean {
+  const pool = world.pool;
+  if (index === attackerIndex) return false;
+  if (pool.alive[index] !== 1) return false;
+  if (!world.isHostile(index, pool.owner[attackerIndex]!)) return false;
+  const def = defOf(pool.type[attackerIndex]! as EntityType);
+  return def.canHitAir || !defOf(pool.type[index]! as EntityType).flying;
+}
+
+/**
+ * Order the victims the way `acquireTarget` breaks ties.
+ *
+ * Insertion sort on a list that is almost always one to four long, and never
+ * more than a crowd standing inside one blast. The key is the target's
+ * canonical seat and creation ordinal, which two mirrored halves agree on;
+ * slot index, which they do not, would make the two seats queue their deaths
+ * in different orders and hand out different entity ids from then on.
+ */
+function sortVictims(world: World): void {
+  for (let k = 1; k < victims.length; k++) {
+    const v = victims[k]!;
+    const key = tieKey(world, v);
+    let j = k - 1;
+    while (j >= 0 && tieKey(world, victims[j]!) > key) {
+      victims[j + 1] = victims[j]!;
+      j--;
+    }
+    victims[j + 1] = v;
+  }
+}
+
+function tieKey(world: World, index: number): number {
+  return world.ownerCanonical(world.pool.owner[index]!) * 1048576 + world.pool.serial[index]!;
+}
+
+/** Everything hostile standing within the blast, centred on what was hit. */
+function gatherSplash(
+  world: World,
+  attackerIndex: number,
+  targetIndex: number,
+  def: EntityDef,
+): void {
+  const pool = world.pool;
+  const cx = pool.posX[targetIndex]!;
+  const cy = pool.posY[targetIndex]!;
+  world.grid.forEachNear(cx, cy, def.splashRadius, (j) => {
+    const other = defOf(pool.type[j]! as EntityType);
+    // Measured to the edge, like every other range test in here, so a big
+    // building caught by the rim of a blast takes it.
+    const dx = pool.posX[j]! - cx;
+    const dy = pool.posY[j]! - cy;
+    if (vecLenSqRaw(dx, dy) > sqRange(def.splashRadius + other.radius)) return;
+    addVictim(world, attackerIndex, j);
+  });
+}
+
+/**
+ * Everything hostile the bolt passes through on its way to the target.
+ *
+ * The test is distance from the segment, not from the line: something behind
+ * the Piercebot is not on the shot, and neither is something past what it
+ * aimed at — the bolt stops where it was aimed.
+ */
+function gatherLine(
+  world: World,
+  attackerIndex: number,
+  targetIndex: number,
+  def: EntityDef,
+): void {
+  const pool = world.pool;
+  const ax = pool.posX[attackerIndex]!;
+  const ay = pool.posY[attackerIndex]!;
+  const sx = pool.posX[targetIndex]! - ax;
+  const sy = pool.posY[targetIndex]! - ay;
+  const lenSq = vecLenSqRaw(sx, sy);
+  if (lenSq <= 0) return;
+  const len = vecLen(sx, sy);
+
+  // One sweep around the midpoint covers the whole segment: nothing on it is
+  // further from the middle than half the shot's length.
+  const midX = ax + ((sx / 2) | 0);
+  const midY = ay + ((sy / 2) | 0);
+  world.grid.forEachNear(midX, midY, def.attackRange, (j) => {
+    if (j === targetIndex) return;
+    const px = pool.posX[j]! - ax;
+    const py = pool.posY[j]! - ay;
+
+    // Along the shot: both products are exact integers well inside float64's
+    // range (|dx| < 2^23 on the largest map, so each term is under 2^46), and
+    // comparing them against `lenSq` needs no scaling — they share it.
+    const along = sx * px + sy * py;
+    if (along <= 0 || along >= lenSq) return;
+
+    // Across it: the cross product over the length is the perpendicular
+    // distance back in Q16.16. Division of exact integers is correctly
+    // rounded, so every engine truncates to the same unit.
+    const across = ((sx * py - sy * px) / len) | 0;
+    const width = defOf(pool.type[j]! as EntityType).radius;
+    if (across > width || across < -width) return;
+    addVictim(world, attackerIndex, j);
+  });
+}
+
+/**
+ * The other enemies the remaining coils earth through.
+ *
+ * Chosen near the *shooter*, not near the primary target, which is what makes
+ * this different from splash: an army that spreads out to beat a blast is
+ * still three separate things inside an Arclight's reach. Taken nearest first,
+ * one coil at a time, so the set does not depend on the order the spatial grid
+ * happened to visit its cells in.
+ */
+function gatherExtraTargets(world: World, attackerIndex: number, def: EntityDef): void {
+  const pool = world.pool;
+  const px = pool.posX[attackerIndex]!;
+  const py = pool.posY[attackerIndex]!;
+
+  while (victims.length < def.maxTargets) {
+    let bestIndex = -1;
+    let bestDistSq = Number.POSITIVE_INFINITY;
+    let bestKey = 0;
+
+    world.grid.forEachNear(px, py, def.attackRange, (j) => {
+      if (!canVictimise(world, attackerIndex, j)) return;
+      for (let k = 0; k < victims.length; k++) if (victims[k] === j) return;
+
+      const other = defOf(pool.type[j]! as EntityType);
+      const distSq = distSqFrom(world, px, py, j);
+      if (distSq > sqRange(def.attackRange + other.radius)) return;
+
+      const key = tieKey(world, j);
+      if (distSq < bestDistSq || (distSq === bestDistSq && key < bestKey)) {
+        bestDistSq = distSq;
+        bestIndex = j;
+        bestKey = key;
+      }
+    });
+
+    if (bestIndex < 0) return;
+    victims.push(bestIndex);
+  }
+}
+
+function distSqFrom(world: World, x: number, y: number, index: number): number {
+  return vecLenSqRaw(world.pool.posX[index]! - x, world.pool.posY[index]! - y);
+}
+
+/**
+ * A repairer's turn: mend the most broken friendly unit within reach.
+ *
+ * Deliberately not structures, and deliberately not itself. Free repair on
+ * buildings was taken off the Worker for making any attack that did not
+ * outright kill a structure a waste of time, and a pair of Fixomatics holding
+ * each other up would be the same mistake at unit scale.
+ */
+function serviceRepair(world: World, index: number, def: EntityDef): void {
+  const pool = world.pool;
+  if (pool.owner[index] === NEUTRAL) return;
+
+  const target = acquireRepairTarget(world, index, def.attackRange);
+  pool.combatTarget[index] = target < 0 ? NO_ENTITY : pool.idAt(target);
+  if (target < 0) return;
+
+  const dx = pool.posX[target]! - pool.posX[index]!;
+  const dy = pool.posY[target]! - pool.posY[index]!;
+  const dir = vecNormalize(dx, dy);
+  pool.faceX[index] = dir.x;
+  pool.faceY[index] = dir.y;
+
+  if (pool.attackCooldown[index]! > 0) return;
+  pool.attackCooldown[index] = def.attackCooldown;
+
+  const max = defOf(pool.type[target]! as EntityType).maxHp;
+  const healed = pool.hp[target]! + def.repairAmount;
+  pool.hp[target] = healed > max ? max : healed;
+
+  // The same two events an attack raises. The renderer already knows how to
+  // play a swing and draw a tracer from these, and a repair beam is one.
+  world.events.attackStarts.push(index, target);
+  world.events.attackImpacts.push(index);
+  world.events.shots.push(index, target);
+}
+
+/**
+ * The friendly unit most in need of mending, within `range`.
+ *
+ * Ordered by how much HP it is missing, then by the same canonical key every
+ * other choice in this file breaks ties with — never by how close it is.
+ * Nearest-first would have a repairer nurse a scratched Burstbot beside it
+ * while the Dark Golem it is escorting dies two tiles away.
+ */
+function acquireRepairTarget(world: World, index: number, range: number): number {
+  const pool = world.pool;
+  const owner = pool.owner[index]!;
+  const px = pool.posX[index]!;
+  const py = pool.posY[index]!;
+
+  let bestIndex = -1;
+  let bestMissing = 0;
+  let bestKey = 0;
+
+  world.grid.forEachNear(px, py, range, (j) => {
+    if (j === index) return;
+    if (pool.alive[j] !== 1) return;
+    if (pool.owner[j] !== owner) return;
+    const other = defOf(pool.type[j]! as EntityType);
+    if (other.isBuilding) return;
+    const missing = other.maxHp - pool.hp[j]!;
+    if (missing <= 0) return;
+
+    const dx = pool.posX[j]! - px;
+    const dy = pool.posY[j]! - py;
+    if (vecLenSqRaw(dx, dy) > sqRange(range + other.radius)) return;
+
+    const key = tieKey(world, j);
+    if (missing > bestMissing || (missing === bestMissing && key < bestKey)) {
+      bestMissing = missing;
+      bestIndex = j;
+      bestKey = key;
+    }
+  });
+
+  return bestIndex;
 }
 
 /**
@@ -204,10 +493,20 @@ function acquireTarget(world: World, index: number, range: number): number {
   return bestIndex;
 }
 
-/** Apply damage and queue a death if it drops to zero. */
+/**
+ * Apply damage and queue a death if it drops to zero.
+ *
+ * Armour comes off here rather than at the attacker, so it applies to every
+ * source — a blast, a coil, a pierced bolt and a sword all meet the same
+ * plate. Never below `MIN_DAMAGE`: armour is a bad matchup, not immunity.
+ */
 export function applyDamage(world: World, index: number, amount: number): void {
   const pool = world.pool;
   if (pool.alive[index] !== 1) return;
+  const armor = defOf(pool.type[index]! as EntityType).armor;
+  if (armor > 0 && amount > 0) {
+    amount = amount - armor < MIN_DAMAGE ? MIN_DAMAGE : amount - armor;
+  }
   pool.hp[index]! -= amount;
   if (pool.hp[index]! <= 0) {
     pool.hp[index] = 0;
@@ -274,6 +573,18 @@ export function reapDead(world: World, from = 0): void {
   }
 
   world.recomputeSupply();
+}
+
+/**
+ * This unit's top speed right now, after any chill.
+ *
+ * Movement asks for this instead of reading `def.speedPerTick` directly, so
+ * every one of its passes — pursuit, flight, path-following, the final approach
+ * — slows by the same amount rather than each remembering to.
+ */
+export function topSpeedOf(world: World, index: number, def: EntityDef): number {
+  if (world.pool.chill[index]! <= 0) return def.speedPerTick;
+  return fmul(def.speedPerTick, CHILL_SPEED);
 }
 
 /** Distance helper shared with the AI, which reasons about threat ranges. */

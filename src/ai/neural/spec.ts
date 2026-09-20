@@ -36,6 +36,16 @@ export const ENTITY_FEATURES = [
   'type:Turret',
   'type:MineralPatch',
   'type:Beamdrone',
+  'type:Boomwalker',
+  'type:Fixomatic',
+  'type:Foundry',
+  'type:Firespout',
+  'type:Arclight',
+  'type:Piercebot',
+  'type:Sentry',
+  'type:DarkGolem',
+  'type:IceGolem',
+  'type:Plasmodrone',
   // relation to the viewer
   'rel:own',
   'rel:ally',
@@ -122,6 +132,16 @@ export const SCALARS = [
   'own:Turret',
   'own:MineralPatch',
   'own:Beamdrone',
+  'own:Boomwalker',
+  'own:Fixomatic',
+  'own:Foundry',
+  'own:Firespout',
+  'own:Arclight',
+  'own:Piercebot',
+  'own:Sentry',
+  'own:DarkGolem',
+  'own:IceGolem',
+  'own:Plasmodrone',
   // known enemy counts by type — visible or remembered
   'enemy:Worker',
   'enemy:Burstbot',
@@ -132,6 +152,16 @@ export const SCALARS = [
   'enemy:Turret',
   'enemy:MineralPatch',
   'enemy:Beamdrone',
+  'enemy:Boomwalker',
+  'enemy:Fixomatic',
+  'enemy:Foundry',
+  'enemy:Firespout',
+  'enemy:Arclight',
+  'enemy:Piercebot',
+  'enemy:Sentry',
+  'enemy:DarkGolem',
+  'enemy:IceGolem',
+  'enemy:Plasmodrone',
   // the previous decision's type, one-hot in ActionType order
   'prev:Noop',
   'prev:Move',
@@ -232,7 +262,13 @@ export const CRITIC_LEN = CRITIC_PER_PLAYER.length * CRITIC_PLAYERS + 2;
 
 /** Everything Python needs to build and export a model that fits this codec. */
 export const SPEC = {
-  version: 1,
+  // 2: the robot line went from three units to twelve. Every table keyed by
+  // EntityType grew with it — the row type one-hot, the own and known-enemy
+  // counts, the build-type and per-row train masks — so a model exported for
+  // version 1 does not fit any of the tensors this build hands it. There is no
+  // migration to write: the network's input and output widths changed, and it
+  // has to be trained again (`ml/README.md`).
+  version: 2,
   decisionTicks: DECISION_TICKS,
   unitMemoryTicks: UNIT_MEMORY_TICKS,
   entities: { rows: N_ENT, features: ENTITY_FEATURES },

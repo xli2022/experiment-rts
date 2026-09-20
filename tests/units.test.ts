@@ -39,11 +39,24 @@ describe('entity definitions', () => {
     }
   });
 
-  it('lets the barracks train all three combat units', () => {
-    const produces = defOf(EntityType.Barracks).produces;
-    expect(produces).toContain(EntityType.Burstbot);
-    expect(produces).toContain(EntityType.Slicebot);
-    expect(produces).toContain(EntityType.Beamdrone);
+  it('leaves exactly two flyers, one from each production building', () => {
+    const flyers = DEFS.filter((d) => d.flying).map((d) => d.type);
+    expect(flyers).toEqual([EntityType.Beamdrone, EntityType.Plasmodrone]);
+    expect(defOf(EntityType.Barracks).produces).toContain(EntityType.Beamdrone);
+    expect(defOf(EntityType.Foundry).produces).toContain(EntityType.Plasmodrone);
+  });
+
+  it('keeps the light line on the Barracks and the heavy line behind the Foundry', () => {
+    const barracks = defOf(EntityType.Barracks).produces;
+    expect(barracks).toContain(EntityType.Burstbot);
+    expect(barracks).toContain(EntityType.Slicebot);
+    expect(barracks).toContain(EntityType.Beamdrone);
+    // The tech step has to be worth taking: nothing the Foundry makes may be
+    // cheaper than the dearest thing the Barracks already makes.
+    const dearestLight = Math.max(...barracks.map((t) => defOf(t).mineralCost));
+    for (const heavy of defOf(EntityType.Foundry).produces) {
+      expect(defOf(heavy).mineralCost).toBeGreaterThanOrEqual(dearestLight);
+    }
   });
 });
 
@@ -104,13 +117,33 @@ describe('damage is a single number', () => {
     return -1;
   }
 
-  const ARMED = [EntityType.Burstbot, EntityType.Slicebot, EntityType.Beamdrone, EntityType.Worker];
+  /**
+   * Units whose whole attack is one number, so the figure on the panel is the
+   * figure a target loses.
+   *
+   * Everything with an ability is left out and measured in `abilities.test.ts`
+   * instead — not because the rule stops applying to them, but because what a
+   * splash or a coil array takes off *several* targets is a different question
+   * from what one blow takes off one, and this test asks the second one.
+   */
+  const ARMED = DEFS.filter(
+    (d) =>
+      !d.isBuilding &&
+      d.damage > 0 &&
+      d.splashRadius === 0 &&
+      d.maxTargets === 1 &&
+      !d.pierce &&
+      !d.detonates,
+  ).map((d) => d.type);
 
   for (const attacker of ARMED) {
     for (const target of ARMED) {
       // Melee cannot reach a flyer at all, which is the one matchup rule left
       // and is expressed as `canHitAir`, not as a number.
       if (defOf(target).flying && !defOf(attacker).canHitAir) continue;
+      // Armour comes off at the defender, and says so on its own panel; this
+      // test is about the attacker's figure.
+      if (defOf(target).armor > 0) continue;
 
       it(`has a ${defOf(attacker).name} hit a ${defOf(target).name} for its listed damage`, () => {
         expect(damageDealt(attacker, target)).toBe(defOf(attacker).damage);

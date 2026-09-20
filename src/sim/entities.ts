@@ -113,6 +113,15 @@ export class EntityPool {
   readonly attackTarget = new Int32Array(ENTITY_CAPACITY);
   /** Entity currently being shot at, for rendering tracers and aggro stickiness. */
   readonly combatTarget = new Int32Array(ENTITY_CAPACITY);
+  /**
+   * Ticks of chill left on this unit; while it is positive the unit moves at
+   * `CHILL_SPEED` of its top speed.
+   *
+   * A duration rather than a modified speed, so the Ice Golem does not have to
+   * remember to put back what it took when its target walks out of range — and
+   * so a second hit refreshes the timer rather than stacking into a stop.
+   */
+  readonly chill = new Int32Array(ENTITY_CAPACITY);
 
   // --- buildings ---
   readonly buildState = new Uint8Array(ENTITY_CAPACITY);
@@ -249,6 +258,7 @@ export class EntityPool {
     this.attackTarget[index] = NO_ENTITY;
     this.speed[index] = 0;
     this.combatTarget[index] = NO_ENTITY;
+    this.chill[index] = 0;
     this.buildState[index] = def.isBuilding ? BuildState.Site : BuildState.Complete;
     this.buildProgress[index] = 0;
     this.tileX[index] = 0;
@@ -385,6 +395,7 @@ export class EntityPool {
     x = checksumArray(x, this.attackWindup, this.count);
     x = checksumArray(x, this.attackTarget, this.count);
     x = checksumArray(x, this.combatTarget, this.count);
+    x = checksumArray(x, this.chill, this.count);
     x = checksumArray(x, this.buildState, this.count);
     x = checksumArray(x, this.buildProgress, this.count);
     // Footprint tiles are what `GameMap.occupied` is derived from, so hashing

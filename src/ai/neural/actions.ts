@@ -41,7 +41,9 @@ import {
   uncanonTopLeft,
   type Frame,
 } from './frame.js';
-import { BUILD_FOOTPRINTS, gridIndexFor } from './grid.js';
+import { BUILD_FOOTPRINTS, BUILDINGS, gridIndexFor } from './grid.js';
+
+export { BUILDINGS };
 import type { EntityMemory } from './memory.js';
 import {
   ACTION_INTS,
@@ -168,14 +170,6 @@ export function allocMasks(): Masks {
     buildType: new Uint8Array(ENTITY_TYPE_COUNT),
   };
 }
-
-/** The buildings a worker can raise, in EntityType order. */
-export const BUILDINGS: readonly EntityType[] = [
-  EntityType.CommandPost,
-  EntityType.Depot,
-  EntityType.Barracks,
-  EntityType.Turret,
-];
 
 /** Scratch for the placement scan, reused across calls. */
 let freeScratch = new Uint8Array(0);

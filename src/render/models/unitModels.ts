@@ -34,14 +34,16 @@ interface UnitModelSpec {
 
 /**
  * A tile is one world unit. The values are chosen against each other rather than
- * in isolation: the Slicebot is the heaviest thing on the field and reads as the
- * threat, the Burstbot is a little smaller, and the Beamdrone is fitted on its
- * wingspan so it stays a wide silhouette nothing on the ground shares.
+ * in isolation: the Slicebot is the heaviest thing the Barracks makes and reads
+ * as the threat, the Burstbot is a little smaller, and the Beamdrone is fitted
+ * on its wingspan so it stays a wide silhouette nothing on the ground shares.
  *
  * All three were then taken down a quarter. Sized against each other they were
  * right; sized against the buildings they were not, and a unit that comes up to
  * the roof of the barracks that trains it reads as a scale error rather than as
- * a big unit.
+ * a big unit. The Foundry's units are fitted into the same ladder, with the
+ * golems at the top of it — a 5-supply unit that stood no taller than the
+ * 2-supply one beside it would be lying about what it cost.
  */
 const MODELS: UnitModelSpec[] = [
   {
@@ -61,6 +63,73 @@ const MODELS: UnitModelSpec[] = [
     file: 'beam-ship.glb',
     skins: ['beam-ship-blue.ktx2', 'beam-ship-red.ktx2'],
     fit: { axis: 'x', target: 1.43 },
+  },
+  // The rest of the robot line, fitted against the three above rather than
+  // against their own proportions: what a unit costs should be legible from
+  // how much space it takes up, so the two golems are the biggest things on
+  // the field and the Boomwalker is the smallest thing with a supply cost.
+  {
+    type: EntityType.Boomwalker,
+    file: 'bomb.glb',
+    skins: ['bomb-blue.ktx2', 'bomb-red.ktx2'],
+    fit: { axis: 'y', target: 0.98 },
+  },
+  {
+    type: EntityType.Fixomatic,
+    file: 'healing-machine.glb',
+    skins: ['healing-machine-blue.ktx2', 'healing-machine-red.ktx2'],
+    fit: { axis: 'y', target: 1.06 },
+  },
+  {
+    type: EntityType.Firespout,
+    file: 'flamethrower.glb',
+    skins: ['flamethrower-blue.ktx2', 'flamethrower-red.ktx2'],
+    fit: { axis: 'y', target: 1.2 },
+  },
+  {
+    type: EntityType.Arclight,
+    file: 'tesla-coil.glb',
+    skins: ['tesla-coil-blue.ktx2', 'tesla-coil-red.ktx2'],
+    fit: { axis: 'y', target: 1.26 },
+  },
+  {
+    // Almost all of it is launcher, lying along its own length — so it reads by
+    // how far the rails reach, not by how tall the chassis stands.
+    type: EntityType.Piercebot,
+    file: 'ballista.glb',
+    skins: ['ballista-blue.ktx2', 'ballista-red.ktx2'],
+    fit: { axis: 'z', target: 1.6 },
+  },
+  {
+    type: EntityType.Sentry,
+    file: 'cannon.glb',
+    skins: ['cannon-blue.ktx2', 'cannon-red.ktx2'],
+    fit: { axis: 'y', target: 1.34 },
+  },
+  {
+    // Both golems are fitted on height, not width. Their bind poses stand with
+    // the arms right out, so `x` measures a reach they never have while they
+    // are walking — sized on it, they came out narrower standing than the
+    // Slicebot and wider than a Barracks in the same breath.
+    type: EntityType.DarkGolem,
+    file: 'dark-golem.glb',
+    skins: ['dark-golem-blue.ktx2', 'dark-golem-red.ktx2'],
+    fit: { axis: 'y', target: 1.35 },
+  },
+  {
+    type: EntityType.IceGolem,
+    file: 'ice-golem.glb',
+    skins: ['ice-golem-blue.ktx2', 'ice-golem-red.ktx2'],
+    fit: { axis: 'y', target: 1.3 },
+  },
+  {
+    // Fitted on its wingspan, like the Beamdrone it has to be told apart from —
+    // and wider than it, which with the extra pods either side is the whole
+    // difference a glance has to catch.
+    type: EntityType.Plasmodrone,
+    file: 'flying-machine.glb',
+    skins: ['flying-machine-blue.ktx2', 'flying-machine-red.ktx2'],
+    fit: { axis: 'x', target: 1.85 },
   },
 ];
 

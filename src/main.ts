@@ -49,18 +49,39 @@ import { onFullscreenChange } from './ui/fullscreen.js';
 const BUILD_MENU: { type: EntityType; key: string }[] = [
   { type: EntityType.Depot, key: 'D' },
   { type: EntityType.Barracks, key: 'B' },
+  { type: EntityType.Foundry, key: 'Y' },
   { type: EntityType.Turret, key: 'T' },
   // A Command Post can go anywhere, like any other structure — what makes the
   // expansion sites worth walking to is the mineral line already sitting there.
   { type: EntityType.CommandPost, key: 'C' },
 ];
 
-/** Explicit production bindings; authored names do not necessarily have unique initials. */
+/**
+ * Explicit production bindings; authored names do not necessarily have unique
+ * initials.
+ *
+ * Unique *within a card*, not globally — the card is contextual, so a Foundry
+ * and a Barracks are never on screen at once and are free to reuse a letter.
+ * `D` is the drone each of them makes. What is genuinely reserved is `M`, `F`
+ * and `V`, which `handleKey` answers before the card ever sees them, and `X`,
+ * which is always Cancel.
+ */
 const TRAIN_HOTKEYS: Readonly<Partial<Record<EntityType, string>>> = {
   [EntityType.Worker]: 'W',
+  // Barracks.
   [EntityType.Burstbot]: 'B',
   [EntityType.Slicebot]: 'S',
+  [EntityType.Boomwalker]: 'O',
   [EntityType.Beamdrone]: 'D',
+  [EntityType.Fixomatic]: 'R',
+  // Foundry.
+  [EntityType.Firespout]: 'L',
+  [EntityType.Arclight]: 'A',
+  [EntityType.Piercebot]: 'P',
+  [EntityType.Sentry]: 'N',
+  [EntityType.DarkGolem]: 'G',
+  [EntityType.IceGolem]: 'I',
+  [EntityType.Plasmodrone]: 'D',
 };
 
 function trainHotkey(type: EntityType): string {

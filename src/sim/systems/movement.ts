@@ -45,6 +45,7 @@ import {
 import { AStar, nearestWalkable } from '../pathing/astar.js';
 import { lineOfSightClear, smoothPath, tileCentreX, tileCentreY } from '../pathing/los.js';
 import { approachPoint } from './economy.js';
+import { topSpeedOf } from './combat.js';
 import type { EntityDef } from '../../config/rules.js';
 import { EntityType, NO_ENTITY, Order } from '../types.js';
 import type { World } from '../world.js';
@@ -122,8 +123,11 @@ function settleArrivals(world: World): void {
       continue;
     }
 
+    // Fighting is not failing to arrive — but a repairer's target is one of
+    // ours, and standing next to something it is mending is not a reason to
+    // keep shoving at a destination it has already reached.
     const target = pool.combatTarget[i]!;
-    if (target !== NO_ENTITY && pool.isAlive(target)) {
+    if (def.damage > 0 && target !== NO_ENTITY && pool.isAlive(target)) {
       pool.arriveStall[i] = 0;
       continue;
     }
@@ -283,7 +287,7 @@ function engageNearby(world: World): void {
     // Drop the route while closing, so path-following does not drag the unit
     // onward in the same tick. `resumeAdvance` restores it when the fight ends.
     if (order === Order.AttackMove) pool.clearPath(i);
-    stepToward(world, i, snapX[ti]!, snapY[ti]!, def.speedPerTick, def.turnPerTick);
+    stepToward(world, i, snapX[ti]!, snapY[ti]!, topSpeedOf(world, i, def), def.turnPerTick);
   }
 }
 
@@ -327,7 +331,7 @@ function moveFlyers(world: World): void {
       continue;
     }
 
-    stepToward(world, i, tx, ty, def.speedPerTick, def.turnPerTick);
+    stepToward(world, i, tx, ty, topSpeedOf(world, i, def), def.turnPerTick);
   }
 }
 
@@ -377,7 +381,14 @@ function followFlowFields(world: World, fields: FlowFieldCache): void {
     // arriving and they are being pushed away from it. Measured on open ground:
     // 20 of 24 units in a group move never came to rest.
     if (distToGoal <= FORMATION_APPROACH) {
-      stepToward(world, i, pool.orderX[i]!, pool.orderY[i]!, def.speedPerTick, def.turnPerTick);
+      stepToward(
+        world,
+        i,
+        pool.orderX[i]!,
+        pool.orderY[i]!,
+        topSpeedOf(world, i, def),
+        def.turnPerTick,
+      );
       continue;
     }
 
@@ -406,7 +417,7 @@ function followFlowFields(world: World, fields: FlowFieldCache): void {
       ty = aimOut.y;
     }
 
-    stepToward(world, i, tx, ty, def.speedPerTick, def.turnPerTick);
+    stepToward(world, i, tx, ty, topSpeedOf(world, i, def), def.turnPerTick);
   }
 }
 
@@ -829,7 +840,12 @@ function followPaths(world: World): void {
     // the distance still to run rather than to the next waypoint — braking for
     // every corner of an A* path would make a unit stutter its way across the
     // map instead of easing to a stop at the end of it.
-    let remaining = accelerate(world, i, distanceLeft(world, i, len, cursor), def.speedPerTick);
+    let remaining = accelerate(
+      world,
+      i,
+      distanceLeft(world, i, len, cursor),
+      topSpeedOf(world, i, def),
+    );
     while (remaining > 0 && cursor < len) {
       const tile = pool.pathNode(i, cursor);
       const wx = fromInt(world.map.tileXOf(tile)) + FIX_HALF;
@@ -892,7 +908,7 @@ function closeOnTarget(world: World, index: number, def: EntityDef): void {
   // and should wait for a path rather than walking into a wall.
   if (distSq > sqRange(reach + fromInt(6))) return;
 
-  stepToward(world, index, snapX[ti]!, snapY[ti]!, def.speedPerTick, def.turnPerTick);
+  stepToward(world, index, snapX[ti]!, snapY[ti]!, topSpeedOf(world, index, def), def.turnPerTick);
 }
 
 /**

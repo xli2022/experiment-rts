@@ -20,42 +20,91 @@ suite — see [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml).
 
 ## Playing
 
-|                  |                                                                    |
-| ---------------- | ------------------------------------------------------------------ |
-| Pan              | Arrow keys, screen edges, middle-drag, or the minimap              |
-| Zoom             | mouse wheel                                                        |
-| Select           | click, or drag a box                                               |
-| Add to selection | `Shift` + click                                                    |
-| Order            | right-click — attack an enemy, mine a patch, or move               |
-| Attack-move      | `A` then click                                                     |
-| Stop / Hold      | `S` / `H`                                                          |
-| Control groups   | `Ctrl`+`1`–`9` to assign, `1`–`9` to recall                        |
-| Build / train    | the letter shown on each command-card button                       |
-| Repair           | right-click your own damaged or half-built structure with a worker |
-| Surrender        | the flag button top-right — confirmed, and it cannot be undone     |
-| Fullscreen       | `F`, or the button top-right                                       |
-| Mute             | `M`                                                                |
-| Model gallery    | `All units` button on the home screen                              |
-| Cancel           | `Esc`                                                              |
+|                   |                                                                |
+| ----------------- | -------------------------------------------------------------- |
+| Pan               | Arrow keys, screen edges, middle-drag, or the minimap          |
+| Zoom              | mouse wheel                                                    |
+| Select            | click, or drag a box                                           |
+| Add to selection  | `Shift` + click                                                |
+| Order             | right-click — attack an enemy, mine a patch, or move           |
+| Attack-move       | `A` then click                                                 |
+| Stop / Hold       | `S` / `H`                                                      |
+| Control groups    | `Ctrl`+`1`–`9` to assign, `1`–`9` to recall                    |
+| Build / train     | the letter shown on each command-card button                   |
+| Finish a building | right-click your own half-built structure with a worker        |
+| Surrender         | the flag button top-right — confirmed, and it cannot be undone |
+| Fullscreen        | `F`, or the button top-right                                   |
+| Mute              | `M`                                                            |
+| Model gallery     | `All units` button on the home screen                          |
+| Cancel            | `Esc`                                                          |
 
-Workers gather minerals, construct buildings, and repair them. The Command Post
-trains workers, Supply Depots raise the supply cap, Barracks train the three
-combat units, and Turrets defend. Build a second Command Post on an expansion to
-mine two lines at once. You lose when your last structure falls — in co-op, when
-the last structure on your _side_ falls.
+Workers gather minerals and construct buildings. The Command Post trains
+workers, Supply Depots raise the supply cap, Barracks train the light robots,
+the Foundry unlocks the heavy ones, and Turrets defend. Build a second Command
+Post on an expansion to mine two lines at once. You lose when your last
+structure falls — in co-op, when the last structure on your _side_ falls.
 
-### The three combat units
+### The twelve robots
 
-|                       | Damage        | Range | Health | Supply | Notes                          |
-| --------------------- | ------------- | ----- | ------ | ------ | ------------------------------ |
-| **Burstbot** (ranged) | 6 every 0.8s  | 5.0   | 45     | 1      | Cheapest, outranges everything |
-| **Slicebot** (melee)  | 13 every 1.2s | 0.9   | 90     | 2      | Cannot touch air at all        |
-| **Beamdrone** (air)   | 10 every 1.0s | 3.5   | 70     | 2      | Ignores terrain entirely       |
+Five come out of the **Barracks** (150 minerals). They are the army you have in
+the first few minutes, and the cheapest of them is still worth building in the
+last few.
 
-A unit deals its listed damage to everything it can shoot — there is no hidden
+|                         | Damage        | Range | Health | Supply | Cost | Ability                                   |
+| ----------------------- | ------------- | ----- | ------ | ------ | ---- | ----------------------------------------- |
+| **Burstbot** (ranged)   | 6 every 0.8s  | 5.0   | 45     | 1      | 50   | —                                         |
+| **Slicebot** (melee)    | 13 every 1.2s | 0.9   | 90     | 2      | 75   | Cannot touch air                          |
+| **Boomwalker** (siege)  | 45 every 1.0s | 0.7   | 50     | 2      | 75   | **Detonates**, splash 2.0; cannot hit air |
+| **Beamdrone** (air)     | 10 every 1.0s | 3.5   | 70     | 2      | 100  | Flies; ignores terrain                    |
+| **Fixomatic** (support) | —             | 4.5   | 60     | 2      | 100  | **Repairs 8 HP/s** to another robot       |
+
+Seven more need a **Foundry** (200 minerals, 55 seconds). It buys nothing on its
+own, which is the decision: the minerals and the time are an army you did not
+build meanwhile.
+
+|                          | Damage        | Range | Health | Supply | Cost | Ability                                  |
+| ------------------------ | ------------- | ----- | ------ | ------ | ---- | ---------------------------------------- |
+| **Firespout** (brawler)  | 14 every 0.9s | 2.2   | 130    | 2      | 100  | **Splash 1.6**; cannot hit air           |
+| **Piercebot** (skirmish) | 20 every 2.0s | 8.0   | 80     | 3      | 125  | **Pierces the line** — the longest reach |
+| **Arclight** (multi)     | 9 every 1.1s  | 4.5   | 120    | 3      | 150  | **Hits 3 enemies at once**               |
+| **Sentry** (artillery)   | 30 every 2.6s | 9.0   | 100    | 3      | 175  | **Splash 2.2**, min range 2.5; no air    |
+| **Ice Golem** (control)  | 18 every 1.4s | 4.0   | 330    | 5      | 225  | **Chills 2.5s** — half speed             |
+| **Plasmodrone** (air)    | 22 every 1.6s | 4.5   | 220    | 4      | 225  | Flies; **splash 1.8**                    |
+| **Dark Golem** (tank)    | 34 every 1.5s | 1.1   | 420    | 5      | 250  | **Armour 4** off every hit it takes      |
+
+A unit deals its listed damage to everything it hits — there is no hidden
 per-matchup multiplier, and the figure on the info panel is the figure you get.
-What beats what is decided by the numbers above plus one hard rule: **a Slicebot
-cannot reach a flyer**, so an army of them needs company.
+The abilities do not bring one back. Every one of them changes **how many things
+one attack reaches**, or **how much of a hit survives contact**, never how much
+damage this attacker deals to that defender:
+
+- **Splash, pierce and the Arclight's coils** all widen the set of things one
+  attack lands on, and every one of those things takes the same listed damage.
+  They differ in shape, which is the whole point of having three of them: splash
+  is a circle around what was hit, pierce is the line between shooter and
+  target, and the coils pick their own enemies near the _shooter_ — so spreading
+  out beats a Sentry and does nothing against an Arclight.
+- **Armour** is subtracted from every incoming hit, whoever threw it. A
+  Burstbot's 6 becomes 2 against a Dark Golem, which is three times as long to
+  kill it; a Sentry's 30 becomes 26 and hardly notices. No hit ever falls below
+  1, so armour is a bad matchup rather than immunity.
+- **Chill** does not touch damage at all. It halves what the target can move at
+  for 2.5 seconds, which is how a Slicebot gets to reach a Burstbot.
+
+Everything else is read off the table. Three structural rules do the rest of the
+work:
+
+- **Melee cannot reach a flyer.** A Slicebot, a Firespout, a Boomwalker and a
+  Dark Golem can all be beaten by something that never lands — and a blast
+  thrown by a weapon that cannot reach air does not reach it either.
+- **Artillery cannot defend itself.** The Sentry outranges a Turret by 2.5
+  tiles and cannot fire at anything within 2.5 tiles of itself. It needs an
+  escort or it is 175 minerals of scenery.
+- **Cheap and massed loses to armoured.** The counter to a Dark Golem is a big
+  hit, not many small ones — a Sentry, a Piercebot, or another golem.
+
+The panel says all of it out loud: select anything and its abilities are printed
+beside its damage, in the same words this table uses.
 
 Fog of war hides what you are not currently watching. It is a rendering feature
 rather than a secret: peer-to-peer lockstep gives every client the whole game
@@ -190,6 +239,16 @@ and workers that stopped one step short of the building they were sent to make.
 
 ### Training the neural bot
 
+> **The committed model predates the twelve-robot roster and no longer loads.**
+> Every codec table keyed by `EntityType` grew with the roster — the row type
+> one-hot, the own and known-enemy counts, the build-type and per-row train
+> masks — so the network's input and output widths changed and `SPEC.version`
+> went to 2. There is no migration: a version 1 export does not fit any of the
+> tensors this build hands it. `probeNeuralModel` treats a stale model as no
+> model, so the Neural chip is simply offered as unavailable until the steps
+> below are re-run; nothing errors mid-match. The scripted bot is unaffected and
+> plays the new roster.
+
 The learned bot is trained in Python against matches served by the game's own
 code under Bun — `tools/ml/serve.ts` steps headless matches one decision at a
 time, `ml/` holds the model, imitation from the scripted bot, PPO against a
@@ -229,8 +288,8 @@ src/ui/       DOM overlay: HUD, minimap, lobby
 src/config/   all balance data, in one table
 ```
 
-Buildings and Workers use Three.js primitives at runtime. The three combat units
-are authored models: skinned rigs with run, attack and death clips, baked at load
+Buildings and Workers use Three.js primitives at runtime. All twelve robots are
+authored models: skinned rigs with run, attack and death clips, baked at load
 into a bone-matrix texture so a hundred of them mid-swing still cost one draw
 call per type. Their skins are KTX2/ETC1S — a tenth the size of the source PNGs.
 
@@ -589,8 +648,15 @@ Two things it found before a real link could:
 
 ### Authored unit models
 
-The three combat units are skinned FBX rigs, converted to GLB and drawn as one
+The twelve robots are skinned FBX rigs, converted to GLB and drawn as one
 instanced mesh per type per team; the Worker deliberately remains procedural.
+They are the whole `Robot` faction of the imported catalog, and the roster was
+designed around the art rather than the other way round — the Sentry's barrel
+points at the sky, so it is artillery with a minimum range; the Arclight carries
+three coils, so it strikes three enemies; the Boomwalker is a pair of legs under
+a canister, so it is the payload. Every unit keeps a procedural stand-in in
+`src/render/models/procedural.ts` for when a GLB will not load, and those
+silhouettes are built to say the same thing the art does.
 Every clip is sampled into a bone-matrix texture at load, and each instance
 carries one number — the row it is posed on.
 `src/render/models/animated.ts` bakes, `src/render/animatedUnits.ts` draws. Four

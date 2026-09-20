@@ -324,7 +324,7 @@ export function showLobby(root: HTMLElement, onShowAllUnits: () => void): Promis
                  ? ''
                  : known === undefined
                    ? ' title="Checking whether this build ships a model…"'
-                   : ' title="This build ships no neural model for this map. See ml/README.md for how to train and export one."';
+                   : ' title="This build ships no neural model this build can run for this map — none is committed, or the one that is predates the current codec. See ml/README.md for how to train and export one."';
                return `<button class="chip" data-bot="${k}"${off ? ' disabled' : ''}${title}>${BOT_LABELS[k]}</button>`;
              }).join('')}
            </div>`

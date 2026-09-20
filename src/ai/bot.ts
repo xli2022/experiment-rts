@@ -28,9 +28,9 @@
  * state to keep in step.
  */
 
-import { defOf, MAX_PRODUCTION_QUEUE, SUPPLY_MAX } from '../config/rules.js';
+import { defOf, MAX_PRODUCTION_QUEUE, SUPPLY_MAX, type EntityDef } from '../config/rules.js';
 import { CommandType, type Command } from '../sim/commands.js';
-import { fromInt, toInt, sqRange, vecLenSqRaw } from '../sim/fixed.js';
+import { fromFloat, fromInt, toInt, sqRange, vecLenSqRaw } from '../sim/fixed.js';
 import { mirrorTile } from '../sim/map.js';
 import { mirroredHalf } from '../sim/mapgen.js';
 import { BuildState, EntityType, NEUTRAL, Order, type PlayerId } from '../sim/types.js';
@@ -94,6 +94,8 @@ interface Tuning {
   readonly attackArmySize: number;
   /** Barracks the bot will run once minerals are spare. */
   readonly maxBarracks: number;
+  /** Foundries it will run. Two, and the second only off a deep bank. */
+  readonly maxFoundries: number;
   /** Turrets it will put up at home. */
   readonly maxTurrets: number;
   /** Command Posts it will run. */
@@ -115,6 +117,7 @@ const TUNING: Tuning = {
   targetWorkers: 18,
   attackArmySize: 6,
   maxBarracks: 8,
+  maxFoundries: 2,
   maxTurrets: 3,
   maxBases: 3,
   expandAtMinerals: 450,
@@ -132,6 +135,28 @@ const TUNING: Tuning = {
  * and never received, because the only other outlet was yet another Barracks.
  */
 const DEEP_QUEUE_MINERALS = 700;
+
+/**
+ * Attack range at or below which a weapon only reaches what it can touch.
+ *
+ * Used to sort scouted enemies into melee and ranged without naming them. The
+ * longest melee reach on the roster is the Dark Golem's 1.1.
+ */
+const MELEE_RANGE = fromFloat(1.2);
+
+/**
+ * Whether this is a thing the bot fights with.
+ *
+ * Structural rather than a list of types, so a unit added to the roster joins
+ * the army — and the team's army count, which is what triggers a push — on the
+ * tick it is trained rather than on the tick someone remembers this function.
+ * A Fixomatic has no weapon and is army all the same: it walks with the push
+ * and it is not a worker.
+ */
+function isArmyUnit(def: EntityDef): boolean {
+  if (def.isBuilding || def.type === EntityType.Worker) return false;
+  return def.damage > 0 || def.repairAmount > 0;
+}
 
 /**
  * Base supply headroom before building another depot.
@@ -171,6 +196,16 @@ interface Survey {
   army: number[];
   commandPosts: number[];
   barracks: number[];
+  foundries: number[];
+  /**
+   * Foundries standing *or* going up.
+   *
+   * The cap is one, and `foundries` holds only the finished ones — so gating on
+   * that alone had the bot order a second and a third through the 55 seconds
+   * the first one takes to build, every time a construction slot came free.
+   * A cap on a slow building has to count the ones that are not there yet.
+   */
+  foundriesPlanned: number;
   depots: number[];
   turrets: number[];
   sites: number[];
@@ -225,6 +260,8 @@ function survey(world: World, player: PlayerId): Survey {
     army: [],
     commandPosts: [],
     barracks: [],
+    foundries: [],
+    foundriesPlanned: 0,
     depots: [],
     turrets: [],
     sites: [],
@@ -261,17 +298,20 @@ function survey(world: World, player: PlayerId): Survey {
     if (owner === NEUTRAL) continue;
 
     const def = defOf(type);
-    const isArmy =
-      type === EntityType.Burstbot || type === EntityType.Slicebot || type === EntityType.Beamdrone;
+    const isArmy = isArmyUnit(def);
 
     if (!world.areAllied(owner, player)) {
       // Prefer structures as attack targets; killing buildings is what wins.
       if (def.isBuilding) s.enemyTargets.push(i);
       else {
         hostileUnits.push(i);
-        if (type === EntityType.Burstbot) s.enemyRanged++;
-        else if (type === EntityType.Slicebot) s.enemyMelee++;
-        else if (type === EntityType.Beamdrone) s.enemyAir++;
+        // By shape, not by name. A roster that grows would otherwise leave the
+        // bot scouting a dozen units it counted as nothing at all — and the
+        // only thing it does with these numbers is ask whether what it is
+        // looking at can be answered from the ground.
+        if (def.flying) s.enemyAir++;
+        else if (def.attackRange > MELEE_RANGE) s.enemyRanged++;
+        else if (def.damage > 0) s.enemyMelee++;
       }
       continue;
     }
@@ -284,15 +324,15 @@ function survey(world: World, player: PlayerId): Survey {
     const complete = pool.buildState[i] === BuildState.Complete;
     if (def.isBuilding) ownBuildings.push(i);
 
+    if (isArmy) {
+      s.army.push(i);
+      continue;
+    }
+
     switch (type) {
       case EntityType.Worker:
         s.workers.push(i);
         if (pool.order[i] === Order.None) s.idleWorkers.push(i);
-        break;
-      case EntityType.Burstbot:
-      case EntityType.Slicebot:
-      case EntityType.Beamdrone:
-        s.army.push(i);
         break;
       case EntityType.CommandPost:
         if (complete) s.commandPosts.push(i);
@@ -300,6 +340,11 @@ function survey(world: World, player: PlayerId): Survey {
         break;
       case EntityType.Barracks:
         if (complete) s.barracks.push(i);
+        else s.sites.push(i);
+        break;
+      case EntityType.Foundry:
+        s.foundriesPlanned++;
+        if (complete) s.foundries.push(i);
         else s.sites.push(i);
         break;
       case EntityType.Depot:
@@ -525,6 +570,19 @@ function manageProduction(
     cmds.push({ type: CommandType.Train, player, building: pool.idAt(b), unit });
     s.minerals -= cost;
   }
+
+  // Foundries last, and never deeper than two. A heavy is three supply and
+  // most of a minute, so a Foundry allowed to queue five of them would spend
+  // the bank the Barracks were about to turn into an army now.
+  for (let k = 0; k < s.foundries.length; k++) {
+    const f = s.foundries[k]!;
+    if (pool.prodCount[f]! >= 2) continue;
+    const unit = pickHeavyToTrain(world, s, k);
+    const cost = defOf(unit).mineralCost;
+    if (s.minerals < cost) break;
+    cmds.push({ type: CommandType.Train, player, building: pool.idAt(f), unit });
+    s.minerals -= cost;
+  }
 }
 
 /**
@@ -557,6 +615,28 @@ function pickUnitToTrain(world: World, s: Survey, ordinal: number): EntityType {
   if (phase === 0) return EntityType.Slicebot;
   if (phase === 1) return EntityType.Beamdrone;
   return EntityType.Burstbot;
+}
+
+/**
+ * The same rotation, over what a Foundry makes.
+ *
+ * Deliberately a short list rather than all seven. The bot's one real idea is
+ * to arrive early with more units than its opponent has, and the golems cost
+ * two Barracks units each — buying them is buying a smaller army. What it
+ * takes from the Foundry is the two things the Barracks line cannot do at all:
+ * something that outranges a Turret, and something that answers a crowd.
+ */
+function pickHeavyToTrain(world: World, s: Survey, ordinal: number): EntityType {
+  const phase = (Math.floor(world.tick / THINK_INTERVAL) + ordinal) % 3;
+
+  if (s.enemyAir >= 2 && s.enemyAir * 2 >= s.enemyRanged + s.enemyMelee) {
+    // Coils and a long rail: the two Foundry units that can shoot upward.
+    return phase === 0 ? EntityType.Piercebot : EntityType.Arclight;
+  }
+
+  if (phase === 0) return EntityType.Sentry;
+  if (phase === 1) return EntityType.Firespout;
+  return EntityType.Piercebot;
 }
 
 /**
@@ -601,6 +681,19 @@ function manageConstruction(
     want = EntityType.Barracks;
   } else if (s.turrets.length < tuning.maxTurrets && s.minerals >= 300) {
     want = EntityType.Turret;
+  } else if (
+    s.barracks.length >= 2 &&
+    s.foundriesPlanned < tuning.maxFoundries &&
+    (s.foundriesPlanned === 0 || s.minerals >= DEEP_QUEUE_MINERALS)
+  ) {
+    // Behind the first two Barracks on purpose. The tech is 200 minerals and
+    // 55 seconds that buy nothing on their own, so it is worth taking once the
+    // army that has to survive those 55 seconds already exists. The second one
+    // waits on a bank the Barracks cannot spend: a Foundry queues two units at
+    // a time, so it is the outlet that absorbs a pile of minerals, and adding
+    // one is worth more than a tenth Barracks queueing behind the same eight
+    // patches.
+    want = EntityType.Foundry;
   } else if (
     (s.minerals >= tuning.expandAtMinerals || patchesRunningOut) &&
     expansionSite(world, player, s, tuning)
