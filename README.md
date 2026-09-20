@@ -46,7 +46,7 @@ structure falls — in co-op, when the last structure on your _side_ falls.
 
 ### The twelve robots
 
-Five come out of the **Barracks** (150 minerals). They are the army you have in
+Six come out of the **Barracks** (150 minerals). They are the army you have in
 the first few minutes, and the cheapest of them is still worth building in the
 last few.
 
@@ -57,14 +57,14 @@ last few.
 | **Boomwalker** (siege)  | 45 every 1.0s | 0.7   | 50     | 2      | 75   | **Detonates**, splash 2.0; cannot hit air |
 | **Beamdrone** (air)     | 10 every 1.0s | 3.5   | 70     | 2      | 100  | Flies; ignores terrain                    |
 | **Fixomatic** (support) | —             | 4.5   | 60     | 2      | 100  | **Repairs 8 HP/s** to another robot       |
+| **Firespout** (brawler) | 14 every 0.9s | 2.2   | 130    | 2      | 100  | **Splash 1.6**; cannot hit air            |
 
-Seven more need a **Foundry** (200 minerals, 55 seconds). It buys nothing on its
+Six more need a **Foundry** (200 minerals, 55 seconds). It buys nothing on its
 own, which is the decision: the minerals and the time are an army you did not
 build meanwhile.
 
 |                          | Damage        | Range | Health | Supply | Cost | Ability                                  |
 | ------------------------ | ------------- | ----- | ------ | ------ | ---- | ---------------------------------------- |
-| **Firespout** (brawler)  | 14 every 0.9s | 2.2   | 130    | 2      | 100  | **Splash 1.6**; cannot hit air           |
 | **Piercebot** (skirmish) | 20 every 2.0s | 8.0   | 80     | 3      | 125  | **Pierces the line** — the longest reach |
 | **Arclight** (multi)     | 9 every 1.1s  | 4.5   | 120    | 3      | 150  | **Hits 3 enemies at once**               |
 | **Sentry** (artillery)   | 30 every 2.6s | 9.0   | 100    | 3      | 175  | **Splash 2.2**, min range 2.5; no air    |
@@ -671,12 +671,32 @@ things about this were learned the hard way:
   matrix when it draws a `SkinnedMesh`; a hand-rolled instanced draw has to fold
   it into the instance matrix. An FBX authored Z-up arrives as a 90-degree
   rotation, so skipping it draws every unit on its back.
-- **Ground and scale are measured from different things.** A run cycle crouches
-  below the bind pose, so grounding by the bind pose buries the feet; an attack
-  clip swings a sword overhead, so scaling by the animated extent sizes the unit
-  by its weapon. Ground from the animation minimum, scale from the bind pose.
-- **Fit each model on the axis it reads by.** Walkers by height, aircraft by
-  wingspan — fitting a wide ship on height sizes it by whatever fin sticks up.
+- **Measure the pose the unit is actually seen in.** Not the bind pose, and not
+  everything baked. A run cycle crouches below the bind pose, so grounding by
+  the bind pose buries the feet; a death sprawl and an overhead swing both reach
+  further than the unit ever looks, so sizing across every clip shrinks the body
+  to fit its own weapon. Both come from the **run**, which is what
+  `loadAnimatedModel(url, { boundsClip: 'run' })` is for.
+- **Size the whole line with one number, against the authored scale.** Each row
+  used to name an axis and a target size, fitted against `bindSize`. That looks
+  reasonable and is not: these rigs were exported at their own scales and their
+  bind poses disagree with the run by a different factor each — the Piercebot's
+  bind box is 231 times its authored size where the Slicebot's is 32, a sevenfold
+  spread. So no two rows meant the same thing, and the roster came out with a
+  Dark Golem nearly three tiles across standing beside a Boomwalker narrower
+  than its own collision circle. The catalog's `runSize` is every model measured
+  in one shared scale — which is exactly why the gallery renders its cards from
+  it — so `unitModels.ts` carries that number per row and multiplies it by a
+  single `ROBOT_SCALE`. The ladder between units is then the one the artists
+  drew, and a unit that should break it says so in an `emphasis` with a reason
+  beside it. `tests/modelAssets.test.ts` checks every row against the catalog.
+- **Every entity type needs a procedural model, including the ones with art.**
+  The instanced pools are built from `DEFS`, not from a list written out by
+  hand. They were a hand-written list once, and a type added to the game and not
+  to it had no mesh at all: the Foundry shipped invisible, and the nine robots
+  beside it had nothing to fall back to if their GLB failed to load. A structure
+  has no authored model, so its procedural mesh is the only thing that ever
+  draws it.
 
 #### Blending between clips
 

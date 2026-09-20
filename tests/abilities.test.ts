@@ -15,6 +15,7 @@ import { Simulation } from '../src/sim/tick.js';
 import { CommandType, type Command } from '../src/sim/commands.js';
 import { EntityType, seconds, type PlayerId } from '../src/sim/types.js';
 import { activityOf } from '../src/ui/status.js';
+import { ProceduralModelProvider } from '../src/render/models/procedural.js';
 
 const FIX = 65536;
 
@@ -311,6 +312,25 @@ describe('the roster', () => {
     }
   });
 
+  it('gives every entity type a procedural model of its own', () => {
+    // The Foundry shipped invisible: the renderer built its instanced pools
+    // from a list of types written out by hand, and a structure has no authored
+    // model to fall back on — the procedural mesh is the only thing that ever
+    // draws it. The pool list comes from `DEFS` now; this is the other half,
+    // that the provider has a real shape for each of them rather than the
+    // single grey box it returns for anything it does not recognise.
+    const provider = new ProceduralModelProvider();
+    try {
+      for (const def of DEFS) {
+        const spec = provider.get(def.type);
+        expect(spec.parts.length, `${def.name} has only the fallback box`).toBeGreaterThan(1);
+        expect(spec.radius, `${def.name} ring`).toBeCloseTo(toFloat(def.radius), 5);
+      }
+    } finally {
+      provider.dispose();
+    }
+  });
+
   it('says every ability out loud on the info panel', () => {
     for (const def of DEFS) {
       const said = abilityText(def).join(' · ');
@@ -325,10 +345,18 @@ describe('the roster', () => {
     }
   });
 
-  it('gives every unit a model row or a procedural stand-in that is not the default box', () => {
-    // Guarded by `tests/modelAssets.test.ts` for the files themselves; here the
-    // point is only that the table was extended when the roster was.
-    expect(defOf(EntityType.Foundry).produces.length).toBe(7);
-    expect(defOf(EntityType.Barracks).produces.length).toBe(5);
+  it('splits the line evenly between the two production buildings', () => {
+    expect(defOf(EntityType.Barracks).produces.length).toBe(6);
+    expect(defOf(EntityType.Foundry).produces.length).toBe(6);
+  });
+
+  it('keeps every Barracks unit within reach of a Barracks budget', () => {
+    // The Barracks is the building you have in the first two minutes. Nothing
+    // it makes may cost more than the Foundry that unlocks the rest, or the
+    // tech step would be the cheaper way to a bigger unit.
+    const foundry = defOf(EntityType.Foundry).mineralCost;
+    for (const light of defOf(EntityType.Barracks).produces) {
+      expect(defOf(light).mineralCost).toBeLessThan(foundry);
+    }
   });
 });

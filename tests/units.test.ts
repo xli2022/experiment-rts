@@ -55,7 +55,7 @@ describe('entity definitions', () => {
     // cheaper than the dearest thing the Barracks already makes.
     const dearestLight = Math.max(...barracks.map((t) => defOf(t).mineralCost));
     for (const heavy of defOf(EntityType.Foundry).produces) {
-      expect(defOf(heavy).mineralCost).toBeGreaterThanOrEqual(dearestLight);
+      expect(defOf(heavy).mineralCost).toBeGreaterThan(dearestLight);
     }
   });
 });

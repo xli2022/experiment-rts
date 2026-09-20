@@ -20,7 +20,7 @@
  */
 
 import * as THREE from 'three';
-import { defOf } from '../config/rules.js';
+import { defOf, DEFS } from '../config/rules.js';
 import { ENTITY_CAPACITY } from '../sim/entities.js';
 import { toFloat } from '../sim/fixed.js';
 import { BuildState, EntityType, NEUTRAL, TICKS_PER_SECOND } from '../sim/types.js';
@@ -33,11 +33,34 @@ import { AnimatedUnitPool } from './animatedUnits.js';
 import type { AnimatedModel } from './models/animated.js';
 
 /** Instances allocated per pool. Comfortably above a 200-supply army. */
+/**
+ * Instances one procedural pool can draw.
+ *
+ * Per (type, part, owner), so this is "how many of this one thing can be on
+ * screen at once", not a total. Units get the supply cap's worth and then some;
+ * a side cannot field hundreds of any one structure, and every pool is a
+ * preallocated matrix buffer whether or not it ever draws anything.
+ */
 const POOL_CAPACITY = 512;
+const BUILDING_POOL_CAPACITY = 128;
+
+/**
+ * Instances one *procedural* pool is built for.
+ *
+ * Structures get a smaller one than `POOL_CAPACITY`, which the shared overlays
+ * and the authored-model pools use. Every combination now gets a pool, so the
+ * table is 19 types wide instead of 9, and a side cannot put hundreds of any one
+ * structure on screen the way it can units.
+ */
+function poolCapacity(type: EntityType): number {
+  return defOf(type).isBuilding ? BUILDING_POOL_CAPACITY : POOL_CAPACITY;
+}
 
 interface Pool {
   mesh: THREE.InstancedMesh;
   count: number;
+  /** Instances this pool was built for; `capacity` is per type. */
+  capacity: number;
 }
 
 /**
@@ -249,6 +272,7 @@ export class EntityRenderer {
     type: EntityType,
     model: AnimatedModel,
     scale: number,
+    height: number,
     textures: (THREE.Texture | null)[],
   ): void {
     // Lift the model so the lowest point of its animation rests on the ground
@@ -259,8 +283,10 @@ export class EntityRenderer {
       scale,
       groundOffset: -model.lowestY * scale,
       // The authored model is rarely the exact height of the primitive it
-      // replaces, and the health bar hangs off the top of whatever is drawn.
-      height: model.bindSize.y * scale,
+      // replaces, and the health bar hangs off the top of whatever is drawn —
+      // which is the run pose, not the bind pose several of these rigs strike
+      // with their arms over their heads.
+      height,
     });
 
     for (let owner = 0; owner < this.teamOf.length; owner++) {
@@ -390,19 +416,17 @@ export class EntityRenderer {
     }
   }
 
-  /** Create an instanced mesh for every (type, part, owner) combination. */
+  /**
+   * Create an instanced mesh for every (type, part, owner) combination.
+   *
+   * Every type in the defs table, not a list kept here. The list used to be
+   * written out by hand, and a type added to the game and not to it had no mesh
+   * at all: the Foundry was invisible, and the nine robots that came with it had
+   * no fallback to drop to if their GLB failed to load. A structure has no
+   * authored model, so its procedural pool is the only thing that ever draws it.
+   */
   private buildPools(world: World): void {
-    const types: EntityType[] = [
-      EntityType.Worker,
-      EntityType.Burstbot,
-      EntityType.Slicebot,
-      EntityType.Beamdrone,
-      EntityType.CommandPost,
-      EntityType.Depot,
-      EntityType.Barracks,
-      EntityType.Turret,
-      EntityType.MineralPatch,
-    ];
+    const types: EntityType[] = DEFS.map((def) => def.type);
     // Every slot, plus the one neutral owner mineral patches use.
     const owners: number[] = [];
     for (let p = 0; p < this.teamOf.length; p++) owners.push(p);
@@ -420,13 +444,14 @@ export class EntityRenderer {
             color: colourFor(part.role, this.colourOf[owner] ?? owner),
           });
           this.disposables.push(material);
-          const mesh = new THREE.InstancedMesh(part.geometry, material, POOL_CAPACITY);
+          const capacity = poolCapacity(type);
+          const mesh = new THREE.InstancedMesh(part.geometry, material, capacity);
           mesh.frustumCulled = false;
           mesh.castShadow = true;
           mesh.receiveShadow = true;
           mesh.count = 0;
           this.group.add(mesh);
-          this.pools.set(poolKey(type, p, owner), { mesh, count: 0 });
+          this.pools.set(poolKey(type, p, owner), { mesh, count: 0, capacity });
         }
       }
     }
@@ -614,7 +639,7 @@ export class EntityRenderer {
 
       for (let p = 0; p < spec.parts.length && !animated; p++) {
         const entry = this.pools.get(poolKey(type, p, owner));
-        if (!entry || entry.count >= POOL_CAPACITY) continue;
+        if (!entry || entry.count >= entry.capacity) continue;
         const part = spec.parts[p]!;
 
         this.position.set(part.offset[0], part.offset[1] + sink + altitude, part.offset[2]);

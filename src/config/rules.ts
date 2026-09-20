@@ -342,6 +342,7 @@ export const DEFS: readonly EntityDef[] = [
       EntityType.Boomwalker,
       EntityType.Beamdrone,
       EntityType.Fixomatic,
+      EntityType.Firespout,
     ],
   },
   {
@@ -559,9 +560,8 @@ export const DEFS: readonly EntityDef[] = [
     supplyCost: 0,
     supplyProvided: 0,
     produces: [
-      EntityType.Firespout,
-      EntityType.Arclight,
       EntityType.Piercebot,
+      EntityType.Arclight,
       EntityType.Sentry,
       EntityType.DarkGolem,
       EntityType.IceGolem,
@@ -576,6 +576,12 @@ export const DEFS: readonly EntityDef[] = [
     flying: false,
     // A barrel on crab legs with one wide nozzle out the front, and a plate
     // over the front of the barrel. Built to walk into things.
+    //
+    // The heaviest thing the Barracks makes, and the only splash weapon
+    // available without teching. What keeps that honest is the 2.2 reach: a
+    // Burstbot outranges it by more than double and a Piercebot by nearly
+    // four times, so it only ever gets to do its job to something that let it
+    // close.
     maxHp: 130,
     radius: fromFloat(0.5),
     footprint: 0,

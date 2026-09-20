@@ -620,14 +620,14 @@ function pickUnitToTrain(world: World, s: Survey, ordinal: number): EntityType {
 /**
  * The same rotation, over what a Foundry makes.
  *
- * Deliberately a short list rather than all seven. The bot's one real idea is
- * to arrive early with more units than its opponent has, and the golems cost
- * two Barracks units each — buying them is buying a smaller army. What it
- * takes from the Foundry is the two things the Barracks line cannot do at all:
- * something that outranges a Turret, and something that answers a crowd.
+ * Deliberately a short list rather than all six. The bot's one real idea is to
+ * arrive early with more units than its opponent has, and the golems cost two
+ * Barracks units each — buying them is buying a smaller army. What it takes
+ * from the Foundry is the one thing the Barracks line cannot do at all: reach
+ * past a Turret.
  */
 function pickHeavyToTrain(world: World, s: Survey, ordinal: number): EntityType {
-  const phase = (Math.floor(world.tick / THINK_INTERVAL) + ordinal) % 3;
+  const phase = (Math.floor(world.tick / THINK_INTERVAL) + ordinal) % 2;
 
   if (s.enemyAir >= 2 && s.enemyAir * 2 >= s.enemyRanged + s.enemyMelee) {
     // Coils and a long rail: the two Foundry units that can shoot upward.
@@ -635,7 +635,6 @@ function pickHeavyToTrain(world: World, s: Survey, ordinal: number): EntityType 
   }
 
   if (phase === 0) return EntityType.Sentry;
-  if (phase === 1) return EntityType.Firespout;
   return EntityType.Piercebot;
 }
 

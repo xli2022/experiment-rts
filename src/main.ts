@@ -197,8 +197,8 @@ class Game {
     // fully playable on the procedural stand-ins until they do, so a slow asset
     // delays nothing.
     void loadUnitModels(this.renderer).then((models) => {
-      for (const { type, model, scale, textures } of models) {
-        this.entities.useAnimatedModel(type, model, scale, textures);
+      for (const { type, model, scale, height, textures } of models) {
+        this.entities.useAnimatedModel(type, model, scale, height, textures);
       }
     });
 

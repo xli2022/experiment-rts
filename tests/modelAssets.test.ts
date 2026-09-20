@@ -11,6 +11,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { EXPECTED_FACTIONS, type ExpectedFaction } from './athena2Factions.js';
+import { DEFS } from '../src/config/rules.js';
+import { EntityType } from '../src/sim/types.js';
+import { UNIT_MODELS } from '../src/render/models/unitModels.js';
 
 const MODEL_ROOT = fileURLToPath(new URL('../public/units/', import.meta.url));
 const EXPECTED_UNITS = [
@@ -254,6 +257,39 @@ describe('Athena2 authored model catalog', () => {
     expect(extent('Parasite')).toBeLessThan(extent('Slicebot'));
     expect(extent('Slicebot')).toBeLessThan(extent('DeathKnight'));
     expect(extent('DeathKnight')).toBeLessThan(extent('FireDragon'));
+  });
+
+  it('agrees with the in-game model table about every robot the game fields', () => {
+    // `unitModels.ts` hand-copies each row's file, skins and authored `runSize`
+    // rather than fetching this catalog at load, so nothing about a match
+    // depends on a JSON file arriving. The copy has to be checked, then: a
+    // mistyped `runSize` would resize a unit with nothing to say it had, and
+    // that is the failure this whole table exists to make impossible.
+    for (const spec of UNIT_MODELS) {
+      const model = catalog.models.find((candidate) => candidate.file === spec.file);
+      expect(model, spec.file).toBeDefined();
+      expect(model!.faction).toBe('Robot');
+      expect(spec.skins).toEqual(model!.skins);
+      // To the two decimals the table is written at. The catalog carries these
+      // to ten, which is noise for a size: the numbers are only ever compared
+      // against each other, and no two robots are within a centimetre of the
+      // same size on any axis.
+      for (let axis = 0; axis < 3; axis++) {
+        expect(spec.runSize[axis], `${model!.unit} runSize[${axis}]`).toBeCloseTo(
+          model!.runSize[axis]!,
+          2,
+        );
+      }
+      // Fitted on the run, so the run has to be one of the baked clips.
+      expect(Object.keys(model!.clips)).toContain('run');
+    }
+
+    // Every robot the game can train has a row, and no row is a unit it cannot.
+    const fielded = DEFS.filter((def) => !def.isBuilding && def.type !== EntityType.Worker);
+    expect(UNIT_MODELS.length).toBe(fielded.length);
+    expect(new Set(UNIT_MODELS.map((spec) => spec.type))).toEqual(
+      new Set(fielded.map((def) => def.type)),
+    );
   });
 
   it('ships no model or skin outside the complete catalog', async () => {
