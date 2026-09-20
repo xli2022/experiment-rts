@@ -10,6 +10,7 @@ from rtsml import dagger
 from rtsml.env import LANES, QUARTERS
 from rtsml.imitation import STORED
 from rtsml.model import Policy
+from rtsml.spec import BUILD
 from rtsml.util import load_checkpoint, save_checkpoint
 
 from conftest import requires_bun
@@ -46,7 +47,8 @@ def test_replay_mixes_previous_visits_and_keeps_their_targets_paired():
 
 
 @requires_bun
-def test_dagger_continues_checkpoint_on_learner_states_with_fresh_and_replay_rows(tmp_path, monkeypatch):
+@pytest.mark.parametrize("build_weight", [1.0, 4.0])
+def test_dagger_continues_checkpoint_on_learner_states_with_fresh_and_replay_rows(tmp_path, monkeypatch, build_weight):
     shape = {"d": 32, "heads": 2, "layers": 1, "torso": 64}
     torch.manual_seed(13)
     initial = Policy(**shape)
@@ -66,6 +68,10 @@ def test_dagger_continues_checkpoint_on_learner_states_with_fresh_and_replay_row
         labels = data["label"]
         assert (labels[:, 0] >= 0).all()
         assert data["mask_type"][np.arange(len(labels)), labels[:, 0]].all()
+        if build_weight == 1:
+            assert kwargs["weights"] is None
+        else:
+            np.testing.assert_array_equal(kwargs["weights"], np.where(labels[:, 0] == BUILD, build_weight, 1.0))
         trained.append(labels.copy())
         return original_train(policy, opt, data, *args, **kwargs)
 
@@ -79,6 +85,7 @@ def test_dagger_continues_checkpoint_on_learner_states_with_fresh_and_replay_row
         "--expert-start", "0", "--expert-end", "0", "--val-labels", "4",
         "--val-every", "1", "--keep-every", "4", "--max-ticks", "400",
         "--seed", "23", "--device", "cpu",
+        *([] if build_weight == 1 else ["--build-weight", str(build_weight)]),
     ]) == 0
     assert sampled and trained and any((labels[:, 0] > 0).any() for labels in trained)
     records = [json.loads(line) for line in (out / "log.jsonl").read_text().splitlines()]
@@ -88,7 +95,21 @@ def test_dagger_continues_checkpoint_on_learner_states_with_fresh_and_replay_row
     saved = load_checkpoint(out / "last.pt")
     assert saved["kind"] == "dagger" and saved["hparams"]["model"] == shape
     assert saved["hparams"]["layout"] == "lanes"
+    assert saved["hparams"]["build_weight"] == build_weight
+    assert saved["metrics"]["val"]["perActionType"]["Build"]["labels"] >= 0
     assert all(torch.isfinite(value).all() for value in saved["model"].values())
     assert any(not torch.equal(value, initial.state_dict()[name]) for name, value in saved["model"].items()
                if not name.startswith(("critic_mlp.", "value_head.")))
     assert (out / "best.pt").exists() and (out / "ckpt3.pt").exists()
+
+
+@pytest.mark.parametrize("weight", ["0", "-1", "nan", "inf", "-inf"])
+def test_build_weight_rejects_nonpositive_or_nonfinite_before_loading(weight, tmp_path, monkeypatch, capsys):
+    def unexpected_load(*args, **kwargs):
+        raise AssertionError("invalid options must fail before checkpoint or environment work")
+    monkeypatch.setattr(dagger, "load_checkpoint", unexpected_load)
+    with pytest.raises(SystemExit) as error:
+        dagger.main(["--init", str(tmp_path / "absent.pt"), "--out", str(tmp_path),
+                     "--layout", "lanes", f"--build-weight={weight}"])
+    assert error.value.code == 2
+    assert "build-weight must be finite and positive" in capsys.readouterr().err

@@ -143,8 +143,20 @@ def collect_labels(env: BunVectorEnv, n: int, rng: np.random.Generator, noop_kee
     return {name: array[:n] for name, array in data.items()}
 
 
-def train_on(policy: Policy, opt: torch.optim.Optimizer, data: dict[str, np.ndarray], batch_size: int, epochs: int, device: torch.device, rng: np.random.Generator, ent_coef: float) -> float:
+def train_on(policy: Policy, opt: torch.optim.Optimizer, data: dict[str, np.ndarray], batch_size: int, epochs: int, device: torch.device, rng: np.random.Generator, ent_coef: float, *, weights: np.ndarray | None = None) -> float:
+    """Fit complete action labels, optionally weighting rows within each minibatch.
+
+    Weights include every used action head and its entropy bonus. Normalizing
+    their sum keeps an all-Build batch on the same scale as an ordinary batch.
+    The default retains the original unweighted loss operations exactly.
+    """
     n = len(data["label"])
+    if weights is not None:
+        weights = np.asarray(weights, dtype=np.float64)
+        if weights.shape != (n,) or not np.isfinite(weights).all() or (weights <= 0).any():
+            raise ValueError("weights must contain one finite positive value per label")
+        if n and (weights == weights[0]).all():
+            weights = None
     losses: list[float] = []
     policy.train()
     for _ in range(epochs):
@@ -160,7 +172,15 @@ def train_on(policy: Policy, opt: torch.optim.Optimizer, data: dict[str, np.ndar
             # teacher well and is a dead initialisation for PPO, whose ratio is then
             # identically 1 with no gradient to push on. A small entropy bonus keeps
             # the cloned policy stochastic enough to be improvable.
-            loss = -out["logp"].mean() - ent_coef * out["entropy"].mean()
+            if weights is None:
+                loss = -out["logp"].mean() - ent_coef * out["entropy"].mean()
+            else:
+                batch_weights = weights[idx]
+                # Scale before summing so even large finite CLI weights cannot
+                # overflow; only relative weights affect this objective.
+                scaled = batch_weights / batch_weights.max()
+                normalized = torch.as_tensor(scaled / scaled.sum(), dtype=out["logp"].dtype, device=device)
+                loss = ((-out["logp"] - ent_coef * out["entropy"]) * normalized).sum()
             opt.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
@@ -169,7 +189,7 @@ def train_on(policy: Policy, opt: torch.optim.Optimizer, data: dict[str, np.ndar
     return float(np.mean(losses)) if losses else math.nan
 
 
-def validate(policy: Policy, data: dict[str, np.ndarray], device: torch.device, batch_size: int = 256) -> dict[str, float]:
+def validate(policy: Policy, data: dict[str, np.ndarray], device: torch.device, batch_size: int = 256) -> dict[str, Any]:
     """Negative log-likelihood and per-head accuracies on labelled rows."""
     n = len(data["label"])
     nll = 0.0
@@ -177,6 +197,9 @@ def validate(policy: Policy, data: dict[str, np.ndarray], device: torch.device, 
     type_hits = 0
     non_noop = 0
     non_noop_hits = 0
+    type_counts = np.zeros(SPEC.n_types, dtype=np.int64)
+    type_predicted = np.zeros_like(type_counts)
+    type_correct = np.zeros_like(type_counts)
     tp = fp = fn = 0
     multi_rows = 0
     target_rows = target_hits = 0
@@ -196,6 +219,9 @@ def validate(policy: Policy, data: dict[str, np.ndarray], device: torch.device, 
             ent += float(out["entropy"].sum())
             pred = out["type_logits"].argmax(-1)
             type_hits += int((pred == t).sum())
+            type_counts += torch.bincount(t, minlength=SPEC.n_types).cpu().numpy()
+            type_predicted += torch.bincount(pred, minlength=SPEC.n_types).cpu().numpy()
+            type_correct += torch.bincount(t[pred == t], minlength=SPEC.n_types).cpu().numpy()
             nn_rows = t != NOOP
             non_noop += int(nn_rows.sum())
             non_noop_hits += int((pred[nn_rows] == t[nn_rows]).sum())
@@ -235,6 +261,16 @@ def validate(policy: Policy, data: dict[str, np.ndarray], device: torch.device, 
         "cellAccuracy": cell_hits / max(1, cell_rows),
         "entityTypeAccuracy": et_hits / max(1, et_rows),
         "entropy": ent / max(1, n),
+        "perActionType": {
+            name: {
+                "labels": int(type_counts[i]),
+                "predicted": int(type_predicted[i]),
+                "correct": int(type_correct[i]),
+                "recall": float(type_correct[i] / type_counts[i]) if type_counts[i] else None,
+                "precision": float(type_correct[i] / type_predicted[i]) if type_predicted[i] else None,
+            }
+            for i, name in enumerate(SPEC.action_types)
+        },
     }
 
 

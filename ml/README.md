@@ -102,6 +102,15 @@ the saved policy with `rtsml-eval`, which uses the neural policy alone. Its
 in actual matches before choosing a model. Current validation accuracy and
 training losses do not establish playing strength.
 
+For a controlled experiment on construction recall, DAgger accepts
+`--build-weight 4`. The default is `1`, preserving uniform weighting. A finite
+positive weight changes only Build examples' full imitation loss, including
+entropy; other actions keep weight 1. Each minibatch is normalized by its total
+weight. Validation remains unweighted and adds `perActionType` label, prediction
+and correct counts, recall and precision, so extra Build predictions can be
+checked for false positives. Compare matched runs and full-match results before
+choosing a nondefault weight.
+
 Before a longer run, inspect the teacher without allocating a dataset (from
 the repository root): `bun run tools/ml/teacher-probe.ts 2 600`. Each JSON line
 reports one seeded match, valid/non-Noop/dropped decisions, action types,
