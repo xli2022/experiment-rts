@@ -55,6 +55,24 @@ partial buffer is trained even if `--steps` is smaller than `--buffer`. Keep
 checkpoints for match-based selection; label accuracy alone is not a promotion
 gate. Train and evaluate Quarters separately with `--layout quarters`.
 
+When a clone reproduces teacher examples but fails after its own mistakes,
+collect corrective examples from learner-controlled matches:
+
+```sh
+python -m rtsml.dagger --layout lanes --init ../runs/bc-lanes/best.pt --out ../runs/dagger-lanes --steps 200000 --keep-every 25000
+```
+
+The environment's optional `expertLabels` mode runs a shadow teacher that
+labels the current learner observation without issuing commands. DAgger pairs
+each label with that observation before the next action, trains on fresh
+examples plus a bounded reservoir of previous examples, and gradually reduces
+the fraction of expert actions used during collection. The checkpoint retains
+the initial model architecture. Expert assistance is training-only; evaluate
+the saved policy with `rtsml-eval`, which uses the neural policy alone. Its
+`best.pt` is selected by imitation loss; screen the intermediate checkpoints
+in actual matches before choosing a model. Current validation accuracy and
+training losses do not establish playing strength.
+
 Before a longer run, inspect the teacher without allocating a dataset (from
 the repository root): `bun run tools/ml/teacher-probe.ts 2 600`. Each JSON line
 reports one seeded match, valid/non-Noop/dropped decisions, action types,
@@ -80,6 +98,7 @@ bridge.
 | `model.py`     | `Policy`: entity transformer + map CNN + scalar MLP → torso → autoregressive heads (type, selection, entity type, target, cell, sub-cell), and an asymmetric value head |
 | `sampling.py`  | masked heads, Gumbel-max with supplied noise, Bernoulli selection with top-k, log-probabilities and entropies                                                           |
 | `imitation.py` | behaviour cloning from the scripted teacher, streamed from live matches                                                                                                 |
+| `dagger.py`    | corrective expert labels on learner states, with bounded replay of previous examples                                                                                      |
 | `ppo.py`       | clipped PPO with GAE, entropy bonus and an annealed KL leash to the imitation policy, against a league                                                                  |
 | `league.py`    | the scripted ladder plus snapshots, drawn by prioritised fictitious self-play `(1 − winrate)²`                                                                          |
 | `evaluate.py`  | win rate versus each ladder rung from both seats on hold-out seeds, match length, commands per minute                                                                   |
@@ -123,6 +142,11 @@ Build in fog, or a later formation chunk with an offset absent from the action
 vocabulary — arrives as type −1 and is skipped. Noop is most of what any
 player does between commands and is kept at `--noop-keep` of its natural
 rate.
+
+The paced teacher drains its pending command plan before asking for another,
+so repeated planning cannot crowd queued production orders out of the bounded
+queue. This option affects the training teacher only; the full scripted
+opponent and asynchronous neural-agent polling keep their normal behavior.
 
 Build preserves the teacher's exact site: an owned unfinished structure can
 be resumed with no mineral charge, and a completed or destroyed resume target

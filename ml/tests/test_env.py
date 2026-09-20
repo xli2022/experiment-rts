@@ -2,9 +2,9 @@ import numpy as np
 import pytest
 import torch
 
-from rtsml.env import LANES, BunVectorEnv, EnvConfig, noop_actions, slot
+from rtsml.env import LANES, QUARTERS, BunVectorEnv, EnvConfig, noop_actions, slot
 from rtsml.model import Policy
-from rtsml.spec import NOOP, SPEC
+from rtsml.spec import BUILD, NOOP, SPEC, TRAIN
 from rtsml.util import decide
 
 from conftest import requires_bun
@@ -69,3 +69,52 @@ def test_a_policy_can_play_and_reconfigure(env):
     for _ in range(100):
         batch = env.step(noop_actions(1))
     assert batch.done.all() and batch.truncated.all() and batch.reset.all()
+
+
+@pytest.mark.parametrize("layout,players", [(LANES, 2), (QUARTERS, 4)])
+def test_expert_labels_cross_the_pipe_without_controlling_policy_slots(layout, players):
+    learners = players // 2
+    slots = [slot("policy") for _ in range(learners)] + [slot("idle") for _ in range(learners)]
+    plain = EnvConfig(seed=31, layout=layout, slots=slots, max_ticks=400)
+    labelled = EnvConfig(seed=31, layout=layout, slots=slots, max_ticks=400, expert_labels=True)
+    assert plain.to_json()["expertLabels"] is False
+    assert labelled.to_json()["expertLabels"] is True
+    env = BunVectorEnv([[labelled, plain]])
+    try:
+        batch = env.reset()
+        assert (batch.arrays["label"][:learners, 0] == -1).all()
+        for step in range(60):
+            batch = env.step(noop_actions(len(batch)))
+            assert not batch.issued.any(), "a shadow expert must never issue its suggestion"
+            for name, values in batch.arrays.items():
+                if name != "label":
+                    np.testing.assert_array_equal(values[:learners], values[learners:], err_msg=name)
+            labels = batch.arrays["label"]
+            assert (labels[learners:, 0] == NOOP).all()
+            if step >= 8 and labels[0, 0] in (BUILD, TRAIN):
+                break
+        else:
+            pytest.fail("the expert supplied no production or construction suggestion")
+
+        # The same current-state label becomes an action only when the learner
+        # sends it back; this also checks observation/label row alignment.
+        action = noop_actions(len(batch))
+        action[0] = labels[0]
+        assert batch.arrays["mask_type"][0, action[0, 0]]
+        assert batch.arrays["mask_selection"][0, action[0, 0], action[0, 5]]
+        batch = env.step(action)
+        assert batch.issued[0] == 1 and not batch.issued[1:].any()
+        for _ in range(3):
+            batch = env.step(noop_actions(len(batch)))
+        assert not np.array_equal(batch.arrays["entities"][0], batch.arrays["entities"][learners])
+
+        # A server auto-reset returns the new match's observation, so a label
+        # from the just-ended match must not leak into that next observation.
+        for _ in range(100):
+            if batch.reset.all():
+                break
+            batch = env.step(noop_actions(len(batch)))
+        assert batch.done.all() and batch.truncated.all() and batch.reset.all()
+        assert (batch.arrays["label"][:learners, 0] == -1).all()
+    finally:
+        env.close()

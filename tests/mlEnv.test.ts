@@ -13,7 +13,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DECISION_TICKS } from '../src/ai/cadence.js';
 import { executeTickFor } from '../src/ai/headless.js';
-import { actionToInts, allocAction, encode, legalise } from '../src/ai/neural/actions.js';
+import {
+  actionFromInts,
+  actionToInts,
+  allocAction,
+  encode,
+  legalise,
+} from '../src/ai/neural/actions.js';
 import { sampleUniform } from '../src/ai/neural/random.js';
 import { ScriptedAgent } from '../src/ai/scripted.js';
 import {
@@ -41,45 +47,139 @@ function noop(): Int32Array {
 }
 
 describe('the training environment', () => {
-  it('drops a stale Build intent instead of labelling a nearby new foundation', () => {
-    const env = new MatchEnv({
-      seed: SEED,
-      layout: MapLayout.Lanes,
-      slots: parseSlots('teacher,idle'),
+  it('labels learner states without issuing expert orders or changing learner history', () => {
+    const think = vi.spyOn(ScriptedAgent.prototype, 'act').mockImplementation((world, player) => {
+      if (world.tick !== DECISION_TICKS) return [];
+      const producer = world.pool.type.findIndex(
+        (type, i) => type === EntityType.CommandPost && world.pool.owner[i] === player,
+      );
+      return [
+        {
+          type: CommandType.Train,
+          player,
+          building: world.pool.idAt(producer),
+          unit: EntityType.Worker,
+        },
+      ];
     });
-    const world = env.world;
-    world.map.tiles.fill(Tile.Ground);
-    world.map.occupied.fill(UNOCCUPIED);
-    world.player(0).minerals = 1000;
-    const site = world.placeBuilding(EntityType.Airport, 0, 40, 40);
-    world.pool.buildState[idIndex(site)] = BuildState.Complete;
-    const worker = world.pool.spawn(EntityType.Worker, 0, fromInt(39), fromInt(39));
-    const command = {
-      type: CommandType.Build as const,
-      player: 0,
-      worker,
-      building: EntityType.Airport,
-      tileX: 40,
-      tileY: 40,
+    const config = {
+      seed: SEED,
+      layout: MapLayout.Quarters,
+      slots: parseSlots('policy,policy,idle,idle'),
     };
-    const think = vi.spyOn(ScriptedAgent.prototype, 'act').mockImplementation(() => [command]);
+    const labelled = new MatchEnv({ ...config, expertLabels: true });
+    const plain = new MatchEnv(config);
     try {
-      env.step(new Map());
-      const slot = env.observe(0);
-      const action = allocAction();
-      expect(encode(command, slot.frame, action)).toBe(true);
-      expect(legalise(action, slot.masks)).toBe(true); // Coarse cell has free nearby tiles.
-      expect(slot.label[0]).toBe(-1);
-      expect(env.teacherCoverage(0)).toMatchObject({
-        nonNoop: 0,
-        dropped: 1,
-        droppedCommands: { Build: 1 },
-      });
+      const holds = new Map<number, Int32Array>();
+      for (const player of [0, 1]) {
+        const slot = labelled.observe(player);
+        expect(slot.label[0]).toBe(-1);
+        expect(plain.observe(player).label[0]).toBe(ActionType.Noop);
+        const worker = labelled.world.pool.type.findIndex(
+          (type, i) => type === EntityType.Worker && labelled.world.pool.owner[i] === player,
+        );
+        const action = allocAction();
+        expect(
+          encode(
+            {
+              type: CommandType.Hold,
+              player,
+              units: [labelled.world.pool.idAt(worker)],
+            },
+            slot.frame,
+            action,
+          ),
+        ).toBe(true);
+        const ints = new Int32Array(ACTION_INTS);
+        actionToInts(action, ints);
+        holds.set(player, ints);
+      }
+      expect(labelled.step(holds)).toEqual(plain.step(holds));
+      for (const player of [0, 1]) {
+        const slot = labelled.observe(player);
+        const control = plain.observe(player);
+        expect(slot.frame.tick).toBe(DECISION_TICKS);
+        expect(slot.observation).toEqual(control.observation);
+        expect(slot.masks).toEqual(control.masks);
+        expect(slot.critic).toEqual(control.critic);
+        expect(slot.label[0]).toBe(ActionType.Train);
+        const action = allocAction();
+        actionFromInts(slot.label, action);
+        expect(legalise(action, slot.masks)).toBe(true);
+        expect(slot.observation.scalars[SCALARS.indexOf('prev:Hold')]).toBe(1);
+        expect(slot.observation.scalars[SCALARS.indexOf('prev:Train')]).toBe(0);
+        const calls = think.mock.calls.length;
+        expect(labelled.observe(player)).toBe(slot);
+        expect(think.mock.calls.length).toBe(calls);
+        expect(labelled.teacherCoverage(player).decisions).toBe(1);
+      }
+      const noops = new Map([
+        [0, noop()],
+        [1, noop()],
+      ]);
+      for (let step = 0; step < 4; step++) {
+        expect(labelled.step(noops)).toEqual(plain.step(noops));
+        for (const player of [0, 1]) {
+          expect(labelled.observe(player).observation).toEqual(plain.observe(player).observation);
+        }
+        expect(labelled.world.checksum()).toBe(plain.world.checksum());
+      }
+      labelled.reset(SEED);
+      expect(labelled.observe(0).label[0]).toBe(-1);
+      expect(labelled.teacherCoverage(0).decisions).toBe(0);
     } finally {
+      labelled.dispose();
+      plain.dispose();
       think.mockRestore();
-      env.dispose();
     }
   });
+
+  it.each([
+    { slots: 'teacher,idle', expertLabels: false },
+    { slots: 'policy,idle', expertLabels: true },
+  ])(
+    'drops a stale Build intent instead of labelling a nearby new foundation ($slots)',
+    ({ slots, expertLabels }) => {
+      const env = new MatchEnv({
+        seed: SEED,
+        layout: MapLayout.Lanes,
+        slots: parseSlots(slots),
+        expertLabels,
+      });
+      const world = env.world;
+      world.map.tiles.fill(Tile.Ground);
+      world.map.occupied.fill(UNOCCUPIED);
+      world.player(0).minerals = 1000;
+      const site = world.placeBuilding(EntityType.Airport, 0, 40, 40);
+      world.pool.buildState[idIndex(site)] = BuildState.Complete;
+      const worker = world.pool.spawn(EntityType.Worker, 0, fromInt(39), fromInt(39));
+      const command = {
+        type: CommandType.Build as const,
+        player: 0,
+        worker,
+        building: EntityType.Airport,
+        tileX: 40,
+        tileY: 40,
+      };
+      const think = vi.spyOn(ScriptedAgent.prototype, 'act').mockImplementation(() => [command]);
+      try {
+        env.step(new Map());
+        const slot = env.observe(0);
+        const action = allocAction();
+        expect(encode(command, slot.frame, action)).toBe(true);
+        expect(legalise(action, slot.masks)).toBe(true); // Coarse cell has free nearby tiles.
+        expect(slot.label[0]).toBe(-1);
+        expect(env.teacherCoverage(0)).toMatchObject({
+          nonNoop: 0,
+          dropped: 1,
+          droppedCommands: { Build: 1 },
+        });
+      } finally {
+        think.mockRestore();
+        env.dispose();
+      }
+    },
+  );
 
   it('pairs a teacher label with the actual decision-source tick and neural issue delay', () => {
     let sourceTick = -1;

@@ -65,6 +65,8 @@ export interface EnvConfig {
   layout: MapLayout;
   /** One entry per roster slot. */
   slots: SlotSpec[];
+  /** Label policy observations with a shadow teacher, without issuing its commands. */
+  expertLabels?: boolean;
   /** The match is truncated here. */
   maxTicks?: number;
   /** Weight of the potential-based shaping term. */
@@ -85,7 +87,8 @@ export interface SlotObs {
   /**
    * The teacher's decision, as `ACTION_INTS`: type Noop when it said nothing,
    * type -1 when it said something the student could not have. All -1 but the
-   * Noop type for a policy slot.
+   * Noop type for an ordinary policy slot. With `expertLabels`, policy slots
+   * receive shadow-teacher labels; initial/reset observations have type -1.
    */
   readonly label: Int32Array;
 }
@@ -113,6 +116,21 @@ export interface TeacherCoverage {
   resumes: Record<string, number>;
   upgrades: Record<string, number>;
   units: Record<string, number>;
+}
+
+function emptyCoverage(): TeacherCoverage {
+  return {
+    decisions: 0,
+    valid: 0,
+    nonNoop: 0,
+    dropped: 0,
+    actions: {},
+    droppedCommands: {},
+    buildings: {},
+    resumes: {},
+    upgrades: {},
+    units: {},
+  };
 }
 
 /** One slot's eyes, kept in step every tick. */
@@ -230,6 +248,7 @@ class TeacherAgent implements Agent {
   ) {
     this.inner = humanCadence(
       new ScriptedAgent(thinkInterval === undefined ? {} : { thinkInterval }),
+      { replanWhenEmpty: true },
     );
   }
   act(world: World, player: PlayerId): Command[] {
@@ -273,6 +292,8 @@ export class MatchEnv {
   private eyes = new Map<PlayerId, Eyes>();
   private policies = new Map<PlayerId, PolicyAgent>();
   private teachers = new Map<PlayerId, TeacherAgent>();
+  /** Shadow teachers have no driver slot and can never issue a command. */
+  private experts = new Map<PlayerId, { agent: Agent; capturedTick: number }>();
   private coverage = new Map<PlayerId, TeacherCoverage>();
   /** Slots an observation is produced for: policy and teacher slots, ascending. */
   readonly observed: PlayerId[] = [];
@@ -307,6 +328,9 @@ export class MatchEnv {
 
   /** Start over, on `seed` or the next seed after the last. */
   reset(seed?: number): void {
+    this.match?.dispose();
+    for (const expert of this.experts.values()) expert.agent.dispose?.();
+    this.experts.clear();
     this.seed = seed ?? (this.seed + 1) >>> 0;
     const slots = this.config.slots;
     const config = matchConfig(this.config.layout, this.seed, {
@@ -320,6 +344,9 @@ export class MatchEnv {
     this.teachers.clear();
     this.coverage.clear();
     slots.forEach((slot, p) => {
+      if (slot.kind === 'teacher' || (slot.kind === 'policy' && this.config.expertLabels)) {
+        this.coverage.set(p, emptyCoverage());
+      }
       if (slot.kind === 'scripted') {
         agents.push([
           p,
@@ -331,19 +358,13 @@ export class MatchEnv {
         const agent = new PolicyAgent();
         this.policies.set(p, agent);
         agents.push([p, agent]);
+        if (this.config.expertLabels) {
+          this.experts.set(p, {
+            agent: humanCadence(new ScriptedAgent(), { replanWhenEmpty: true }),
+            capturedTick: -1,
+          });
+        }
       } else if (slot.kind === 'teacher') {
-        this.coverage.set(p, {
-          decisions: 0,
-          valid: 0,
-          nonNoop: 0,
-          dropped: 0,
-          actions: {},
-          droppedCommands: {},
-          buildings: {},
-          resumes: {},
-          upgrades: {},
-          units: {},
-        });
         const agent = new TeacherAgent((world, player, command) => {
           const eyes = this.eyes.get(player)!;
           // The driver runs before the environment's post-tick vision update.
@@ -494,6 +515,15 @@ export class MatchEnv {
     const eyes = this.eyes.get(player);
     if (!eyes) throw new Error(`slot ${player} is not observed`);
     if (this.teachers.has(player) && eyes.held) return eyes.held;
+    const expert = this.experts.get(player);
+    if (expert) {
+      // Capturing happens exactly once, after the simulation tick. Reading an
+      // observation must never advance the expert queue or overwrite a label.
+      if (expert.capturedTick === this.tick) return eyes.out;
+      eyes.observe(this.match.world);
+      eyes.out.label.fill(-1);
+      return eyes.out;
+    }
     eyes.observe(this.match.world);
     if (!this.teachers.has(player)) {
       eyes.out.label.fill(-1);
@@ -541,6 +571,18 @@ export class MatchEnv {
     for (let t = 0; t < DECISION_TICKS && !world.matchOver; t++) {
       this.match.step();
       for (const eyes of this.eyes.values()) eyes.look(world);
+      if (!world.matchOver) {
+        for (const [player, expert] of this.experts) {
+          const commands = expert.agent.act(world, player);
+          if (world.tick % DECISION_TICKS !== 0) continue;
+          const eyes = this.eyes.get(player)!;
+          eyes.observe(world);
+          this.writeLabel(eyes, commands[0] ?? null);
+          expert.capturedTick = world.tick;
+          // Deliberately no noteCommand: recent history belongs to the learner.
+          // The proposed command is discarded, never submitted to the driver.
+        }
+      }
     }
     this.steps++;
 
@@ -561,7 +603,11 @@ export class MatchEnv {
     this.scanStanding();
     for (let k = 0; k < this.observed.length; k++) {
       const p = this.observed[k]!;
-      const next = this.potentialOf(p);
+      // Episode boundaries are absorbing for the learner: PPO masks bootstrap
+      // on `done`, including capped draws, and the bridge then resets the match.
+      // Zero potential here makes discounted shaping telescope to -Phi(start)
+      // instead of rewarding or penalising whatever board survived the ending.
+      const next = done ? 0 : this.potentialOf(p);
       let r = shaping * (gamma * next - this.potential[k]!) - timeCost;
       this.potential[k] = next;
       if (world.matchOver) {
@@ -612,7 +658,7 @@ export class MatchEnv {
   /** A detached report; callers cannot mutate the next training observation. */
   teacherCoverage(player: PlayerId): TeacherCoverage {
     const counts = this.coverage.get(player);
-    if (!counts) throw new Error(`slot ${player} is not a teacher`);
+    if (!counts) throw new Error(`slot ${player} has no teacher labels`);
     return {
       ...counts,
       actions: { ...counts.actions },
@@ -626,6 +672,8 @@ export class MatchEnv {
 
   dispose(): void {
     this.match.dispose();
+    for (const expert of this.experts.values()) expert.agent.dispose?.();
+    this.experts.clear();
   }
 }
 

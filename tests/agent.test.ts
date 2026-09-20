@@ -37,7 +37,7 @@ import { fromInt } from '../src/sim/fixed.js';
 import { duelMatch, matchConfig } from '../src/sim/match.js';
 import { HOSTED_COMMANDS_PER_TURN, TICKS_PER_TURN } from '../src/net/lockstep.js';
 import { Simulation } from '../src/sim/tick.js';
-import { BotKind, type MapLayout, type PlayerId } from '../src/sim/types.js';
+import { BotKind, EntityType, type MapLayout, type PlayerId } from '../src/sim/types.js';
 import type { World } from '../src/sim/world.js';
 import { cloneCommands } from './helpers/scripted.js';
 
@@ -171,6 +171,38 @@ describe('the human vocabulary every bot obeys', () => {
     // The four oldest were trimmed; the eight newest went out in order.
     expect(a).toEqual([5, 6, 7, 8, 9, 10, 11, 12]);
     expect(run()).toEqual(a);
+  });
+
+  it('finishes a teacher plan before replanning can displace production and army orders', () => {
+    const sim = new Simulation(duelMatch(1, { botPlayers: [] }));
+    const visits: number[] = [];
+    const train: Command = {
+      type: CommandType.Train,
+      player: 0,
+      building: 1,
+      unit: EntityType.Worker,
+    };
+    const plan = [train, ...Array.from({ length: 7 }, (_, i) => move([i + 2]))];
+    const paced = humanCadence(
+      {
+        act(world): Command[] {
+          visits.push(world.tick);
+          return cloneCommands(plan);
+        },
+      },
+      { replanWhenEmpty: true },
+    );
+    const released: Command[] = [];
+    for (let tick = 0; tick <= 8 * DECISION_TICKS; tick++) {
+      const out = paced.act(sim.world, 0);
+      expect(out.length).toBeLessThanOrEqual(1);
+      if (tick % DECISION_TICKS !== 0) expect(out).toEqual([]);
+      released.push(...out);
+      sim.step([]);
+    }
+    expect(released).toEqual([...plan, train]);
+    // The next plan observes a fresh world after the eighth order was released.
+    expect(visits).toEqual([0, 7 * DECISION_TICKS + 1]);
   });
 });
 

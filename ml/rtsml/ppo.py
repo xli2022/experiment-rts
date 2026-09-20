@@ -69,6 +69,16 @@ merely large. `approxKl` is logged unclamped so the runaway stays visible.
 """
 
 
+def reference_penalty(logp: torch.Tensor, reference_logp: torch.Tensor) -> torch.Tensor:
+    """Huber leash with a restoring gradient even far from the reference.
+
+    Only the PPO importance ratio needs a clamp before exponentiation. Clamping
+    this log-ratio would make its gradient zero precisely where the policy is
+    furthest from the reference. Huber is already linear in that region.
+    """
+    return torch.nn.functional.huber_loss(logp, reference_logp, reduction="mean", delta=1.0)
+
+
 @dataclass
 class Assignment:
     member: Member
@@ -508,8 +518,7 @@ def main(argv: list[str] | None = None) -> int:
                         # (measured: kl ~ 1e6 against pg ~ 0.1). Huber is quadratic
                         # near zero and linear beyond, so the pull is bounded by
                         # beta however far the policy has drifted.
-                        r = torch.clamp(lp_ref - logp, -LOG_RATIO_CLAMP, LOG_RATIO_CLAMP)
-                        kl = torch.where(r.abs() <= 1.0, 0.5 * r * r, r.abs() - 0.5).mean()
+                        kl = reference_penalty(logp, lp_ref)
                         loss = loss + beta * kl
                     if not torch.isfinite(loss):
                         skipped += 1

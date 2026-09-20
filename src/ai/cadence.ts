@@ -19,6 +19,13 @@ export const DECISION_TICKS = 4;
 export interface CadenceOptions {
   readonly decisionTicks?: number;
   /**
+   * Finish the current plan before asking for another. Useful for a synchronous
+   * teacher whose next think would otherwise replace still-pending production
+   * and worker orders with another full plan. Leave false for agents that must
+   * be polled every tick to receive asynchronous replies.
+   */
+  readonly replanWhenEmpty?: boolean;
+  /**
    * Orders waiting their turn, at most. A think that wants more than this is
    * trimmed from the front — the oldest order is the one most likely to be
    * stale by the time it would go out.
@@ -32,7 +39,9 @@ export function humanCadence(inner: Agent, options: CadenceOptions = {}): Agent 
   const queue: Command[] = [];
   return {
     act(world: World, player: PlayerId): Command[] {
-      for (const command of chunkCommands(inner.act(world, player))) queue.push(command);
+      if (!options.replanWhenEmpty || queue.length === 0) {
+        for (const command of chunkCommands(inner.act(world, player))) queue.push(command);
+      }
       while (queue.length > queueCap) queue.shift();
       if (world.tick % decisionTicks !== 0 || queue.length === 0) return [];
       return [queue.shift()!];

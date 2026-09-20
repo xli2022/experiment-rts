@@ -49,6 +49,8 @@ class EnvConfig:
     shaping: float = 1e-3
     gamma: float = 0.99
     time_cost: float = 1e-4
+    expert_labels: bool = False
+    """Label policy-controlled states with a shadow expert; it never issues commands."""
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -59,6 +61,7 @@ class EnvConfig:
             "shaping": self.shaping,
             "gamma": self.gamma,
             "timeCost": self.time_cost,
+            "expertLabels": self.expert_labels,
         }
 
 
