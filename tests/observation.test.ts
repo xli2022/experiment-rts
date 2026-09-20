@@ -26,13 +26,13 @@ import {
   N_ENT,
 } from '../src/ai/neural/spec.js';
 import { HeadlessMatch } from '../src/ai/headless.js';
-import { buildingUpgrade, defOf } from '../src/config/rules.js';
-import { fromInt } from '../src/sim/fixed.js';
+import { buildingUpgrade, defOf, MAX_PRODUCTION_QUEUE } from '../src/config/rules.js';
+import { fromFloat, fromInt } from '../src/sim/fixed.js';
 import { idIndex } from '../src/sim/entities.js';
 import { OCCUPIED_SOLID, UNOCCUPIED } from '../src/sim/map.js';
 import { coopMatch, duelMatch } from '../src/sim/match.js';
 import { Simulation } from '../src/sim/tick.js';
-import { EntityType, NO_ENTITY, type PlayerId } from '../src/sim/types.js';
+import { EntityType, NO_ENTITY, Order, type PlayerId } from '../src/sim/types.js';
 import type { World } from '../src/sim/world.js';
 import { EXPLORED, VISIBLE, Visibility } from '../src/vision/visibility.js';
 import { scriptedAgents } from './helpers/agents.js';
@@ -74,6 +74,126 @@ function firstDifference(a: Float32Array, b: Float32Array): string | null {
 }
 
 describe('the observation', () => {
+  it('exposes precise owned movement goals in the canonical frame and clears unused goals', () => {
+    const world = new Simulation(duelMatch(SEED, { botPlayers: [] })).world;
+    const pool = world.pool;
+    const x = fromFloat(31.25),
+      y = fromFloat(45.5);
+    const dx = fromFloat(16.25),
+      dy = fromFloat(-8.5);
+    const ids = [
+      pool.spawn(EntityType.Burstbot, 0, x, y),
+      pool.spawn(
+        EntityType.Burstbot,
+        1,
+        fromInt(world.map.width) - x,
+        fromInt(world.map.height) - y,
+      ),
+    ];
+    const eyes = [new Eyes(world, 0), new Eyes(world, 1)];
+    const columns = [ENTITY_FEATURES.indexOf('orderDx'), ENTITY_FEATURES.indexOf('orderDy')];
+    for (const order of [
+      Order.Move,
+      Order.AttackMove,
+      Order.Hold,
+      Order.Attack,
+      Order.Build,
+      Order.Harvest,
+      Order.None,
+    ]) {
+      const values = eyes.map((eye, player) => {
+        const i = idIndex(ids[player]!);
+        const sign = player === 0 ? 1 : -1;
+        pool.order[i] = order;
+        pool.orderX[i] = pool.posX[i]! + sign * dx;
+        pool.orderY[i] = pool.posY[i]! + sign * dy;
+        eye.look(world);
+        eye.encode();
+        const row = eye.frame.rowOf.get(ids[player]!)!;
+        return columns.map((column) => eye.obs.entities[row * F + column]);
+      });
+      expect(values[0]).toEqual(values[1]);
+      if (order === Order.Move || order === Order.AttackMove) {
+        expect(values[0]![0]).toBeCloseTo(16.25 / Math.max(world.map.width, world.map.height), 8);
+        expect(values[0]![1]).toBeCloseTo(-8.5 / Math.max(world.map.width, world.map.height), 8);
+      } else expect(values[0]).toEqual([0, 0]);
+    }
+  });
+
+  it('distinguishes owned production tails while preserving the legacy observation columns', () => {
+    const world = new Simulation(duelMatch(SEED, { botPlayers: [] })).world;
+    const id = world.pool.spawn(EntityType.Barracks, 0, fromInt(30), fromInt(30));
+    const i = idIndex(id);
+    world.pool.prodPush(i, EntityType.Burstbot);
+    world.pool.prodPush(i, EntityType.Burstbot);
+    world.pool.prodProgress[i] = 60;
+    const eyes = new Eyes(world, 0);
+    eyes.look(world);
+    eyes.encode();
+    const row = eyes.frame.rowOf.get(id)!;
+    const firstNew = ENTITY_FEATURES.indexOf('orderDx');
+    const before = eyes.obs.entities.slice(row * F, (row + 1) * F);
+    world.pool.prodQueue[i * MAX_PRODUCTION_QUEUE + 1] = EntityType.Slicebot;
+    eyes.encode();
+    const after = eyes.obs.entities.slice(row * F, (row + 1) * F);
+    expect(after.slice(0, firstNew)).toEqual(before.slice(0, firstNew));
+    expect(before[ENTITY_FEATURES.indexOf('queued:Burstbot')]).toBe(
+      Math.fround(2 / MAX_PRODUCTION_QUEUE),
+    );
+    expect(after[ENTITY_FEATURES.indexOf('queued:Burstbot')]).toBe(
+      Math.fround(1 / MAX_PRODUCTION_QUEUE),
+    );
+    expect(after[ENTITY_FEATURES.indexOf('queued:Slicebot')]).toBe(
+      Math.fround(1 / MAX_PRODUCTION_QUEUE),
+    );
+    world.pool.prodCount[i] = 0;
+    eyes.encode();
+    expect([...eyes.obs.entities.slice(row * F + firstNew, (row + 1) * F)]).toEqual(
+      new Array(F - firstNew).fill(0),
+    );
+  });
+
+  it('keeps allied, visible and remembered enemy, neutral, and unused private columns zero', () => {
+    const world = new Simulation(coopMatch(SEED, { botPlayers: [] })).world;
+    const pool = world.pool;
+    for (const owner of [0, 1, 2]) {
+      for (const type of [EntityType.Burstbot, EntityType.Barracks, EntityType.Depot]) {
+        const id = pool.spawn(type, owner, fromInt(30), fromInt(30));
+        const i = idIndex(id);
+        pool.order[i] = Order.AttackMove;
+        pool.orderX[i] = fromInt(60);
+        pool.orderY[i] = fromInt(45);
+        pool.prodPush(i, EntityType.Burstbot);
+      }
+    }
+    const eyes = new Eyes(world, 0);
+    const firstNew = ENTITY_FEATURES.indexOf('orderDx');
+    for (const visible of [true, false]) {
+      eyes.vis.state.fill(visible ? VISIBLE : EXPLORED);
+      eyes.mem.update(world, eyes.vis);
+      eyes.encode();
+      let nonOwnRows = 0;
+      for (let row = 0; row < N_ENT; row++) {
+        const kind = eyes.frame.rowKind[row]!;
+        const values = [...eyes.obs.entities.slice(row * F + firstNew, (row + 1) * F)];
+        if (kind !== RowKind.OwnUnit && kind !== RowKind.OwnBuilding) {
+          expect(values).toEqual(new Array(F - firstNew).fill(0));
+          if (kind !== RowKind.Empty) nonOwnRows++;
+        } else {
+          const def = defOf(pool.type[idIndex(eyes.frame.rows[row]!)]!);
+          if (def.isBuilding) expect(values.slice(0, 2)).toEqual([0, 0]);
+          if (def.produces.length === 0)
+            expect(values.slice(2)).toEqual(new Array(F - firstNew - 2).fill(0));
+        }
+      }
+      expect(nonOwnRows).toBeGreaterThan(0);
+      expect([...eyes.frame.rowKind]).toContain(
+        visible ? RowKind.EnemyVisible : RowKind.EnemyRemembered,
+      );
+      world.tick++;
+    }
+  });
+
   it('exposes own building technology and progress without leaking enemy research', () => {
     const world = new Simulation(duelMatch(SEED, { botPlayers: [] })).world;
     const eyes = new Eyes(world, 0);

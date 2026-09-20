@@ -3,8 +3,8 @@
  *
  * Every number here is shared with the training code in Python: `npm run
  * ml:spec` dumps `SPEC` to `ml/rtsml/spec.json`, and `tests/spec.test.ts`
- * fails the moment the two disagree. Change a feature here and the model has
- * to be retrained; `version` says so to a model file that was not.
+ * fails the moment the two disagree. Feature changes require a compatible
+ * migration or retraining; `version` rejects a model that has neither.
  *
  * The bot sees what a human sees: entities inside its side's vision or in its
  * own memory, a coarse map, and the numbers on the HUD — all in the canonical
@@ -13,13 +13,30 @@
  */
 
 import { MAX_COMMAND_UNITS } from '../../sim/commands.js';
-import { ENTITY_TYPE_COUNT } from '../../sim/types.js';
+import { EntityType, ENTITY_TYPE_COUNT } from '../../sim/types.js';
 import { DECISION_TICKS } from '../cadence.js';
 
 export { DECISION_TICKS };
 
 /** Rows in the entity table. Own entities first, then everything else in priority order. */
 export const N_ENT = 160;
+
+/** Queue-count columns, in entity-type order; buildings and resources cannot be trained. */
+export const QUEUED_UNIT_TYPES: readonly EntityType[] = [
+  EntityType.Worker,
+  EntityType.Burstbot,
+  EntityType.Slicebot,
+  EntityType.Beamdrone,
+  EntityType.Boomwalker,
+  EntityType.Fixomatic,
+  EntityType.Firespout,
+  EntityType.Arclight,
+  EntityType.Piercebot,
+  EntityType.Sentry,
+  EntityType.DarkGolem,
+  EntityType.IceGolem,
+  EntityType.Plasmodrone,
+];
 
 /**
  * Per-row features, in column order. Own-only fields are zero on other rows —
@@ -89,6 +106,23 @@ export const ENTITY_FEATURES = [
   'flying',
   'canHitAir',
   'distToOwnPost',
+  // Codec 4 appends own public order/queue information. Keep the codec-3 prefix
+  // in place so checkpoint migration can append zero input weights safely.
+  'orderDx',
+  'orderDy',
+  'queued:Worker',
+  'queued:Burstbot',
+  'queued:Slicebot',
+  'queued:Beamdrone',
+  'queued:Boomwalker',
+  'queued:Fixomatic',
+  'queued:Firespout',
+  'queued:Arclight',
+  'queued:Piercebot',
+  'queued:Sentry',
+  'queued:DarkGolem',
+  'queued:IceGolem',
+  'queued:Plasmodrone',
 ] as const;
 export const ENTITY_FEATURE_COUNT = ENTITY_FEATURES.length;
 
@@ -274,9 +308,11 @@ export const CRITIC_LEN = CRITIC_PER_PLAYER.length * CRITIC_PLAYERS + 2;
 
 /** Everything Python needs to build and export a model that fits this codec. */
 export const SPEC = {
+  // 4: Append own movement goals and production queue counts. Codec-3 weights
+  // can migrate by adding zero columns after the unchanged 58-feature prefix.
   // 3: Factory/Airport production, building levels and upgrade commands change
   // the input and action widths. Version 1/2 models must be trained again.
-  version: 3,
+  version: 4,
   decisionTicks: DECISION_TICKS,
   unitMemoryTicks: UNIT_MEMORY_TICKS,
   entities: { rows: N_ENT, features: ENTITY_FEATURES },

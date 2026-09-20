@@ -5,12 +5,28 @@ The TypeScript side decides what the bot sees and what it can say
 to say the right things and exports it to ONNX for the browser. Matches are
 served by Bun processes running `tools/ml/serve.ts`; Python never simulates.
 
-The current codec is **version 3**. Factory/Airport production and building
-upgrades add entity, observation and action dimensions. Version 1 and 2
-checkpoints and ONNX exports are incompatible and are rejected; retrain and
-export both layout policies using the current `spec.json`. Upgrade state is
-available only on the viewer's own building rows, and legal training masks
-depend on each building's level and whether it is upgrading.
+The current codec is **version 4**. It preserves the first 58 entity features
+from version 3 and appends 15 columns: canonical Move/AttackMove goal displacement
+for owned units, and queue counts for the 13 trainable unit types on owned
+producers. These fields are zero for allied, enemy and neutral rows. Queue counts
+are divided by the production queue capacity; goal displacement is divided by
+the larger map dimension. Upgrade state and production legality still depend on
+each owned building's level and whether it is upgrading.
+
+Version 3 checkpoints can be migrated from `ml/`:
+
+```sh
+python -m rtsml.migrate_observation --ckpt ../runs/bc-lanes/best.pt --out ../runs/bc-lanes/codec4.pt
+```
+
+Migration preserves the architecture, layout and existing weights, appending
+zero columns to `entity_in.weight` so the added inputs are initially ignored.
+It refuses incompatible versions and existing output files, records the source
+checkpoint hash, and clears evaluation metrics that no longer qualify the
+output. Continue imitation or DAgger with the migrated checkpoint as `--init`,
+collect fresh codec-4 observations, and run fresh gameplay evaluation before
+exporting. Existing ONNX exports are not migrated. Version 1 and 2 checkpoints
+remain incompatible; retrain those with the current `spec.json`.
 
 The bundled Lanes model predates this codec and the lobby disables it. The
 win rates and training experiments below are historical results, not evidence
