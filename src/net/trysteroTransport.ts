@@ -127,8 +127,10 @@ function unorderedPeerConnection(): typeof RTCPeerConnection | undefined {
  *    checksummed state and change which units each building can train.
  * 10: Firespout damage is reduced for the revised early production roster.
  *     Older peers would apply different damage to the same attack.
+ * 11: builders path to a reachable construction edge, changing movement and
+ *     completion timing when the nearest walkable approach is disconnected.
  */
-export const PROTOCOL_VERSION = 10;
+export const PROTOCOL_VERSION = 11;
 
 export interface HostConfig {
   roomCode: string;

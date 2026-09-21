@@ -19,6 +19,7 @@
 import { sortCommands, type Command } from './commands.js';
 import { AStar } from './pathing/astar.js';
 import { FlowFieldCache } from './pathing/flowfield.js';
+import { ConstructionPaths } from './pathing/construction.js';
 import { combatSystem, reapDead } from './systems/combat.js';
 import { economySystem } from './systems/economy.js';
 import { movementSystem } from './systems/movement.js';
@@ -43,6 +44,7 @@ export class Simulation {
    * peers with differently-warmed caches still compute identical fields.
    */
   private readonly fields: FlowFieldCache;
+  private readonly construction = new ConstructionPaths();
 
   constructor(config: MatchConfig | number) {
     this.world = new World(config);
@@ -80,7 +82,7 @@ export class Simulation {
 
     world.grid.rebuild(world.pool);
 
-    movementSystem(world, this.astar, this.fields);
+    movementSystem(world, this.astar, this.fields, this.construction);
     // Steering, separation and footprint eviction have changed positions.
     // Combat queries those new positions, so its buckets must reflect them.
     world.grid.rebuild(world.pool);
