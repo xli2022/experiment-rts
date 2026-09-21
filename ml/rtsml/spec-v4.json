@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 4,
   "decisionTicks": 4,
   "unitMemoryTicks": 300,
   "entities": {
@@ -77,8 +77,7 @@
       "queued:Sentry",
       "queued:DarkGolem",
       "queued:IceGolem",
-      "queued:Plasmodrone",
-      "hasAssignedBuilder"
+      "queued:Plasmodrone"
     ]
   },
   "grid": {

@@ -129,6 +129,7 @@ const F_DIST_POST = F_CAN_HIT_AIR + 1;
 const F_ORDER_DX = F_DIST_POST + 1;
 const F_ORDER_DY = F_ORDER_DX + 1;
 const F_QUEUED = F_ORDER_DY + 1;
+const F_HAS_ASSIGNED_BUILDER = F_QUEUED + QUEUED_UNIT_TYPES.length;
 
 // Grid channels, from GRID_CHANNELS.
 const G_WALKABLE = 0;
@@ -187,6 +188,7 @@ export class ObservationEncoder {
   private readonly candidates: Candidate[] = [];
   private readonly cellSum = new Float32Array(4 * CELLS);
   private readonly rememberedSolid: Uint8Array;
+  private readonly staffedSites = new Set<EntityId>();
 
   constructor(
     private readonly world: World,
@@ -249,11 +251,19 @@ export class ObservationEncoder {
     const start = map.starts[viewer]!;
     const startX = canonTileCoord(start.tileX, W, flip);
     const startY = canonTileCoord(start.tileY, H, flip);
+    const staffedSites = this.staffedSites;
+    staffedSites.clear();
     for (let i = 0; i < pool.count; i++) {
       if (pool.alive[i] !== 1 || pool.owner[i] !== viewer) continue;
       ownCount++;
       sumX += canonTileX(i);
       sumY += canonTileY(i);
+      if (pool.type[i] === EntityType.Worker && pool.order[i] === Order.Build) {
+        // Keep the full generation handle: a stale order must not staff a new
+        // building that reused the same pool slot. This is an assignment, not
+        // a claim that the worker is in range or making construction progress.
+        staffedSites.add(pool.orderTarget[i]!);
+      }
     }
     const centreX = ownCount > 0 ? Math.floor(sumX / ownCount) : startX;
     const centreY = ownCount > 0 ? Math.floor(sumY / ownCount) : startY;
@@ -391,6 +401,9 @@ export class ObservationEncoder {
       }
       if (own) {
         if (def.isBuilding) {
+          if (pool.buildState[i] !== BuildState.Complete) {
+            E[o + F_HAS_ASSIGNED_BUILDER] = staffedSites.has(pool.idAt(i)) ? 1 : 0;
+          }
           E[o + F_BUILDING_LEVEL] = pool.buildingLevel[i]! / 2;
           E[o + F_UPGRADING] = pool.upgrading[i]!;
           const upgrade = buildingUpgrade(type);

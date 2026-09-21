@@ -88,7 +88,7 @@ describe('the codec spec', () => {
     ];
     expect(previous).toHaveLength(58);
     expect(ENTITY_FEATURES.slice(0, previous.length)).toEqual(previous);
-    expect(ENTITY_FEATURES.slice(previous.length)).toEqual([
+    expect(ENTITY_FEATURES.slice(previous.length, 73)).toEqual([
       'orderDx',
       'orderDy',
       ...QUEUED_UNIT_TYPES.map((type) => `queued:${EntityType[type]}`),
@@ -96,7 +96,24 @@ describe('the codec spec', () => {
     expect(QUEUED_UNIT_TYPES).toEqual(
       [...new Set(DEFS.flatMap((def) => def.produces))].sort((a, b) => a - b),
     );
-    expect(SPEC.version).toBe(4);
+  });
+
+  it('appends construction staffing without changing any codec-4 contract', () => {
+    const previous = JSON.parse(
+      readFileSync(new URL('../ml/rtsml/spec-v4.json', import.meta.url), 'utf8'),
+    );
+    expect(previous.version).toBe(4);
+    expect(previous.entities.features).toHaveLength(73);
+    expect(ENTITY_FEATURES.slice(0, 73)).toEqual(previous.entities.features);
+    expect(ENTITY_FEATURES.slice(73)).toEqual(['hasAssignedBuilder']);
+    expect(SPEC).toEqual({
+      ...previous,
+      version: 5,
+      entities: {
+        ...previous.entities,
+        features: [...previous.entities.features, 'hasAssignedBuilder'],
+      },
+    });
   });
 
   it('matches the committed spec.json that Python reads', () => {
