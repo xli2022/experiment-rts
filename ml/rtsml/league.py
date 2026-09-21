@@ -9,6 +9,7 @@ learner still loses to are played most, with a floor so none is forgotten.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -55,9 +56,14 @@ class Member:
 
 
 class League:
-    def __init__(self, ladder: tuple[int, ...] = DEFAULT_LADDER, floor: float = 0.05, seed: int = 0):
+    def __init__(self, ladder: tuple[int, ...] = DEFAULT_LADDER, floor: float = 0.05, seed: int = 0,
+                 draw_credit: float = 0.5):
+        if (isinstance(draw_credit, bool) or not isinstance(draw_credit, (int, float))
+                or not math.isfinite(draw_credit) or not 0 <= draw_credit <= 1):
+            raise ValueError("draw_credit must be finite and between 0 and 1")
         self.members: list[Member] = [Member(f"scripted@{k}", "scripted", think_interval=k) for k in ladder]
         self.floor = floor
+        self.draw_credit = draw_credit
         self.rng = np.random.default_rng(seed)
 
     def add_snapshot(self, name: str, policy: torch.nn.Module, hparams: dict[str, Any]) -> Member:
@@ -75,9 +81,9 @@ class League:
         return [self.members[int(i)] for i in picks]
 
     def report(self, member: Member, learner_won: bool | None) -> None:
-        """A finished match; a draw counts half."""
+        """A finished match; configurable draw credit affects sampling only."""
         member.games += 1
-        member.wins += 1.0 if learner_won else 0.5 if learner_won is None else 0.0
+        member.wins += 1.0 if learner_won else self.draw_credit if learner_won is None else 0.0
 
     def summary(self) -> str:
         parts = [f"{m.name} {m.winrate:.2f}({m.games})" for m in self.members]
@@ -85,11 +91,12 @@ class League:
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save({"members": [m.to_dict() for m in self.members], "floor": self.floor}, path)
+        torch.save({"members": [m.to_dict() for m in self.members], "floor": self.floor,
+                    "draw_credit": self.draw_credit}, path)
 
     @classmethod
     def load(cls, path: Path, seed: int = 0) -> "League":
         raw = torch.load(path, map_location="cpu", weights_only=False)
-        league = cls(ladder=(), floor=raw["floor"], seed=seed)
+        league = cls(ladder=(), floor=raw["floor"], seed=seed, draw_credit=raw.get("draw_credit", 0.5))
         league.members = [Member(**m) for m in raw["members"]]
         return league

@@ -245,11 +245,31 @@ decision. Tick zero has no teacher label. Pairing a command chosen on tick 4
 with an observation from tick 0 is wrong even when its rows and masks happen
 to remain legal; the timing regression checks the actual source tick.
 
-**Rewards and the critic see everything; the policy does not.** Terminal ±1
-for the slot's team, potential shaping on the mineral value each side has
+**Rewards and the critic see everything; the policy does not.** By default,
+terminal wins/losses give ±1 and draws give 0 for the slot's team, with
+potential shaping on the mineral value each side has
 _committed to the board_, and a small cost per decision so a draw is never
 free. The critic vector is the whole truth about every player's economy and
 army; it exists only in training.
+
+Two optional PPO controls preserve those defaults: `--draw-reward 0` sets
+the terminal reward for both natural and time-capped draws, while
+`--league-draw-credit 0.5` sets their credit when sampling league opponents.
+The first must be finite in `[-1, 1]`, the second in `[0, 1]`. Both are saved
+in checkpoint hyperparameters. League files also save their draw credit;
+older files load with the historical half credit. Start a fresh league when
+changing its interpretation, since old weighted win totals cannot recover
+the original draw count. Match logs and evaluation still report actual draws,
+even when they earn the same reward or league credit as losses.
+
+For a separate experiment whose episodic objective counts every non-win
+equally, append `--draw-reward -1 --league-draw-credit 0 --gamma 1 --time-cost 0`
+to the PPO recipe. With terminal potential zero and the same gamma used for
+shaping, the expected full-episode return is `2 * P(win) - 1` plus a constant initial
+potential. Gamma 1 alone does not remove the preference for draws over losses.
+These controls change training rewards, not the simulation, actor inputs or
+deployment. They do not establish that the alternative learns better; short
+rollouts still depend on the critic for long-horizon credit assignment.
 
 The bank is deliberately outside the potential. With it counted, harvesting
 raised the potential directly and spending it never did, so the shaped

@@ -8,6 +8,7 @@ observation, so the batch never shrinks and never waits.
 
 from __future__ import annotations
 
+import math
 import os
 import shutil
 import subprocess
@@ -51,8 +52,19 @@ class EnvConfig:
     time_cost: float = 1e-4
     expert_labels: bool = False
     """Label policy-controlled states with a shadow expert; it never issues commands."""
+    draw_reward: float = 0.0
+    """Terminal reward for natural and capped draws; existing behavior is zero."""
+
+    def __post_init__(self) -> None:
+        self._validate_draw_reward()
+
+    def _validate_draw_reward(self) -> None:
+        if (isinstance(self.draw_reward, bool) or not isinstance(self.draw_reward, (int, float))
+                or not math.isfinite(self.draw_reward) or not -1 <= self.draw_reward <= 1):
+            raise ValueError("draw_reward must be finite and between -1 and 1")
 
     def to_json(self) -> dict[str, Any]:
+        self._validate_draw_reward()
         return {
             "seed": self.seed,
             "layout": self.layout,
@@ -62,6 +74,7 @@ class EnvConfig:
             "gamma": self.gamma,
             "timeCost": self.time_cost,
             "expertLabels": self.expert_labels,
+            "drawReward": self.draw_reward,
         }
 
 

@@ -253,6 +253,7 @@ def build_configs(league: League, procs: int, envs: int, rng: np.random.Generato
             seat = i % 2
             cfg = match_config(seed_base + i * SEED_STRIDE, layout, seat, members[i].slot(), args.max_ticks)
             cfg.shaping, cfg.time_cost, cfg.gamma = args.shaping, args.time_cost, args.gamma
+            cfg.draw_reward = args.draw_reward
             group.append(cfg)
             assigned.append(Assignment(members[i], seat, layout))
             i += 1
@@ -345,6 +346,10 @@ def main(argv: list[str] | None = None) -> int:
     # 2e-5 sums to 0.017: enough that a draw is never free, quiet enough that the
     # result decides.
     parser.add_argument("--time-cost", type=float, default=2e-5)
+    parser.add_argument("--draw-reward", type=float, default=0.0,
+                        help="terminal reward for natural and capped draws, in [-1, 1]")
+    parser.add_argument("--league-draw-credit", type=float, default=0.5,
+                        help="draw credit used only for league opponent sampling, in [0, 1]")
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--ladder", default="10,20,40")
     parser.add_argument(
@@ -403,6 +408,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.microbatch < 0:
         parser.error("microbatch must be nonnegative")
+    if not math.isfinite(args.draw_reward) or not -1 <= args.draw_reward <= 1:
+        parser.error("draw-reward must be finite and between -1 and 1")
+    if not math.isfinite(args.league_draw_credit) or not 0 <= args.league_draw_credit <= 1:
+        parser.error("league-draw-credit must be finite and between 0 and 1")
     if args.smoke:
         args.procs, args.envs, args.rollout, args.updates, args.epochs, args.minibatch = 1, 2, 4, 2, 1, 4
         args.refresh, args.snapshot_every, args.eval_every, args.max_ticks = 1, 1, 0, 400
@@ -459,7 +468,8 @@ def main(argv: list[str] | None = None) -> int:
     frozen = False
     print(f"policy: {parameter_count(policy)} parameters on {device}; KL reference: {'yes' if reference else 'none'}")
 
-    league = League(tuple(int(k) for k in args.ladder.split(",")), seed=args.seed)
+    league = League(tuple(int(k) for k in args.ladder.split(",")), seed=args.seed,
+                    draw_credit=args.league_draw_credit)
     if reference is not None:
         league.add_snapshot("imitation", policy, hparams)
     cache: dict[str, Policy] = {}

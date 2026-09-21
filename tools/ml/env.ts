@@ -75,6 +75,8 @@ export interface EnvConfig {
   gamma?: number;
   /** Cost of every decision, so a draw is never free. */
   timeCost?: number;
+  /** Terminal reward for natural and capped draws, in [-1, 1]. Defaults to 0. */
+  drawReward?: number;
 }
 
 /** Everything one observed slot gets per step. Buffers are owned by the env and overwritten. */
@@ -304,8 +306,14 @@ export class MatchEnv {
   private readonly action = allocAction();
   private seed: number;
   private steps = 0;
+  private readonly drawReward: number;
 
   constructor(config: EnvConfig) {
+    const drawReward = config.drawReward === undefined ? 0 : config.drawReward;
+    if (!Number.isFinite(drawReward) || drawReward < -1 || drawReward > 1) {
+      throw new RangeError('drawReward must be finite and between -1 and 1');
+    }
+    this.drawReward = drawReward;
     this.config = config;
     this.seed = config.seed;
     config.slots.forEach((slot, p) => {
@@ -610,8 +618,8 @@ export class MatchEnv {
       const next = done ? 0 : this.potentialOf(p);
       let r = shaping * (gamma * next - this.potential[k]!) - timeCost;
       this.potential[k] = next;
-      if (world.matchOver) {
-        if (world.winner === NO_ENTITY) r += 0;
+      if (done) {
+        if (world.winner === NO_ENTITY) r += this.drawReward;
         else r += world.winner === world.teamOf(p) ? 1 : -1;
       }
       rewards[k] = r;
