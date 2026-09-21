@@ -24,7 +24,7 @@ where = ["."]
 include = ["rtsml*"]
 
 [tool.setuptools.package-data]
-rtsml = ["spec.json", "spec-v3.json", "spec-v4.json"]
+rtsml = ["spec.json", "spec-v3.json", "spec-v4.json", "spec-v5.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
