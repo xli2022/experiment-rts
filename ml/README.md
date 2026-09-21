@@ -45,6 +45,21 @@ win rates and training experiments below are historical results, not evidence
 for the current production tree, fog-aware teacher or gameplay balance. A new
 model needs fresh imitation, gameplay evaluation and export before deployment.
 
+An optional architecture experiment sets `hparams.model.grid_negative_slope`
+to a finite value in `(0, 1]`, such as `0.001` or `0.01`. This replaces only
+`grid_out[1]`, the activation after the global grid projection, with LeakyReLU.
+The default `0` keeps the original ReLU, parameter keys, initialization and RNG
+behavior exactly. This option addresses a measured inactive global grid branch;
+it has not been shown to improve playing strength. The separate spatial cell
+head and every other activation remain unchanged.
+
+Changing the slope while retaining weights changes policy behavior. It is not
+a parity-preserving codec migration: clear old evaluation metrics, record the
+parent checkpoint hash and changed architecture, and run fresh evaluation.
+DAgger, PPO, evaluation and export reconstruct the setting from `hparams.model`.
+Imitation `--init` also preserves it; its existing CLI precedence for width,
+heads, layers and torso size is unchanged. There is no new training CLI flag.
+
 ```sh
 cd ml && pip install -e '.[dev]' && pytest      # Python 3.10+; needs bun on PATH for the env tests
 ```

@@ -79,10 +79,15 @@ class Encoded:
 
 
 class Policy(nn.Module):
-    def __init__(self, spec: Spec = SPEC, d: int = 128, heads: int = 4, layers: int = 2, torso: int = 256):
+    def __init__(self, spec: Spec = SPEC, d: int = 128, heads: int = 4, layers: int = 2, torso: int = 256,
+                 grid_negative_slope: float = 0.0):
         super().__init__()
+        if (isinstance(grid_negative_slope, bool) or not isinstance(grid_negative_slope, (int, float))
+                or not math.isfinite(grid_negative_slope) or not 0 <= grid_negative_slope <= 1):
+            raise ValueError("grid_negative_slope must be finite and between 0 and 1")
         self.spec = spec
         self.d = d
+        self.grid_negative_slope = float(grid_negative_slope)
         n_types, n_ent, e = spec.n_types, spec.n_ent, spec.entity_types
         cells, sub = spec.cells, spec.sub
 
@@ -100,7 +105,11 @@ class Policy(nn.Module):
         )
         q = spec.grid // 4
         self.grid_pool = nn.AvgPool2d(2)
-        self.grid_out = nn.Sequential(nn.Linear(64 * (q // 2) * (q // 2), 256), nn.ReLU())
+        # Zero retains the exact legacy activation, parameter keys and RNG use.
+        # A positive slope is an explicit architecture/behaviour change carried
+        # in checkpoint hparams.model; all other activations remain unchanged.
+        grid_activation = nn.ReLU() if self.grid_negative_slope == 0 else nn.LeakyReLU(self.grid_negative_slope)
+        self.grid_out = nn.Sequential(nn.Linear(64 * (q // 2) * (q // 2), 256), grid_activation)
         self.grid_skip = nn.Sequential(nn.Conv2d(spec.c, 8, 3, padding=1), nn.ReLU())
         self.scalar_mlp = nn.Sequential(nn.Linear(spec.s, 64), nn.ReLU(), nn.Linear(64, 64), nn.ReLU())
         self.torso = nn.Sequential(nn.Linear(d + 256 + 64, 512), nn.ReLU(), nn.Linear(512, torso), nn.ReLU())

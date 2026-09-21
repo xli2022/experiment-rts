@@ -274,8 +274,13 @@ def validate(policy: Policy, data: dict[str, np.ndarray], device: torch.device, 
     }
 
 
-def model_hparams(args: argparse.Namespace) -> dict[str, Any]:
-    return {"d": args.d, "heads": args.heads, "layers": args.layers, "torso": args.torso}
+def model_hparams(args: argparse.Namespace, initial_model: dict[str, Any] | None = None) -> dict[str, Any]:
+    model = {"d": args.d, "heads": args.heads, "layers": args.layers, "torso": args.torso}
+    # These dimensions retain their existing CLI precedence. The activation has
+    # no CLI flag, so a continuation must preserve its checkpoint setting.
+    if initial_model is not None and "grid_negative_slope" in initial_model:
+        model["grid_negative_slope"] = initial_model["grid_negative_slope"]
+    return model
 
 
 def add_model_args(parser: argparse.ArgumentParser) -> None:
@@ -334,8 +339,9 @@ def main(argv: list[str] | None = None) -> int:
     rng = np.random.default_rng(args.seed)
     device = pick_device(args.device)
     layout = None if args.layout == "mix" else args.layout
+    initial = load_checkpoint(args.init, device) if args.init else None
     hparams = {
-        "model": model_hparams(args),
+        "model": model_hparams(args, initial.get("hparams", {}).get("model", {}) if initial else None),
         "lr": args.lr,
         "noopKeep": args.noop_keep,
         "buffer": args.buffer,
@@ -345,8 +351,8 @@ def main(argv: list[str] | None = None) -> int:
         "layout": args.layout,
     }
     policy = Policy(**hparams["model"]).to(device)
-    if args.init:
-        policy.load_state_dict(load_checkpoint(args.init, device)["model"])
+    if initial is not None:
+        policy.load_state_dict(initial["model"])
     opt = torch.optim.Adam(policy.parameters(), lr=args.lr)
     print(f"policy: {parameter_count(policy)} parameters on {device}")
 
