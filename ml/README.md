@@ -5,12 +5,40 @@ The TypeScript side decides what the bot sees and what it can say
 to say the right things and exports it to ONNX for the browser. Matches are
 served by Bun processes running `tools/ml/serve.ts`; Python never simulates.
 
-The current codec is **version 3**. Factory/Airport production and building
-upgrades add entity, observation and action dimensions. Version 1 and 2
-checkpoints and ONNX exports are incompatible and are rejected; retrain and
-export both layout policies using the current `spec.json`. Upgrade state is
-available only on the viewer's own building rows, and legal training masks
-depend on each building's level and whether it is upgrading.
+The current codec is **version 5**. It preserves all 73 version-4 entity features
+and appends `hasAssignedBuilder`: a 0/1 flag on an own unfinished building when
+any living owned worker has a Build order targeting that building's current
+handle. It describes the issued public assignment, not whether the worker can
+reach the site or is making progress. Complete buildings, units, allies, enemies,
+neutral entities and unused rows have zero in this column. This lets the policy
+distinguish an orphaned site from one that already has a builder.
+
+Version 4 preserved the first 58 entity features from version 3 and appended
+15 columns: canonical Move/AttackMove goal displacement
+for owned units, and queue counts for the 13 trainable unit types on owned
+producers. These fields are zero for allied, enemy and neutral rows. Queue counts
+are divided by the production queue capacity; goal displacement is divided by
+the larger map dimension. Upgrade state and production legality still depend on
+each owned building's level and whether it is upgrading.
+
+Migrate a version-4 checkpoint from `ml/`:
+
+```sh
+python -m rtsml.migrate_observation --ckpt ../runs/bc-lanes/codec4.pt --out ../runs/bc-lanes/codec5.pt
+```
+
+Version-3 checkpoints require two explicit steps: first run the same command
+with `--to-version 4` to produce an intermediate codec-4 checkpoint, then migrate
+that file to version 5. Direct version-3 to version-5 conversion is rejected.
+
+Migration preserves the architecture, layout and existing weights, appending
+zero columns to `entity_in.weight` so the added inputs are initially ignored.
+It refuses incompatible versions and existing output files, records the source
+checkpoint hash, and clears evaluation metrics that no longer qualify the
+output. Continue imitation or DAgger with the migrated checkpoint as `--init`,
+collect fresh codec-5 observations, and run fresh gameplay evaluation before
+exporting. Existing ONNX exports are not migrated. Version 1 and 2 checkpoints
+remain incompatible; retrain those with the current `spec.json`.
 
 The bundled Lanes model predates this codec and the lobby disables it. The
 win rates and training experiments below are historical results, not evidence
@@ -85,6 +113,15 @@ the saved policy with `rtsml-eval`, which uses the neural policy alone. Its
 `best.pt` is selected by imitation loss; screen the intermediate checkpoints
 in actual matches before choosing a model. Current validation accuracy and
 training losses do not establish playing strength.
+
+For a controlled experiment on construction recall, DAgger accepts
+`--build-weight 4`. The default is `1`, preserving uniform weighting. A finite
+positive weight changes only Build examples' full imitation loss, including
+entropy; other actions keep weight 1. Each minibatch is normalized by its total
+weight. Validation remains unweighted and adds `perActionType` label, prediction
+and correct counts, recall and precision, so extra Build predictions can be
+checked for false positives. Compare matched runs and full-match results before
+choosing a nondefault weight.
 
 Before a longer run, inspect the teacher without allocating a dataset (from
 the repository root): `bun run tools/ml/teacher-probe.ts 2 600`. Each JSON line

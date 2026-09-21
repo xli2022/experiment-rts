@@ -26,6 +26,7 @@ import {
   SEPARATION_STRENGTH,
   defOf,
   reachSlackFor,
+  BUILD_REACH,
 } from '../../config/rules.js';
 import type { FlowField, FlowFieldCache } from '../pathing/flowfield.js';
 import { ARRIVE_BEST_NONE, ENTITY_CAPACITY, idIndex, MAX_PATH } from '../entities.js';
@@ -43,8 +44,9 @@ import {
   type Fix,
 } from '../fixed.js';
 import { AStar, nearestWalkable } from '../pathing/astar.js';
+import type { ConstructionPaths } from '../pathing/construction.js';
 import { lineOfSightClear, smoothPath, tileCentreX, tileCentreY } from '../pathing/los.js';
-import { approachPoint } from './economy.js';
+import { approachPoint, inReach } from './economy.js';
 import { topSpeedOf } from './combat.js';
 import type { EntityDef } from '../../config/rules.js';
 import { EntityType, NO_ENTITY, Order } from '../types.js';
@@ -69,13 +71,18 @@ const PATH_RETRY_COOLDOWN = 40;
 const snapX = new Int32Array(ENTITY_CAPACITY);
 const snapY = new Int32Array(ENTITY_CAPACITY);
 
-export function movementSystem(world: World, astar: AStar, fields: FlowFieldCache): void {
+export function movementSystem(
+  world: World,
+  astar: AStar,
+  fields: FlowFieldCache,
+  construction: ConstructionPaths,
+): void {
   const pool = world.pool;
   snapX.set(pool.posX.subarray(0, pool.count));
   snapY.set(pool.posY.subarray(0, pool.count));
   moveFlyers(world);
   resumeAdvance(world);
-  servePathRequests(world, astar);
+  servePathRequests(world, astar, construction);
   followFlowFields(world, fields);
   followPaths(world);
   engageNearby(world);
@@ -665,7 +672,7 @@ const ownerHeads = new Int32Array(8);
  * Entities that died or changed orders while queued are skipped without
  * consuming budget, so a burst of cancelled orders cannot starve live ones.
  */
-function servePathRequests(world: World, astar: AStar): void {
+function servePathRequests(world: World, astar: AStar, construction: ConstructionPaths): void {
   const pool = world.pool;
   const queue = world.pathQueue;
   if (queue.length === 0) return;
@@ -703,7 +710,7 @@ function servePathRequests(world: World, astar: AStar): void {
       while (head < list.length) {
         const i = list[head++]!;
         if (pool.pathPending[i] !== 1) continue;
-        servePathRequest(world, astar, i);
+        servePathRequest(world, astar, construction, i);
         served++;
         break;
       }
@@ -720,18 +727,25 @@ function servePathRequests(world: World, astar: AStar): void {
   }
 }
 
-function servePathRequest(world: World, astar: AStar, i: number): void {
+function servePathRequest(
+  world: World,
+  astar: AStar,
+  construction: ConstructionPaths,
+  i: number,
+): void {
   const pool = world.pool;
   // Every tile decision on this unit's behalf is made in its owner's frame,
   // so the mirrored unit asks the mirrored question and gets the mirrored
   // route.
   const flip = world.flipOf(pool.owner[i]!);
   const startTile = world.map.tileOfPosFor(pool.posX[i]!, pool.posY[i]!, flip);
+  const site = pool.orderTarget[i]!;
+  const building = pool.order[i] === Order.Build && pool.isAlive(site);
   let goalTile = world.map.tileOfPosFor(pool.orderX[i]!, pool.orderY[i]!, flip);
 
   // Right-clicking a cliff or a building should walk as close as possible
   // rather than being rejected outright.
-  if (goalTile >= 0) {
+  if (!building && goalTile >= 0) {
     const gx = world.map.tileXOf(goalTile);
     const gy = world.map.tileYOf(goalTile);
     if (!world.map.isWalkable(gx, gy)) goalTile = nearestWalkable(world.map, gx, gy, 12, flip);
@@ -739,11 +753,17 @@ function servePathRequest(world: World, astar: AStar, i: number): void {
 
   pool.pathPending[i] = 0;
 
-  if (startTile < 0 || goalTile < 0) {
+  if (startTile < 0 || (!building && goalTile < 0)) {
     pool.clearPath(i);
     return;
   }
-  const path = astar.find(world.map, startTile, goalTile, pathScratch, flip);
+  if (building && inReach(world, i, idIndex(site), BUILD_REACH)) {
+    pool.clearPath(i);
+    return;
+  }
+  const path = building
+    ? construction.find(world, i, site, pathScratch)
+    : astar.find(world.map, startTile, goalTile, pathScratch, flip);
   if (path.length === 0) {
     // No route. Drop the order so the unit does not spin re-requesting, and
     // back off before trying again — a failed search costs the full expansion

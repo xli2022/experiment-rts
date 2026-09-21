@@ -28,7 +28,7 @@ import {
   MINERALS_PER_TRIP,
   PATCH_AMOUNT,
 } from '../../config/rules.js';
-import { toInt } from '../../sim/fixed.js';
+import { fromInt, toInt } from '../../sim/fixed.js';
 import { OCCUPIED_SOLID } from '../../sim/map.js';
 import { UNEXPLORED, VISIBLE } from '../../vision/visibility.js';
 import {
@@ -57,6 +57,7 @@ import {
   GRID,
   GRID_CHANNEL_COUNT,
   N_ENT,
+  QUEUED_UNIT_TYPES,
   SCALAR_COUNT,
   UNIT_MEMORY_TICKS,
 } from './spec.js';
@@ -125,6 +126,10 @@ const F_SUPPLY = F_IN_LAST + 1;
 const F_FLYING = F_SUPPLY + 1;
 const F_CAN_HIT_AIR = F_FLYING + 1;
 const F_DIST_POST = F_CAN_HIT_AIR + 1;
+const F_ORDER_DX = F_DIST_POST + 1;
+const F_ORDER_DY = F_ORDER_DX + 1;
+const F_QUEUED = F_ORDER_DY + 1;
+const F_HAS_ASSIGNED_BUILDER = F_QUEUED + QUEUED_UNIT_TYPES.length;
 
 // Grid channels, from GRID_CHANNELS.
 const G_WALKABLE = 0;
@@ -183,6 +188,7 @@ export class ObservationEncoder {
   private readonly candidates: Candidate[] = [];
   private readonly cellSum = new Float32Array(4 * CELLS);
   private readonly rememberedSolid: Uint8Array;
+  private readonly staffedSites = new Set<EntityId>();
 
   constructor(
     private readonly world: World,
@@ -245,11 +251,19 @@ export class ObservationEncoder {
     const start = map.starts[viewer]!;
     const startX = canonTileCoord(start.tileX, W, flip);
     const startY = canonTileCoord(start.tileY, H, flip);
+    const staffedSites = this.staffedSites;
+    staffedSites.clear();
     for (let i = 0; i < pool.count; i++) {
       if (pool.alive[i] !== 1 || pool.owner[i] !== viewer) continue;
       ownCount++;
       sumX += canonTileX(i);
       sumY += canonTileY(i);
+      if (pool.type[i] === EntityType.Worker && pool.order[i] === Order.Build) {
+        // Keep the full generation handle: a stale order must not staff a new
+        // building that reused the same pool slot. This is an assignment, not
+        // a claim that the worker is in range or making construction progress.
+        staffedSites.add(pool.orderTarget[i]!);
+      }
     }
     const centreX = ownCount > 0 ? Math.floor(sumX / ownCount) : startX;
     const centreY = ownCount > 0 ? Math.floor(sumY / ownCount) : startY;
@@ -387,6 +401,9 @@ export class ObservationEncoder {
       }
       if (own) {
         if (def.isBuilding) {
+          if (pool.buildState[i] !== BuildState.Complete) {
+            E[o + F_HAS_ASSIGNED_BUILDER] = staffedSites.has(pool.idAt(i)) ? 1 : 0;
+          }
           E[o + F_BUILDING_LEVEL] = pool.buildingLevel[i]! / 2;
           E[o + F_UPGRADING] = pool.upgrading[i]!;
           const upgrade = buildingUpgrade(type);
@@ -396,12 +413,33 @@ export class ObservationEncoder {
         }
         const orderColumn = ORDER_COLUMNS.indexOf(pool.order[i]! as Order);
         if (orderColumn >= 0) E[o + F_ORDER + orderColumn] = 1;
+        if (
+          !def.isBuilding &&
+          (pool.order[i] === Order.Move || pool.order[i] === Order.AttackMove)
+        ) {
+          // The issued public destination, not a target's current position or
+          // a private pathing waypoint. Preserve fractional coordinates while
+          // rotating the signed displacement into the viewer's frame.
+          E[o + F_ORDER_DX] =
+            (canonFix(pool.orderX[i]!, W, flip) - canonFix(pool.posX[i]!, W, flip)) / fromInt(size);
+          E[o + F_ORDER_DY] =
+            (canonFix(pool.orderY[i]!, H, flip) - canonFix(pool.posY[i]!, H, flip)) / fromInt(size);
+        }
         E[o + F_CARRYING] = clip01(pool.carrying[i]! / MINERALS_PER_TRIP);
         E[o + F_PROD_COUNT] = pool.prodCount[i]! / MAX_PRODUCTION_QUEUE;
         if (pool.prodCount[i]! > 0) {
           const head = defOf(pool.prodAt(i, 0));
           E[o + F_PROD_PROGRESS] =
             head.buildTicks > 0 ? clip01(pool.prodProgress[i]! / head.buildTicks) : 0;
+        }
+        if (def.produces.length > 0) {
+          for (let k = 0; k < QUEUED_UNIT_TYPES.length; k++) {
+            let count = 0;
+            for (let q = 0; q < pool.prodCount[i]!; q++) {
+              if (pool.prodAt(i, q) === QUEUED_UNIT_TYPES[k]) count++;
+            }
+            E[o + F_QUEUED + k] = count / MAX_PRODUCTION_QUEUE;
+          }
         }
         E[o + F_HAS_RALLY] = pool.hasRally[i]!;
         if (pool.hasRally[i] === 1) {
