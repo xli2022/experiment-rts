@@ -89,6 +89,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ent", type=float, default=0.01)
     parser.add_argument("--build-weight", type=float, default=1.0,
                         help="relative loss weight for Build labels, including entropy; 1 preserves uniform weighting")
+    parser.add_argument("--log-coverage", action="store_true",
+                        help="log cumulative teacher-label, resume, represented-orphan and expert-selection counts")
     parser.add_argument("--noop-keep", type=float, default=0.25)
     parser.add_argument("--temperature", type=float, default=0.5)
     parser.add_argument("--expert-start", type=float, default=0.5,
@@ -123,6 +125,13 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"initial checkpoint is for {initial_layout}, requested {args.layout}")
     hparams = {**vars(args), "model": ckpt["hparams"].get("model", {}),
                "init": str(args.init), "out": str(args.out), "algorithm": "dagger-reservoir"}
+    coverage = None
+    if args.log_coverage:
+        from .coverage import DaggerCoverage
+        coverage = DaggerCoverage()
+    else:
+        # The opt-in flag does not change historical default checkpoint metadata.
+        hparams.pop("log_coverage")
     policy = Policy(**hparams["model"]).to(device)
     policy.load_state_dict(ckpt["model"])
     opt = torch.optim.Adam(policy.parameters(), lr=args.lr)
@@ -149,12 +158,17 @@ def main(argv: list[str] | None = None) -> int:
                 # Expert labels belong to this observation, before the learner
                 # takes its next action. The environment excludes terminal and
                 # initial/reset frames, which cannot provide a useful label.
+                observed_coverage = coverage.classify(batch.arrays) if coverage is not None else None
+                if coverage is not None:
+                    coverage.add("offered", observed_coverage, (batch.arrays["label"][:, 0] >= 0) & ~batch.done)
                 keep = select_labels(batch.arrays, rng, args.noop_keep) & ~batch.done
                 remaining = args.steps - labels
                 if int(keep.sum()) > remaining:
                     indices = np.flatnonzero(keep)
                     keep[indices[remaining:]] = False
                 buffer.add(batch.arrays, keep)
+                if coverage is not None:
+                    coverage.add("retainedFresh", observed_coverage, keep)
                 labels += int(keep.sum())
                 beta = args.expert_start + (args.expert_end - args.expert_start) * labels / args.steps
 
@@ -163,12 +177,16 @@ def main(argv: list[str] | None = None) -> int:
                     data = replay.mix(fresh, int(len(fresh["label"]) * args.replay_ratio))
                     weights = None if args.build_weight == 1 else np.where(data["label"][:, 0] == BUILD, args.build_weight, 1.0)
                     loss = train_on(policy, opt, data, args.batch, args.epochs, device, rng, args.ent, weights=weights)
+                    if coverage is not None:
+                        coverage.add("mixedTraining", coverage.classify(data))
                     replay.add(fresh)
                     buffer.clear()
                     rounds += 1
                     metrics = {"round": rounds, "labels": labels, "loss": loss,
                                "replayLabels": replay.size, "trainedRows": len(data["label"]),
                                "expertProbability": beta, "seconds": round(time.time() - t0, 1)}
+                    if coverage is not None:
+                        metrics["coverage"] = coverage.snapshot()
                     if rounds % args.val_every == 0 or labels == args.steps:
                         validation = validate(policy, val, device)
                         metrics["val"] = validation
@@ -189,6 +207,8 @@ def main(argv: list[str] | None = None) -> int:
                 actions = decide(policy, batch.arrays, np.arange(len(batch)), device, args.temperature, generator)
                 expert = batch.arrays["label"]
                 use_expert = (expert[:, 0] >= 0) & ~batch.done & (rng.random(len(batch)) < beta)
+                if coverage is not None:
+                    coverage.add("expertSelections", observed_coverage, use_expert)
                 actions[use_expert] = expert[use_expert]
                 batch = env.step(actions)
         save_checkpoint(args.out / "last.pt", policy, "dagger", hparams, metrics)

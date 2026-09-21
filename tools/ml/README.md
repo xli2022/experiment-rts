@@ -72,6 +72,52 @@ each layout. Each frame's tick is the captured decision tick; Noops and
 dropped labels have separate counts. Terminal decisions that cannot issue
 before reset are excluded, matching the live bridge.
 
+## Optional DAgger coverage
+
+`rtsml-dagger --log-coverage` adds a cumulative `coverage` object to each
+training log record and its checkpoint metrics. The flag is off by default;
+default log fields, checkpoint metadata, sampling and training stay unchanged.
+Coverage reads existing actor tensors and teacher labels with NumPy. It does
+not run another policy/teacher, draw random numbers, alter loss weights, or
+submit actions.
+
+The four counter groups distinguish different stages:
+
+| group | rows counted |
+| --- | --- |
+| `offered` | Valid teacher labels on nonterminal observations, before Noop retention or the final label-budget trim. |
+| `retainedFresh` | Fresh labels actually added to the buffer after retention and budget trimming. Its final `rows` equals the requested fresh-label total. |
+| `mixedTraining` | Rows passed to each completed training call, including fresh and sampled replay rows, once per materialized dataset before epoch repeats. Replay can count the same observation again. |
+| `expertSelections` | Valid nonterminal teacher rows selected by the existing `use_expert` mask, including Noop. These count chosen substitutions; the learner may already have proposed the same action. They do not prove a command executed or changed behavior. |
+
+Each group reports action-type counts, exact teacher resumes and other Build
+labels by building type, unclassified Build labels, and represented-orphan
+counts. A resume must match the labelled building type and exact canonical
+top-left of a represented owned unfinished site, including its sub-cell;
+same-cell proximity is insufficient. This classifier applies only to valid
+teacher labels, never sampled actor actions, whose decoder may use fallback
+placement. The current maps' public dimensions and building footprints are
+explicitly recorded in `rtsml.coverage`; changing those constants requires
+updating the classifier and its mirror/coordinate tests.
+
+`representedOrphanObservations` counts data rows with at least one represented
+own unfinished building whose public `hasAssignedBuilder` feature is zero.
+`representedOrphanSitesByBuilding` sums such represented building rows across
+observations, so it is **not** a unique-site count or full-world census. Masked,
+allied, completed and staffed rows are excluded. No hidden simulator state is
+read. These counters do not measure elapsed orphan duration, worker arrival,
+construction completion or the reason an expert proposed a command.
+
+Log snapshots are taken after training a buffer and before that iteration's
+action selection. Expert selections through the preceding step are included;
+the next log includes subsequent selections. When the fresh-label budget is
+reached, the final buffer is trained and the loop exits without sampling or
+substituting another action. Thus final offered/retained counts can include
+labels that never had an action selected from their observation. Initial/reset
+invalid labels and terminal rows never enter these stages. Counts are per
+invocation and start at zero when continuing model weights; Adam and the
+replay reservoir also retain the existing restart behavior.
+
 ## Engines
 
 `bench.ts --hash` prints a hash of the observation stream. Training runs under
