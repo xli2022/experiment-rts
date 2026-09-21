@@ -3,9 +3,9 @@
  *
  * Three parts, all written into preallocated typed arrays:
  *
- *  - an **entity table** of `N_ENT` rows — the viewer's own entities, then
- *    allies, then the enemies in view, then the enemies remembered, then the
- *    mineral patches discovered — each a fixed row of features;
+ *  - an **entity table** of `N_ENT` pointers. On overflow it keeps actionable
+ *    own categories and resource/enemy targets, then other context. Selected
+ *    rows retain the canonical own/ally/enemy/patch ordering;
  *  - a **coarse grid**, `GRID` cells a side, of terrain, vision and who is
  *    where;
  *  - **scalars**: the HUD, and a little of what the bot itself just did.
@@ -28,7 +28,7 @@ import {
   MINERALS_PER_TRIP,
   PATCH_AMOUNT,
 } from '../../config/rules.js';
-import { toInt } from '../../sim/fixed.js';
+import { fromInt, toInt } from '../../sim/fixed.js';
 import { OCCUPIED_SOLID } from '../../sim/map.js';
 import { UNEXPLORED, VISIBLE } from '../../vision/visibility.js';
 import {
@@ -57,6 +57,7 @@ import {
   GRID,
   GRID_CHANNEL_COUNT,
   N_ENT,
+  QUEUED_UNIT_TYPES,
   SCALAR_COUNT,
   UNIT_MEMORY_TICKS,
 } from './spec.js';
@@ -125,6 +126,10 @@ const F_SUPPLY = F_IN_LAST + 1;
 const F_FLYING = F_SUPPLY + 1;
 const F_CAN_HIT_AIR = F_FLYING + 1;
 const F_DIST_POST = F_CAN_HIT_AIR + 1;
+const F_ORDER_DX = F_DIST_POST + 1;
+const F_ORDER_DY = F_ORDER_DX + 1;
+const F_QUEUED = F_ORDER_DY + 1;
+const F_HAS_ASSIGNED_BUILDER = F_QUEUED + QUEUED_UNIT_TYPES.length;
 
 // Grid channels, from GRID_CHANNELS.
 const G_WALKABLE = 0;
@@ -183,6 +188,7 @@ export class ObservationEncoder {
   private readonly candidates: Candidate[] = [];
   private readonly cellSum = new Float32Array(4 * CELLS);
   private readonly rememberedSolid: Uint8Array;
+  private readonly staffedSites = new Set<EntityId>();
 
   constructor(
     private readonly world: World,
@@ -245,11 +251,19 @@ export class ObservationEncoder {
     const start = map.starts[viewer]!;
     const startX = canonTileCoord(start.tileX, W, flip);
     const startY = canonTileCoord(start.tileY, H, flip);
+    const staffedSites = this.staffedSites;
+    staffedSites.clear();
     for (let i = 0; i < pool.count; i++) {
       if (pool.alive[i] !== 1 || pool.owner[i] !== viewer) continue;
       ownCount++;
       sumX += canonTileX(i);
       sumY += canonTileY(i);
+      if (pool.type[i] === EntityType.Worker && pool.order[i] === Order.Build) {
+        // Keep the full generation handle: a stale order must not staff a new
+        // building that reused the same pool slot. This is an assignment, not
+        // a claim that the worker is in range or making construction progress.
+        staffedSites.add(pool.orderTarget[i]!);
+      }
     }
     const centreX = ownCount > 0 ? Math.floor(sumX / ownCount) : startX;
     const centreY = ownCount > 0 ? Math.floor(sumY / ownCount) : startY;
@@ -274,6 +288,14 @@ export class ObservationEncoder {
           key: 0,
           key2: pool.serial[i]!,
         });
+        // Build identifies its site by a cell, not a target-row pointer. Keep
+        // all known own sites resumable even when their entity row is omitted.
+        if (defOf(type).isBuilding && pool.buildState[i] !== BuildState.Complete) {
+          frame.constructionSites.set(pool.tileY[i]! * W + pool.tileX[i]!, {
+            id: pool.idAt(i),
+            type,
+          });
+        }
       } else if (owner !== NEUTRAL && world.areAllied(owner, viewer)) {
         candidates.push({
           index: i,
@@ -320,6 +342,95 @@ export class ObservationEncoder {
     }
     candidates.sort((a, b) => a.key - b.key || a.key2 - b.key2);
     rememberedRows.sort((a, b) => a.key - b.key || a.key2 - b.key2);
+
+    let selectedLive: Set<Candidate> | undefined;
+    let selectedMemory: Set<(typeof rememberedRows)[number]> | undefined;
+    if (candidates.length + rememberedRows.length > N_ENT) {
+      selectedLive = new Set();
+      selectedMemory = new Set();
+      // Small target reserves keep Harvest/Attack addressable. Unused slots
+      // return immediately to own entities; there is no fixed own-row ceiling.
+      const anchors = candidates.filter(
+        (c) =>
+          c.kind !== RowKind.Ally &&
+          (pool.type[c.index] === EntityType.Worker ||
+            pool.type[c.index] === EntityType.CommandPost),
+      );
+      const patchDistance = (r: (typeof rememberedRows)[number]): number => {
+        const x = canonX(r.entry.posX, r.entry.posY);
+        const y = canonY(r.entry.posX, r.entry.posY);
+        let best = (x - startX) ** 2 + (y - startY) ** 2;
+        if (anchors.length) {
+          best = Number.POSITIVE_INFINITY;
+          for (const c of anchors) {
+            const dx = x - canonTileX(c.index);
+            const dy = y - canonTileY(c.index);
+            best = Math.min(best, dx * dx + dy * dy);
+          }
+        }
+        return best;
+      };
+      const patches = rememberedRows
+        .filter((r) => r.kind === RowKind.Patch && r.entry.resourceAmount > 0)
+        .map((r) => ({ row: r, distance: patchDistance(r) }))
+        .sort((a, b) => a.distance - b.distance || a.row.key2 - b.row.key2);
+      for (const { row: patch } of patches.slice(0, 8)) selectedMemory.add(patch);
+      const visible = rememberedRows.filter((r) => r.kind === RowKind.EnemyVisible);
+      const threats = visible.length
+        ? visible
+        : rememberedRows.filter((r) => r.kind === RowKind.EnemyRemembered);
+      for (const threat of threats.slice(0, 16)) selectedMemory.add(threat);
+
+      // An arbitrarily large worker/army/site population must not crowd out
+      // every other action family. Round-robin both role and type, using each
+      // type's original serial order. This chooses a subset, never row order.
+      const roles = Array.from({ length: 4 }, () =>
+        Array.from({ length: ENTITY_TYPE_COUNT }, () => [] as Candidate[]),
+      );
+      for (const c of candidates) {
+        if (c.kind === RowKind.Ally) continue;
+        const type = pool.type[c.index]! as EntityType;
+        const def = defOf(type);
+        let role: number;
+        if (type === EntityType.Worker) role = 0;
+        else if (!def.isBuilding) role = 1;
+        else if (pool.buildState[c.index] !== BuildState.Complete) role = 3;
+        else if (def.produces.length || buildingUpgrade(type)) role = 2;
+        else continue;
+        roles[role]![type]!.push(c);
+      }
+      const roleQueues = roles.map((types) => {
+        const queue: Candidate[] = [];
+        for (let k = 0; types.some((bucket) => k < bucket.length); k++) {
+          for (const bucket of types) if (k < bucket.length) queue.push(bucket[k]!);
+        }
+        return queue;
+      });
+      let remaining = N_ENT - selectedMemory.size;
+      for (let k = 0; remaining > 0 && roleQueues.some((queue) => k < queue.length); k++) {
+        for (const queue of roleQueues) {
+          if (remaining === 0) break;
+          if (k < queue.length) {
+            selectedLive.add(queue[k]!);
+            remaining--;
+          }
+        }
+      }
+      for (const c of candidates) {
+        if (remaining === 0) break;
+        if (!selectedLive.has(c)) {
+          selectedLive.add(c);
+          remaining--;
+        }
+      }
+      for (const r of rememberedRows) {
+        if (remaining === 0) break;
+        if (!selectedMemory.has(r)) {
+          selectedMemory.add(r);
+          remaining--;
+        }
+      }
+    }
 
     // --- the entity table --------------------------------------------------
     const E = out.entities;
@@ -370,6 +481,7 @@ export class ObservationEncoder {
     };
 
     for (const c of candidates) {
+      if (selectedLive && !selectedLive.has(c)) continue;
       if (row >= N_ENT) break;
       const i = c.index;
       const type = pool.type[i]! as EntityType;
@@ -387,6 +499,9 @@ export class ObservationEncoder {
       }
       if (own) {
         if (def.isBuilding) {
+          if (pool.buildState[i] !== BuildState.Complete) {
+            E[o + F_HAS_ASSIGNED_BUILDER] = staffedSites.has(pool.idAt(i)) ? 1 : 0;
+          }
           E[o + F_BUILDING_LEVEL] = pool.buildingLevel[i]! / 2;
           E[o + F_UPGRADING] = pool.upgrading[i]!;
           const upgrade = buildingUpgrade(type);
@@ -396,12 +511,33 @@ export class ObservationEncoder {
         }
         const orderColumn = ORDER_COLUMNS.indexOf(pool.order[i]! as Order);
         if (orderColumn >= 0) E[o + F_ORDER + orderColumn] = 1;
+        if (
+          !def.isBuilding &&
+          (pool.order[i] === Order.Move || pool.order[i] === Order.AttackMove)
+        ) {
+          // The issued public destination, not a target's current position or
+          // a private pathing waypoint. Preserve fractional coordinates while
+          // rotating the signed displacement into the viewer's frame.
+          E[o + F_ORDER_DX] =
+            (canonFix(pool.orderX[i]!, W, flip) - canonFix(pool.posX[i]!, W, flip)) / fromInt(size);
+          E[o + F_ORDER_DY] =
+            (canonFix(pool.orderY[i]!, H, flip) - canonFix(pool.posY[i]!, H, flip)) / fromInt(size);
+        }
         E[o + F_CARRYING] = clip01(pool.carrying[i]! / MINERALS_PER_TRIP);
         E[o + F_PROD_COUNT] = pool.prodCount[i]! / MAX_PRODUCTION_QUEUE;
         if (pool.prodCount[i]! > 0) {
           const head = defOf(pool.prodAt(i, 0));
           E[o + F_PROD_PROGRESS] =
             head.buildTicks > 0 ? clip01(pool.prodProgress[i]! / head.buildTicks) : 0;
+        }
+        if (def.produces.length > 0) {
+          for (let k = 0; k < QUEUED_UNIT_TYPES.length; k++) {
+            let count = 0;
+            for (let q = 0; q < pool.prodCount[i]!; q++) {
+              if (pool.prodAt(i, q) === QUEUED_UNIT_TYPES[k]) count++;
+            }
+            E[o + F_QUEUED + k] = count / MAX_PRODUCTION_QUEUE;
+          }
         }
         E[o + F_HAS_RALLY] = pool.hasRally[i]!;
         if (pool.hasRally[i] === 1) {
@@ -419,14 +555,12 @@ export class ObservationEncoder {
       frame.rows[row] = id;
       frame.rowKind[row] = c.kind;
       frame.rowOf.set(id, row);
-      if (c.kind === RowKind.OwnBuilding && pool.buildState[i] !== BuildState.Complete) {
-        frame.constructionSites.set(pool.tileY[i]! * W + pool.tileX[i]!, { id, type });
-      }
       out.entityMask[row] = 1;
       row++;
     }
 
     for (const r of rememberedRows) {
+      if (selectedMemory && !selectedMemory.has(r)) continue;
       if (row >= N_ENT) break;
       const entry = r.entry;
       const o = row * F;
@@ -495,34 +629,34 @@ export class ObservationEncoder {
       const k = channel * CELLS + cell;
       G[k] = clip01(G[k]! + amount / cap);
     };
-    for (let r = 0; r < row; r++) {
-      const o = r * F;
-      const tx = Math.round(E[o + F_X]! * size);
-      const ty = Math.round(E[o + F_Y]! * size);
-      const kind = frame.rowKind[r]!;
-      switch (kind) {
-        case RowKind.OwnBuilding:
-          bump(G_OWN_BUILDINGS, tx, ty, 1, 4);
-          break;
-        case RowKind.OwnUnit:
-          bump(G_OWN_UNITS, tx, ty, 1, 8);
-          break;
-        case RowKind.Ally:
-          bump(G_ALLY, tx, ty, 1, 8);
-          break;
-        case RowKind.EnemyVisible:
-        case RowKind.EnemyRemembered: {
-          const entry = mem.get(frame.rows[r]!)!;
-          if (entry.isBuilding) bump(G_ENEMY_BUILDINGS, tx, ty, 1, 4);
-          else if (kind === RowKind.EnemyVisible) bump(G_ENEMY_UNITS, tx, ty, 1, 8);
-          break;
-        }
-        case RowKind.Patch:
-          bump(G_MINERALS, tx, ty, E[o + F_RESOURCE]! * PATCH_AMOUNT, 4 * PATCH_AMOUNT);
-          break;
-        default:
-          break;
-      }
+    // Aggregate all public candidates, independently of pointer-table capacity.
+    // Enemy/resource state comes only from the same fog-filtered memory above.
+    for (const c of candidates) {
+      const channel =
+        c.kind === RowKind.Ally
+          ? G_ALLY
+          : c.kind === RowKind.OwnBuilding
+            ? G_OWN_BUILDINGS
+            : G_OWN_UNITS;
+      bump(
+        channel,
+        canonTileX(c.index),
+        canonTileY(c.index),
+        1,
+        channel === G_OWN_BUILDINGS ? 4 : 8,
+      );
+    }
+    for (const r of rememberedRows) {
+      const entry = r.entry;
+      const tx = canonX(entry.posX, entry.posY);
+      const ty = canonY(entry.posX, entry.posY);
+      if (r.kind === RowKind.Patch) {
+        // Preserve the previous float32 resource feature's rounding when a
+        // full table fits, while including discovered patches omitted above.
+        const amount = Math.fround(clip01(entry.resourceAmount / PATCH_AMOUNT)) * PATCH_AMOUNT;
+        bump(G_MINERALS, tx, ty, amount, 4 * PATCH_AMOUNT);
+      } else if (entry.isBuilding) bump(G_ENEMY_BUILDINGS, tx, ty, 1, 4);
+      else if (r.kind === RowKind.EnemyVisible) bump(G_ENEMY_UNITS, tx, ty, 1, 8);
     }
     for (let p = 0; p < world.players.length; p++) {
       const s = map.starts[p]!;
@@ -545,18 +679,15 @@ export class ObservationEncoder {
     S[S_LAYOUT + (world.config.layout === MapLayout.Quarters ? 1 : 0)] = 1;
     S[S_SEAT] = world.ownerCanonical(viewer);
     S[S_ALLIES] = (world.playersOnTeam(world.teamOf(viewer)).length - 1) / 2;
-    for (let r = 0; r < row; r++) {
-      const kind = frame.rowKind[r]!;
-      const o = r * F;
-      let type = -1;
-      for (let t = 0; t < ENTITY_TYPE_COUNT; t++) {
-        if (E[o + F_TYPE + t] === 1) type = t;
-      }
-      if (type < 0) continue;
-      if (kind === RowKind.OwnUnit || kind === RowKind.OwnBuilding)
-        S[S_OWN_COUNTS + type] = clip01(S[S_OWN_COUNTS + type]! + 1 / 16);
-      else if (kind === RowKind.EnemyVisible || kind === RowKind.EnemyRemembered)
-        S[S_ENEMY_COUNTS + type] = clip01(S[S_ENEMY_COUNTS + type]! + 1 / 16);
+    for (const c of candidates) {
+      if (c.kind === RowKind.Ally) continue;
+      const type = pool.type[c.index]!;
+      S[S_OWN_COUNTS + type] = clip01(S[S_OWN_COUNTS + type]! + 1 / 16);
+    }
+    for (const r of rememberedRows) {
+      if (r.kind === RowKind.Patch) continue;
+      const type = r.entry.type;
+      S[S_ENEMY_COUNTS + type] = clip01(S[S_ENEMY_COUNTS + type]! + 1 / 16);
     }
     if (recent.prevType >= 0 && recent.prevType < ACTION_TYPE_COUNT)
       S[S_PREV + recent.prevType] = 1;

@@ -1084,6 +1084,24 @@ leaned on:
   and the browser produce the same bytes, and `scripts/cross-engine.sh` hashes
   the stream under both engines.
 
+Codec **5** appends `hasAssignedBuilder`, a 0/1 flag on each own unfinished
+building indicating whether a live owned worker has a Build order targeting
+its current handle. It distinguishes an orphaned site from a staffed one;
+it does not promise reachability or construction progress. All other rows are
+zero. The previous 73 columns retain their order.
+
+Codec **4** appended 15 own-state columns to the previous 58 entity features:
+the canonical displacement to an owned unit's Move/AttackMove destination,
+and queued counts for each of the 13 trainable unit types on owned producers.
+Other rows keep those columns zero. These distinguish units marching toward
+different objectives and production queues with different compositions, which
+previously looked identical to the policy despite requiring different orders.
+From `ml/`, migrate a codec-4 checkpoint
+with `python -m rtsml.migrate_observation --ckpt <old.pt> --out <new.pt>`; the new
+input weight column starts at zero. Codec-3 checkpoints must first migrate to
+codec 4 with `--to-version 4`, then to codec 5. Continue training, evaluate and export again before
+using it in the game. [The training guide](ml/README.md) covers migration details.
+
 The masks were the cost. A legality scan over every tile for every footprint
 ran 2.4 ms per decision under Bun, more than the four ticks it decided for;
 asking the summed-area table only for the cells in view, through a

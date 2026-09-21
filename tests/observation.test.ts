@@ -26,13 +26,17 @@ import {
   N_ENT,
 } from '../src/ai/neural/spec.js';
 import { HeadlessMatch } from '../src/ai/headless.js';
-import { buildingUpgrade, defOf } from '../src/config/rules.js';
-import { fromInt } from '../src/sim/fixed.js';
+import { botThink } from '../src/ai/bot.js';
+import { allocMasks, computeMasks } from '../src/ai/neural/actions.js';
+import { buildingUpgrade, defOf, MAX_PRODUCTION_QUEUE } from '../src/config/rules.js';
+import { fromFloat, fromInt } from '../src/sim/fixed.js';
 import { idIndex } from '../src/sim/entities.js';
 import { OCCUPIED_SOLID, UNOCCUPIED } from '../src/sim/map.js';
 import { coopMatch, duelMatch } from '../src/sim/match.js';
 import { Simulation } from '../src/sim/tick.js';
-import { EntityType, NO_ENTITY, type PlayerId } from '../src/sim/types.js';
+import { CommandType } from '../src/sim/commands.js';
+import { executeCommand } from '../src/sim/systems/orders.js';
+import { BuildState, EntityType, NO_ENTITY, Order, type PlayerId } from '../src/sim/types.js';
 import type { World } from '../src/sim/world.js';
 import { EXPLORED, VISIBLE, Visibility } from '../src/vision/visibility.js';
 import { scriptedAgents } from './helpers/agents.js';
@@ -74,6 +78,282 @@ function firstDifference(a: Float32Array, b: Float32Array): string | null {
 }
 
 describe('the observation', () => {
+  it('distinguishes staffed construction from an orphan without moving any codec-4 inputs', () => {
+    const world = new Simulation(duelMatch(1000202, { botPlayers: [] })).world;
+    const pool = world.pool;
+    world.tick = 120;
+    const workers: number[] = [];
+    for (let i = 0; i < pool.count; i++) {
+      if (pool.alive[i] === 1 && pool.owner[i] === 0 && pool.type[i] === EntityType.Worker)
+        workers.push(pool.idAt(i));
+    }
+    executeCommand(world, { type: CommandType.Hold, player: 0, units: workers });
+    executeCommand(world, { type: CommandType.Stop, player: 0, units: [workers[2]!] });
+    const sites: number[] = [];
+    const start = world.map.starts[0]!;
+    for (let dy = -8; dy < 9 && sites.length < 2; dy++) {
+      for (let dx = -8; dx < 9 && sites.length < 2; dx++) {
+        const x = start.tileX + dx,
+          y = start.tileY + dy;
+        if (!world.map.canPlace(x, y, 3)) continue;
+        const id = world.placeBuilding(EntityType.Barracks, 0, x, y);
+        const i = idIndex(id);
+        pool.buildState[i] = BuildState.Site;
+        pool.buildProgress[i] = 10;
+        pool.hp[i] = Math.floor(defOf(EntityType.Barracks).maxHp / 10);
+        sites.push(id);
+      }
+    }
+    expect(sites).toHaveLength(2);
+    const assign = (worker: number, site: number) =>
+      executeCommand(world, {
+        type: CommandType.Build,
+        player: 0,
+        worker,
+        building: EntityType.Barracks,
+        tileX: pool.tileX[idIndex(site)]!,
+        tileY: pool.tileY[idIndex(site)]!,
+      });
+    assign(workers[0]!, sites[0]!);
+    assign(workers[1]!, sites[0]!);
+    world.player(0).minerals = 0;
+    const eyes = new Eyes(world, 0);
+    eyes.look(world);
+    eyes.encode();
+    const before = eyes.obs.entities.slice();
+    const masks = allocMasks();
+    computeMasks(world, eyes.frame, eyes.vis, eyes.mem, masks);
+    const grid = eyes.obs.grid.slice(),
+      scalars = eyes.obs.scalars.slice();
+    const command = botThink(world, 0)[0]!;
+    expect(command).toMatchObject({
+      type: CommandType.Build,
+      worker: workers[2],
+      tileX: pool.tileX[idIndex(sites[1]!)]!,
+      tileY: pool.tileY[idIndex(sites[1]!)]!,
+    });
+    assign(workers[1]!, sites[1]!);
+    expect(pool.orderTarget[idIndex(workers[1]!)]).toBe(sites[1]);
+    eyes.encode();
+    const afterMasks = allocMasks();
+    computeMasks(world, eyes.frame, eyes.vis, eyes.mem, afterMasks);
+    expect(afterMasks).toEqual(masks);
+    expect(eyes.obs.grid).toEqual(grid);
+    expect(eyes.obs.scalars).toEqual(scalars);
+    expect(botThink(world, 0)[0]).toMatchObject({ type: CommandType.Harvest, units: [workers[2]] });
+    for (let row = 0; row < N_ENT; row++) {
+      expect(eyes.obs.entities.slice(row * F, row * F + 73)).toEqual(
+        before.slice(row * F, row * F + 73),
+      );
+    }
+    const staffing = (entities: Float32Array, id: number) =>
+      entities[eyes.frame.rowOf.get(id)! * F + 73];
+    expect(sites.map((id) => staffing(before, id))).toEqual([1, 0]);
+    expect(sites.map((id) => staffing(eyes.obs.entities, id))).toEqual([1, 1]);
+    // Moving one of two builders does not orphan the first site; moving the
+    // last one does, even when no tick/position/construction progress changes.
+    assign(workers[0]!, sites[1]!);
+    eyes.encode();
+    expect(sites.map((id) => staffing(eyes.obs.entities, id))).toEqual([0, 1]);
+  });
+
+  it('reports only living own workers assigned to current unfinished building handles', () => {
+    const world = new Simulation(coopMatch(SEED, { botPlayers: [] })).world;
+    const pool = world.pool;
+    const site = pool.spawn(EntityType.Barracks, 0, fromInt(30), fromInt(30));
+    const i = idIndex(site);
+    pool.buildState[i] = BuildState.Site;
+    const worker = pool.spawn(EntityType.Worker, 0, fromInt(25), fromInt(30));
+    const w = idIndex(worker);
+    pool.order[w] = Order.Build;
+    pool.orderTarget[w] = site;
+    const eyes = new Eyes(world, 0);
+    eyes.look(world);
+    const flag = (id = site): number => {
+      eyes.encode();
+      return eyes.obs.entities[
+        eyes.frame.rowOf.get(id)! * F + ENTITY_FEATURES.indexOf('hasAssignedBuilder')
+      ]!;
+    };
+    expect(flag()).toBe(1);
+    pool.buildState[i] = BuildState.UnderConstruction;
+    expect(flag()).toBe(1);
+    pool.buildState[i] = BuildState.Complete;
+    expect(flag()).toBe(0);
+    pool.buildState[i] = BuildState.Site;
+    for (const owner of [1, 2]) {
+      pool.owner[w] = owner;
+      expect(flag()).toBe(0);
+    }
+    pool.owner[w] = 0;
+    pool.type[w] = EntityType.Burstbot;
+    expect(flag()).toBe(0);
+    pool.type[w] = EntityType.Worker;
+    pool.order[w] = Order.Hold;
+    expect(flag()).toBe(0);
+    pool.order[w] = Order.Build;
+    pool.orderTarget[w] = NO_ENTITY;
+    expect(flag()).toBe(0);
+    pool.orderTarget[w] = site;
+    pool.destroy(site);
+    const replacement = pool.spawn(EntityType.Barracks, 0, fromInt(30), fromInt(30));
+    expect(idIndex(replacement)).toBe(i);
+    pool.buildState[i] = BuildState.Site;
+    expect(flag(replacement)).toBe(0);
+    pool.orderTarget[w] = replacement;
+    expect(flag(replacement)).toBe(1);
+    pool.destroy(worker);
+    expect(flag(replacement)).toBe(0);
+    // Own units and empty rows never carry a site's assignment flag.
+    for (let row = 0; row < N_ENT; row++) {
+      if (eyes.frame.rowKind[row] !== RowKind.OwnBuilding)
+        expect(eyes.obs.entities[row * F + 73]).toBe(0);
+    }
+  });
+
+  it('does not reveal allied, visible or remembered enemy construction assignments', () => {
+    const world = new Simulation(coopMatch(SEED, { botPlayers: [] })).world;
+    const pool = world.pool;
+    const sites = [0, 1, 2].map((owner) => {
+      const site = pool.spawn(EntityType.Barracks, owner, fromInt(30), fromInt(30));
+      pool.buildState[idIndex(site)] = BuildState.Site;
+      const worker = pool.spawn(EntityType.Worker, owner, fromInt(25), fromInt(30));
+      pool.order[idIndex(worker)] = Order.Build;
+      pool.orderTarget[idIndex(worker)] = site;
+      return site;
+    });
+    const eyes = new Eyes(world, 0);
+    for (const visible of [true, false]) {
+      eyes.vis.state.fill(visible ? VISIBLE : EXPLORED);
+      eyes.mem.update(world, eyes.vis);
+      eyes.encode();
+      expect(sites.map((id) => eyes.obs.entities[eyes.frame.rowOf.get(id)! * F + 73])).toEqual([
+        1, 0, 0,
+      ]);
+      world.tick++;
+    }
+  });
+
+  it('exposes precise owned movement goals in the canonical frame and clears unused goals', () => {
+    const world = new Simulation(duelMatch(SEED, { botPlayers: [] })).world;
+    const pool = world.pool;
+    const x = fromFloat(31.25),
+      y = fromFloat(45.5);
+    const dx = fromFloat(16.25),
+      dy = fromFloat(-8.5);
+    const ids = [
+      pool.spawn(EntityType.Burstbot, 0, x, y),
+      pool.spawn(
+        EntityType.Burstbot,
+        1,
+        fromInt(world.map.width) - x,
+        fromInt(world.map.height) - y,
+      ),
+    ];
+    const eyes = [new Eyes(world, 0), new Eyes(world, 1)];
+    const columns = [ENTITY_FEATURES.indexOf('orderDx'), ENTITY_FEATURES.indexOf('orderDy')];
+    for (const order of [
+      Order.Move,
+      Order.AttackMove,
+      Order.Hold,
+      Order.Attack,
+      Order.Build,
+      Order.Harvest,
+      Order.None,
+    ]) {
+      const values = eyes.map((eye, player) => {
+        const i = idIndex(ids[player]!);
+        const sign = player === 0 ? 1 : -1;
+        pool.order[i] = order;
+        pool.orderX[i] = pool.posX[i]! + sign * dx;
+        pool.orderY[i] = pool.posY[i]! + sign * dy;
+        eye.look(world);
+        eye.encode();
+        const row = eye.frame.rowOf.get(ids[player]!)!;
+        return columns.map((column) => eye.obs.entities[row * F + column]);
+      });
+      expect(values[0]).toEqual(values[1]);
+      if (order === Order.Move || order === Order.AttackMove) {
+        expect(values[0]![0]).toBeCloseTo(16.25 / Math.max(world.map.width, world.map.height), 8);
+        expect(values[0]![1]).toBeCloseTo(-8.5 / Math.max(world.map.width, world.map.height), 8);
+      } else expect(values[0]).toEqual([0, 0]);
+    }
+  });
+
+  it('distinguishes owned production tails while preserving the legacy observation columns', () => {
+    const world = new Simulation(duelMatch(SEED, { botPlayers: [] })).world;
+    const id = world.pool.spawn(EntityType.Barracks, 0, fromInt(30), fromInt(30));
+    const i = idIndex(id);
+    world.pool.prodPush(i, EntityType.Burstbot);
+    world.pool.prodPush(i, EntityType.Burstbot);
+    world.pool.prodProgress[i] = 60;
+    const eyes = new Eyes(world, 0);
+    eyes.look(world);
+    eyes.encode();
+    const row = eyes.frame.rowOf.get(id)!;
+    const firstNew = ENTITY_FEATURES.indexOf('orderDx');
+    const before = eyes.obs.entities.slice(row * F, (row + 1) * F);
+    world.pool.prodQueue[i * MAX_PRODUCTION_QUEUE + 1] = EntityType.Slicebot;
+    eyes.encode();
+    const after = eyes.obs.entities.slice(row * F, (row + 1) * F);
+    expect(after.slice(0, firstNew)).toEqual(before.slice(0, firstNew));
+    expect(before[ENTITY_FEATURES.indexOf('queued:Burstbot')]).toBe(
+      Math.fround(2 / MAX_PRODUCTION_QUEUE),
+    );
+    expect(after[ENTITY_FEATURES.indexOf('queued:Burstbot')]).toBe(
+      Math.fround(1 / MAX_PRODUCTION_QUEUE),
+    );
+    expect(after[ENTITY_FEATURES.indexOf('queued:Slicebot')]).toBe(
+      Math.fround(1 / MAX_PRODUCTION_QUEUE),
+    );
+    world.pool.prodCount[i] = 0;
+    eyes.encode();
+    expect([...eyes.obs.entities.slice(row * F + firstNew, (row + 1) * F)]).toEqual(
+      new Array(F - firstNew).fill(0),
+    );
+  });
+
+  it('keeps allied, visible and remembered enemy, neutral, and unused private columns zero', () => {
+    const world = new Simulation(coopMatch(SEED, { botPlayers: [] })).world;
+    const pool = world.pool;
+    for (const owner of [0, 1, 2]) {
+      for (const type of [EntityType.Burstbot, EntityType.Barracks, EntityType.Depot]) {
+        const id = pool.spawn(type, owner, fromInt(30), fromInt(30));
+        const i = idIndex(id);
+        pool.order[i] = Order.AttackMove;
+        pool.orderX[i] = fromInt(60);
+        pool.orderY[i] = fromInt(45);
+        pool.prodPush(i, EntityType.Burstbot);
+      }
+    }
+    const eyes = new Eyes(world, 0);
+    const firstNew = ENTITY_FEATURES.indexOf('orderDx');
+    for (const visible of [true, false]) {
+      eyes.vis.state.fill(visible ? VISIBLE : EXPLORED);
+      eyes.mem.update(world, eyes.vis);
+      eyes.encode();
+      let nonOwnRows = 0;
+      for (let row = 0; row < N_ENT; row++) {
+        const kind = eyes.frame.rowKind[row]!;
+        const values = [...eyes.obs.entities.slice(row * F + firstNew, (row + 1) * F)];
+        if (kind !== RowKind.OwnUnit && kind !== RowKind.OwnBuilding) {
+          expect(values).toEqual(new Array(F - firstNew).fill(0));
+          if (kind !== RowKind.Empty) nonOwnRows++;
+        } else {
+          const def = defOf(pool.type[idIndex(eyes.frame.rows[row]!)]!);
+          if (def.isBuilding) expect(values.slice(0, 2)).toEqual([0, 0]);
+          if (def.produces.length === 0)
+            expect(values.slice(2)).toEqual(new Array(F - firstNew - 2).fill(0));
+        }
+      }
+      expect(nonOwnRows).toBeGreaterThan(0);
+      expect([...eyes.frame.rowKind]).toContain(
+        visible ? RowKind.EnemyVisible : RowKind.EnemyRemembered,
+      );
+      world.tick++;
+    }
+  });
+
   it('exposes own building technology and progress without leaking enemy research', () => {
     const world = new Simulation(duelMatch(SEED, { botPlayers: [] })).world;
     const eyes = new Eyes(world, 0);

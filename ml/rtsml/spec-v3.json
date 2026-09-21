@@ -1,5 +1,5 @@
 {
-  "version": 6,
+  "version": 3,
   "decisionTicks": 4,
   "unitMemoryTicks": 300,
   "entities": {
@@ -62,23 +62,7 @@
       "supplyCost",
       "flying",
       "canHitAir",
-      "distToOwnPost",
-      "orderDx",
-      "orderDy",
-      "queued:Worker",
-      "queued:Burstbot",
-      "queued:Slicebot",
-      "queued:Beamdrone",
-      "queued:Boomwalker",
-      "queued:Fixomatic",
-      "queued:Firespout",
-      "queued:Arclight",
-      "queued:Piercebot",
-      "queued:Sentry",
-      "queued:DarkGolem",
-      "queued:IceGolem",
-      "queued:Plasmodrone",
-      "hasAssignedBuilder"
+      "distToOwnPost"
     ]
   },
   "grid": {

@@ -5,12 +5,60 @@ The TypeScript side decides what the bot sees and what it can say
 to say the right things and exports it to ONNX for the browser. Matches are
 served by Bun processes running `tools/ml/serve.ts`; Python never simulates.
 
-The current codec is **version 3**. Factory/Airport production and building
-upgrades add entity, observation and action dimensions. Version 1 and 2
-checkpoints and ONNX exports are incompatible and are rejected; retrain and
-export both layout policies using the current `spec.json`. Upgrade state is
-available only on the viewer's own building rows, and legal training masks
-depend on each building's level and whether it is upgrading.
+The current codec is **version 6**. Tensor dimensions and action heads are
+unchanged, but the bounded entity table no longer lets a large allied force
+crowd out every known mineral patch and enemy target. Overflow reserves
+reclaimable target capacity and balances actionable owned entities. Dynamic map
+channels and type counts use the full fog-approved public state independently
+of the pointer table. An omitted entity therefore does not disappear from the
+map summary. No hidden enemy state is added.
+
+The table still holds 160 pointers. On overflow, up to eight nonempty known
+patches and sixteen visible enemies receive reserved slots; when no enemy is
+visible, that reserve covers recent memories instead. Unused slots return to
+owned entities. Owned action roles and unit/building types share that budget,
+with stable serial priority within a type. This keeps action families available,
+but a very large force still cannot address every individual entity in one
+observation. Owned unfinished sites remain resumable by cell even when their
+pointer row is omitted.
+
+Version 5 preserved all 73 version-4 entity features and appended
+`hasAssignedBuilder`: a 0/1 flag on an own unfinished building when
+any living owned worker has a Build order targeting that building's current
+handle. It describes the issued public assignment, not whether the worker can
+reach the site or is making progress. Complete buildings, units, allies, enemies,
+neutral entities and unused rows have zero in this column. This lets the policy
+distinguish an orphaned site from one that already has a builder.
+
+Version 4 preserved the first 58 entity features from version 3 and appended
+15 columns: canonical Move/AttackMove goal displacement
+for owned units, and queue counts for the 13 trainable unit types on owned
+producers. These fields are zero for allied, enemy and neutral rows. Queue counts
+are divided by the production queue capacity; goal displacement is divided by
+the larger map dimension. Upgrade state and production legality still depend on
+each owned building's level and whether it is upgrading.
+
+Migrate a version-5 checkpoint from `ml/`:
+
+```sh
+python -m rtsml.migrate_observation --ckpt ../runs/bc-lanes/codec5.pt --out ../runs/bc-lanes/codec6.pt
+```
+
+Older checkpoints require adjacent steps: use `--to-version 4` for a version-3
+input, then `--to-version 5` for that intermediate checkpoint, then migrate to
+version 6. Skipping versions is rejected.
+
+Migration preserves the architecture, layout and existing weights. The 3-to-4
+and 4-to-5 steps append zero columns to `entity_in.weight`. The 5-to-6 step keeps
+every tensor unchanged, but corrected observation contents and legal pointer
+targets can change decisions immediately. Its provenance explicitly records a
+behavior change and makes no parity claim.
+It refuses incompatible versions and existing output files, records the source
+checkpoint hash, and clears evaluation metrics that no longer qualify the
+output. Continue imitation or DAgger with the migrated checkpoint as `--init`,
+collect fresh codec-6 observations, and run fresh gameplay evaluation before
+exporting. Existing ONNX exports are not migrated. Version 1 and 2 checkpoints
+remain incompatible; retrain those with the current `spec.json`.
 
 The bundled Lanes model predates this codec and the lobby disables it. The
 win rates and training experiments below are historical results, not evidence
@@ -86,6 +134,15 @@ the saved policy with `rtsml-eval`, which uses the neural policy alone. Its
 in actual matches before choosing a model. Current validation accuracy and
 training losses do not establish playing strength.
 
+For a controlled experiment on construction recall, DAgger accepts
+`--build-weight 4`. The default is `1`, preserving uniform weighting. A finite
+positive weight changes only Build examples' full imitation loss, including
+entropy; other actions keep weight 1. Each minibatch is normalized by its total
+weight. Validation remains unweighted and adds `perActionType` label, prediction
+and correct counts, recall and precision, so extra Build predictions can be
+checked for false positives. Compare matched runs and full-match results before
+choosing a nondefault weight.
+
 Before a longer run, inspect the teacher without allocating a dataset (from
 the repository root): `bun run tools/ml/teacher-probe.ts 2 600`. Each JSON line
 reports one seeded match, valid/non-Noop/dropped decisions, action types,
@@ -146,6 +203,40 @@ constant with respect to the logits; imitation continues to use Bernoulli
 membership supervision for teacher labels. Every PPO head is scored at the
 same temperature used for sampling. Historical training scores here do not
 establish the win rate of a model trained with this corrected objective.
+
+`rtsml-ppo --selection-likelihood hybrid` enables an optional training experiment;
+the default `gumbel` preserves the existing sampling and likelihood path. Both
+produce exactly the same deployed actions from the same supplied noise. No
+model shape, codec, ONNX input, or browser setting changes.
+Both modes mask unused multi-selection densities before exponentiation, so an
+irrelevant extreme latent cannot poison a single-selection action's gradients.
+
+The hybrid path stores `D = X - GumbelB` when at least one legal D is positive.
+Those Logistic scores completely determine membership, order and the top-k
+cap, so the unused common Gumbel noise can be integrated out. When all legal D
+are nonpositive, it stores X and a fixed fallback flag because the fallback
+winner depends on X. The branch is captured during sampling and never
+recomputed from updated logits. This reduces nuisance score variance while
+retaining an exact likelihood ratio for the smaller augmented action.
+
+The nonempty branch uses the **unnormalized** product Logistic density on
+`max(D) > 0`. The fallback density is the product Gumbel density of X times
+`P(GumbelB >= X)`, a factor independent of the policy at fixed X that cancels
+in ratios and gradients. If `P0 = product(sigmoid(-logits / T))`, these two
+branches integrate to `1 - P0` and `P0`; their integrated score gradients
+cancel. Conditional renormalization, switching branches during an update, or
+scoring only the projected Bernoulli membership would introduce bias.
+
+Hybrid mode omits the old constant Gumbel multi-selection entropy term. It has
+zero gradient with respect to the selection logits, and it is **not** the
+hybrid distribution's entropy. The remaining categorical-head bonus is logged
+as `partialEnt`, with `entropyKind: categorical-heads-only`; the checkpoint
+records both the likelihood choice and entropy interpretation. Imitation and
+the default PPO path remain unchanged. PPO clipping and the Huber reference
+penalty depend on the latent representation, so this experiment changes their
+finite-step surrogate even though the unclipped score-function and importance
+estimators remain exact. It is not evidence of better playing strength: compare
+bounded, matched training runs and neural-only full matches before choosing it.
 
 **The teacher uses visible threats and public scouting locations.** A teacher
 slot is the scripted bot at the student's cadence, and each

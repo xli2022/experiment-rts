@@ -114,6 +114,36 @@ def selection_score_entropy(logits: torch.Tensor, mask: torch.Tensor) -> torch.T
     return mask.to(logits.dtype).sum(-1) * 1.5772156649015329
 
 
+def hybrid_selection_scores(scores: torch.Tensor, mask: torch.Tensor, noise_b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Training-only smaller latent, with the sampled branch fixed for rescoring.
+
+    Positive Logistic scores determine the ordered/capped selection completely.
+    The forced-empty fallback instead needs the original location-Gumbel scores.
+    Never recompute the branch from a later policy's logits.
+    """
+    logistic = scores - noise_b
+    fallback = ~((logistic > 0) & mask).any(-1)
+    return torch.where(fallback.unsqueeze(-1), scores, logistic).detach(), fallback.detach()
+
+
+def hybrid_selection_logp(logits: torch.Tensor, mask: torch.Tensor, scores: torch.Tensor, fallback: torch.Tensor) -> torch.Tensor:
+    """Exact hybrid likelihood up to a parameter-independent fallback factor.
+
+    Nonempty D has the unnormalized Logistic density on max(D)>0. Fallback X
+    has Gumbel(X-logits) times P(B>=X); the latter is independent of logits at
+    fixed X and cancels in ratios/score gradients. Do not normalize either
+    branch conditionally. These two tagged densities together integrate to 1.
+    """
+    fallback_mask = mask & fallback.unsqueeze(-1)
+    # Mask the inactive branch BEFORE exp: D can be extremely negative without
+    # making its Logistic density or gradient nonfinite.
+    gumbel = selection_score_logp(logits, fallback_mask, scores)
+    logistic_mask = mask & ~fallback.unsqueeze(-1)
+    z = torch.where(logistic_mask, scores.detach() - logits, torch.zeros_like(logits))
+    logistic = torch.where(logistic_mask, -F.softplus(z) - F.softplus(-z), torch.zeros_like(z)).sum(-1)
+    return gumbel + logistic
+
+
 def membership_of(selection: torch.Tensor, n: int) -> torch.Tensor:
     """[B, k] row indices (-1 padded) → [B, n] bool."""
     rows = torch.arange(n, device=selection.device).view(1, 1, n)

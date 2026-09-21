@@ -20,6 +20,7 @@ from .env import LANES, QUARTERS, BunVectorEnv, EnvConfig, slot
 from .imitation import (LabelBuffer, STORED, VAL_SEED0, SEED_STRIDE,
                         collect_labels, select_labels, teacher_configs, train_on, validate)
 from .model import Policy
+from .spec import BUILD
 from .util import decide, load_checkpoint, pick_device, save_checkpoint, set_seed
 
 
@@ -86,6 +87,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--ent", type=float, default=0.01)
+    parser.add_argument("--build-weight", type=float, default=1.0,
+                        help="relative loss weight for Build labels, including entropy; 1 preserves uniform weighting")
     parser.add_argument("--noop-keep", type=float, default=0.25)
     parser.add_argument("--temperature", type=float, default=0.5)
     parser.add_argument("--expert-start", type=float, default=0.5,
@@ -99,6 +102,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device")
     args = parser.parse_args(argv)
+    if not math.isfinite(args.build_weight) or args.build_weight <= 0:
+        parser.error("build-weight must be finite and positive")
     for name in ("steps", "procs", "envs", "buffer", "replay", "batch", "epochs", "val_labels", "val_every", "keep_every", "max_ticks"):
         if getattr(args, name) <= 0:
             parser.error(f"--{name.replace('_', '-')} must be positive")
@@ -156,7 +161,8 @@ def main(argv: list[str] | None = None) -> int:
                 if len(buffer) >= args.buffer or labels == args.steps:
                     fresh = buffer.materialise()
                     data = replay.mix(fresh, int(len(fresh["label"]) * args.replay_ratio))
-                    loss = train_on(policy, opt, data, args.batch, args.epochs, device, rng, args.ent)
+                    weights = None if args.build_weight == 1 else np.where(data["label"][:, 0] == BUILD, args.build_weight, 1.0)
+                    loss = train_on(policy, opt, data, args.batch, args.epochs, device, rng, args.ent, weights=weights)
                     replay.add(fresh)
                     buffer.clear()
                     rounds += 1

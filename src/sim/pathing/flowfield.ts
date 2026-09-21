@@ -109,7 +109,7 @@ export class FlowField {
   }
 
   /** Sweep outward from `goalTile`, filling `dist` for the whole map. */
-  build(map: GameMap, goalTile: number): void {
+  build(map: GameMap, goalTile: number, seeds?: readonly number[]): void {
     this.goalTile = goalTile;
     this.builtVersion = map.occupancyVersion;
     this.dist.fill(UNREACHABLE);
@@ -141,7 +141,17 @@ export class FlowField {
     let queued = 0;
     const gx = goalTile % w;
     const gy = (goalTile / w) | 0;
-    if (map.isWalkable(gx, gy)) {
+    if (seeds !== undefined) {
+      // Entity interactions can finish at any usable footprint edge. Seed all
+      // of them so a disconnected near edge cannot hide a reachable far edge.
+      for (const tile of seeds) {
+        if (!map.isWalkable(map.tileXOf(tile), map.tileYOf(tile))) continue;
+        if (this.dist[tile] === 0) continue;
+        this.dist[tile] = 0;
+        this.buckets[0]!.push(tile);
+        queued++;
+      }
+    } else if (map.isWalkable(gx, gy)) {
       this.dist[goalTile] = 0;
       this.buckets[0]!.push(goalTile);
       queued = 1;
