@@ -893,6 +893,7 @@ function followPaths(world: World): void {
       distanceLeft(world, i, len, cursor),
       topSpeedOf(world, i, def),
     );
+    let routeBlocked = false;
     while (remaining > 0 && cursor < len) {
       const tile = pool.pathNode(i, cursor);
       const wx = fromInt(world.map.tileXOf(tile)) + FIX_HALF;
@@ -910,8 +911,32 @@ function followPaths(world: World): void {
       const dir = vecNormalize(dx, dy);
       const dirX = dir.x;
       const dirY = dir.y;
-      pool.posX[i] = (pool.posX[i]! + fmul(dirX, step)) | 0;
-      pool.posY[i] = (pool.posY[i]! + fmul(dirY, step)) | 0;
+      const nextX = (pool.posX[i]! + fmul(dirX, step)) | 0;
+      const nextY = (pool.posY[i]! + fmul(dirY, step)) | 0;
+      // A foundation can appear across an already-smoothed private route. The
+      // destination may remain walkable, so check the actual short step, not
+      // just its waypoint. Otherwise terrain clamping ejects the unit back to
+      // the same edge forever. Checking only this tick's step bounds the work
+      // independently of how far away the next smoothed waypoint is.
+      if (
+        !lineOfSightClear(
+          world.map,
+          pool.posX[i]!,
+          pool.posY[i]!,
+          nextX,
+          nextY,
+          world.flipOf(pool.owner[i]!),
+        )
+      ) {
+        const pending = pool.pathPending[i] === 1;
+        pool.clearPath(i);
+        pool.pathPending[i] = 1;
+        if (!pending) world.pathQueue.push(i);
+        routeBlocked = true;
+        break;
+      }
+      pool.posX[i] = nextX;
+      pool.posY[i] = nextY;
 
       const face = vecRotateToward(pool.faceX[i]!, pool.faceY[i]!, dirX, dirY, def.turnPerTick);
       pool.faceX[i] = face.x;
@@ -921,6 +946,7 @@ function followPaths(world: World): void {
       if (step === dist) cursor++;
     }
 
+    if (routeBlocked) continue;
     pool.pathCursor[i] = cursor < MAX_PATH ? cursor : MAX_PATH;
     if (cursor >= len) {
       pool.clearPath(i);
