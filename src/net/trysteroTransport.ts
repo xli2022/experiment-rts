@@ -129,8 +129,10 @@ function unorderedPeerConnection(): typeof RTCPeerConnection | undefined {
  *     Older peers would apply different damage to the same attack.
  * 11: builders path to a reachable construction edge, changing movement and
  *     completion timing when the nearest walkable approach is disconnected.
+ * 12: private paths repair blocked steps after new construction, changing
+ *     movement instead of leaving units stuck against a new footprint.
  */
-export const PROTOCOL_VERSION = 11;
+export const PROTOCOL_VERSION = 12;
 
 export interface HostConfig {
   roomCode: string;
