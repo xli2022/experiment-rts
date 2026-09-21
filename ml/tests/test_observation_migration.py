@@ -1,4 +1,4 @@
-"""Adjacent additive observations retain learned weights without claiming wins."""
+"""Adjacent codec migration preserves weights without reusing old win claims."""
 
 from dataclasses import replace
 import hashlib
@@ -26,7 +26,7 @@ def old_checkpoint(version=3):
 def test_migration_retains_actions_and_logit_values_with_unseen_features_present(source_version, target_version):
     original, source = old_checkpoint(source_version)
     migrated = migrate(source, to_version=target_version)
-    target = SPEC if target_version == 5 else load_spec(Path(__file__).parents[1] / "rtsml" / "spec-v4.json")
+    target = load_spec(Path(__file__).parents[1] / "rtsml" / f"spec-v{target_version}.json")
     policy = Policy(spec=target, **migrated["hparams"]["model"]).eval()
     policy.load_state_dict(migrated["model"])
     assert migrated["spec_version"] == target_version and migrated["metrics"] == {}
@@ -63,7 +63,7 @@ def test_migration_retains_actions_and_logit_values_with_unseen_features_present
             torch.testing.assert_close(policy.act(inputs, noise, t), original.act(previous, noise, t), rtol=0, atol=0)
 
 
-@pytest.mark.parametrize("source_version,target_version", [(3, 4), (4, 5)])
+@pytest.mark.parametrize("source_version,target_version", [(3, 4), (4, 5), (5, 6)])
 def test_migration_rejects_nonfinite_weights(source_version, target_version):
     _, source = old_checkpoint(source_version)
     source["model"]["entity_in.weight"][0, 0] = float("nan")
@@ -71,7 +71,7 @@ def test_migration_rejects_nonfinite_weights(source_version, target_version):
         migrate(source, to_version=target_version)
 
 
-@pytest.mark.parametrize("source,target", [(2, 4), (3, 5), (4, 4), (5, 5), (5, 4), (4, 6), (None, 5)])
+@pytest.mark.parametrize("source,target", [(2, 4), (3, 5), (4, 4), (5, 5), (5, 4), (4, 6), (6, 6), (None, 5)])
 def test_migration_rejects_nonadjacent_or_unknown_codecs(source, target):
     with pytest.raises(ValueError, match="adjacent codec"):
         migrate({"spec_version": source}, to_version=target)
@@ -86,32 +86,36 @@ def test_migration_rejects_nonadjacent_or_unknown_codecs(source, target):
 def test_migration_refuses_nonadditive_contract_changes(monkeypatch, change):
     import rtsml.migrate_observation as migration
     _, source = old_checkpoint(4)
-    monkeypatch.setattr(migration, "SPEC", replace(SPEC, **change))
+    original_loader = migration.load_spec
+    monkeypatch.setattr(migration, "load_spec", lambda path: replace(original_loader(path), **change)
+                        if path.name == "spec-v5.json" else original_loader(path))
     with pytest.raises(ValueError, match="not an additive"):
-        migrate(source)
+        migrate(source, to_version=5)
 
 
 def test_sequential_migration_keeps_source_provenance_and_original_weights():
     original, source = old_checkpoint(3)
     intermediate = migrate(source, to_version=4)
     intermediate["migration"]["sourceSha256"] = "original-source-hash"
-    final = migrate(intermediate)
-    assert final["spec_version"] == 5
-    assert final["migration"]["sourceMigration"] == intermediate["migration"]
-    assert final["migration"]["sourceMigration"]["sourceMetrics"] == {"labels": 400000}
+    codec5 = migrate(intermediate, to_version=5)
+    final = migrate(codec5)
+    assert final["spec_version"] == 6
+    assert final["migration"]["sourceMigration"] == codec5["migration"]
+    assert final["migration"]["sourceMigration"]["sourceMigration"] == intermediate["migration"]
+    assert final["migration"]["sourceMigration"]["sourceMigration"]["sourceMetrics"] == {"labels": 400000}
     weight = final["model"]["entity_in.weight"]
     torch.testing.assert_close(weight[:, :original.spec.f], source["model"]["entity_in.weight"], rtol=0, atol=0)
     assert torch.count_nonzero(weight[:, original.spec.f:]) == 0
 
 
-@pytest.mark.parametrize("source_version,target_version", [(3, 4), (4, 5)])
+@pytest.mark.parametrize("source_version,target_version", [(3, 4), (4, 5), (5, 6)])
 def test_cli_preserves_source_and_will_not_overwrite_checkpoint(tmp_path, source_version, target_version):
     _, source = old_checkpoint(source_version)
     initial = tmp_path / "source.pt"
     output = tmp_path / "new" / "migrated.pt"
     torch.save(source, initial)
     before = initial.read_bytes()
-    options = ["--to-version", "4"] if target_version == 4 else []
+    options = ["--to-version", str(target_version)]
     assert main(["--ckpt", str(initial), "--out", str(output), *options]) == 0
     assert initial.read_bytes() == before
     migrated = torch.load(output, weights_only=False)
@@ -120,3 +124,43 @@ def test_cli_preserves_source_and_will_not_overwrite_checkpoint(tmp_path, source
     assert migrated["spec_version"] == target_version
     with pytest.raises(SystemExit):
         main(["--ckpt", str(initial), "--out", str(output), *options])
+
+
+def test_codec6_retains_every_weight_but_explicitly_requires_new_behavior_evaluation():
+    _, source = old_checkpoint(5)
+    source["migration"] = {"fromSpec": 4, "sourceSha256": "parent-checkpoint"}
+    migrated = migrate(source)
+    assert migrated["spec_version"] == 6
+    assert migrated["metrics"] == {}
+    assert source["metrics"] == {"labels": 400000}
+    assert migrated["hparams"] == source["hparams"]
+    assert set(migrated["model"]) == set(source["model"])
+    for name, weight in source["model"].items():
+        torch.testing.assert_close(migrated["model"][name], weight, rtol=0, atol=0)
+    proof = migrated["migration"]
+    assert proof["newFeatures"] == []
+    assert proof["behaviorChanged"] is True
+    assert proof["parityClaimed"] is False
+    assert proof["requiresFreshEvaluation"] is True
+    assert proof["sourceMigration"] == source["migration"]
+
+
+@pytest.mark.parametrize("change", [
+    {"action_types": tuple(reversed(SPEC.action_types))},
+    {"n_ent": SPEC.n_ent + 1},
+    {"entity_features": ("renamed",) + SPEC.entity_features[1:]},
+    {"scalars": SPEC.scalars + ("unexpected",)},
+])
+def test_codec6_refuses_shape_or_feature_contract_changes(monkeypatch, change):
+    import rtsml.migrate_observation as migration
+    _, source = old_checkpoint(5)
+    monkeypatch.setattr(migration, "SPEC", replace(SPEC, **change))
+    with pytest.raises(ValueError, match="identical tensor and action"):
+        migrate(source)
+
+
+def test_codec6_refuses_an_incomplete_checkpoint():
+    _, source = old_checkpoint(5)
+    del source["model"]["type_head.weight"]
+    with pytest.raises(RuntimeError, match="Missing key"):
+        migrate(source)

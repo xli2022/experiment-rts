@@ -1,5 +1,5 @@
 {
-  "version": 6,
+  "version": 5,
   "decisionTicks": 4,
   "unitMemoryTicks": 300,
   "entities": {

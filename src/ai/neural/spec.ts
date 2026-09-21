@@ -310,13 +310,15 @@ export const CRITIC_LEN = CRITIC_PER_PLAYER.length * CRITIC_PLAYERS + 2;
 
 /** Everything Python needs to build and export a model that fits this codec. */
 export const SPEC = {
+  // 6: Preserve public map information and target rows when the entity table
+  // is full. Shapes are unchanged, but observations and legal pointers change.
   // 5: Append an own unfinished site's assigned-builder flag. Codec-4 weights
   // can migrate by adding one zero column after the unchanged 73-feature prefix.
   // 4: Append own movement goals and production queue counts. Codec-3 weights
   // can migrate by adding zero columns after the unchanged 58-feature prefix.
   // 3: Factory/Airport production, building levels and upgrade commands change
   // the input and action widths. Version 1/2 models must be trained again.
-  version: 5,
+  version: 6,
   decisionTicks: DECISION_TICKS,
   unitMemoryTicks: UNIT_MEMORY_TICKS,
   entities: { rows: N_ENT, features: ENTITY_FEATURES },

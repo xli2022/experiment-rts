@@ -106,7 +106,10 @@ describe('the codec spec', () => {
     expect(previous.entities.features).toHaveLength(73);
     expect(ENTITY_FEATURES.slice(0, 73)).toEqual(previous.entities.features);
     expect(ENTITY_FEATURES.slice(73)).toEqual(['hasAssignedBuilder']);
-    expect(SPEC).toEqual({
+    const codec5 = JSON.parse(
+      readFileSync(new URL('../ml/rtsml/spec-v5.json', import.meta.url), 'utf8'),
+    );
+    expect(codec5).toEqual({
       ...previous,
       version: 5,
       entities: {
@@ -114,6 +117,14 @@ describe('the codec spec', () => {
         features: [...previous.entities.features, 'hasAssignedBuilder'],
       },
     });
+  });
+
+  it('versions the observation allocation change without changing tensor or action shapes', () => {
+    const previous = JSON.parse(
+      readFileSync(new URL('../ml/rtsml/spec-v5.json', import.meta.url), 'utf8'),
+    );
+    expect(previous.version).toBe(5);
+    expect(SPEC).toEqual({ ...previous, version: 6 });
   });
 
   it('matches the committed spec.json that Python reads', () => {

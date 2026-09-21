@@ -5,8 +5,25 @@ The TypeScript side decides what the bot sees and what it can say
 to say the right things and exports it to ONNX for the browser. Matches are
 served by Bun processes running `tools/ml/serve.ts`; Python never simulates.
 
-The current codec is **version 5**. It preserves all 73 version-4 entity features
-and appends `hasAssignedBuilder`: a 0/1 flag on an own unfinished building when
+The current codec is **version 6**. Tensor dimensions and action heads are
+unchanged, but the bounded entity table no longer lets a large allied force
+crowd out every known mineral patch and enemy target. Overflow reserves
+reclaimable target capacity and balances actionable owned entities. Dynamic map
+channels and type counts use the full fog-approved public state independently
+of the pointer table. An omitted entity therefore does not disappear from the
+map summary. No hidden enemy state is added.
+
+The table still holds 160 pointers. On overflow, up to eight nonempty known
+patches and sixteen visible enemies receive reserved slots; when no enemy is
+visible, that reserve covers recent memories instead. Unused slots return to
+owned entities. Owned action roles and unit/building types share that budget,
+with stable serial priority within a type. This keeps action families available,
+but a very large force still cannot address every individual entity in one
+observation. Owned unfinished sites remain resumable by cell even when their
+pointer row is omitted.
+
+Version 5 preserved all 73 version-4 entity features and appended
+`hasAssignedBuilder`: a 0/1 flag on an own unfinished building when
 any living owned worker has a Build order targeting that building's current
 handle. It describes the issued public assignment, not whether the worker can
 reach the site or is making progress. Complete buildings, units, allies, enemies,
@@ -21,22 +38,25 @@ are divided by the production queue capacity; goal displacement is divided by
 the larger map dimension. Upgrade state and production legality still depend on
 each owned building's level and whether it is upgrading.
 
-Migrate a version-4 checkpoint from `ml/`:
+Migrate a version-5 checkpoint from `ml/`:
 
 ```sh
-python -m rtsml.migrate_observation --ckpt ../runs/bc-lanes/codec4.pt --out ../runs/bc-lanes/codec5.pt
+python -m rtsml.migrate_observation --ckpt ../runs/bc-lanes/codec5.pt --out ../runs/bc-lanes/codec6.pt
 ```
 
-Version-3 checkpoints require two explicit steps: first run the same command
-with `--to-version 4` to produce an intermediate codec-4 checkpoint, then migrate
-that file to version 5. Direct version-3 to version-5 conversion is rejected.
+Older checkpoints require adjacent steps: use `--to-version 4` for a version-3
+input, then `--to-version 5` for that intermediate checkpoint, then migrate to
+version 6. Skipping versions is rejected.
 
-Migration preserves the architecture, layout and existing weights, appending
-zero columns to `entity_in.weight` so the added inputs are initially ignored.
+Migration preserves the architecture, layout and existing weights. The 3-to-4
+and 4-to-5 steps append zero columns to `entity_in.weight`. The 5-to-6 step keeps
+every tensor unchanged, but corrected observation contents and legal pointer
+targets can change decisions immediately. Its provenance explicitly records a
+behavior change and makes no parity claim.
 It refuses incompatible versions and existing output files, records the source
 checkpoint hash, and clears evaluation metrics that no longer qualify the
 output. Continue imitation or DAgger with the migrated checkpoint as `--init`,
-collect fresh codec-5 observations, and run fresh gameplay evaluation before
+collect fresh codec-6 observations, and run fresh gameplay evaluation before
 exporting. Existing ONNX exports are not migrated. Version 1 and 2 checkpoints
 remain incompatible; retrain those with the current `spec.json`.
 
