@@ -693,6 +693,74 @@ Two things it found before a real link could:
 - **The fog plane is flat, and cliffs are not.** Terrain with height stands
   straight through the shroud, so cliffs are shaded to match the fog rather than
   covered by it (`TerrainRenderer.applyFog`).
+- **An additive effect keeps its hue at the fringe, never in the middle.**
+  Anything bright enough to read as hot saturates to white where it overlaps
+  itself, so a tracer drawn as one coloured sprite is a white dot whoever fired
+  it. Draw a wide skirt in the team colour and let the narrow core blow out; the
+  colour the player reads is the halo.
+- **A beam that fades by opacity alone turns into grey string.** Light is on and
+  then it is out — it does not spend a sixth of a second dimming at full width.
+  Hold near-full brightness for most of the life, shrink the width as it goes,
+  and ease off at the end.
+- **Smoke has to be lighter than the ground it is drawn over.** Blended dark
+  grey on this palette's dark brown is invisible, which reads as a missing
+  effect rather than as subtle smoke. Smoke starts light and _darkens_ as it
+  cools.
+
+### Weapon effects
+
+Every shot on screen is built from the same four stages, any of which a weapon
+may skip: **muzzle → travel → impact → aftermath**. A Burstbot has all four in
+miniature. A Beamdrone has no travel, because a beam is simply _there_. A
+Boomwalker has none of them, because it **is** the payload and its death blast
+is the whole weapon. Which stages a unit gets, and what they look like, is one
+row of `src/render/vfx/weapons.ts`.
+
+Three things are worth knowing before touching any of it.
+
+**Effects are drawn by three primitives, not by meshes.** `vfx/fields.ts` has a
+camera-facing sprite, a ribbon stretched between two world points, and a quad
+lying flat on the ground. Everything else — fire, smoke, tracers, beams,
+lightning, sparks, shockwaves, scorch marks, the ring that confirms a click — is
+one of those three with different numbers in it. They are instanced with a small
+shader rather than through `setMatrixAt` and `setColorAt` for one reason: a
+shared material has a single opacity, so instances can only fade by _shrinking_,
+and fire, smoke and every kind of afterglow are shapes that hold their size
+while they fade. One instanced float buys the entire vocabulary.
+
+**The textures are computed, not loaded.** `vfx/textures.ts` builds every mask
+as a `DataTexture` from a fixed integer hash. A canvas is a DOM object and
+`ProjectileRenderer` is constructed under Node by `tests/projectiles.test.ts`;
+and a handful of radial falloffs is not worth a download, a cache-busting URL or
+a licence trail. The hash is fixed rather than random so a flame puff has the
+same shape on every machine — these are authored assets that happen to be
+computed at load, and the variation the player sees comes from how the particles
+move, which is where variation reads as life rather than as flicker.
+
+**`world.events.shots` holds one pair per victim, not per attack.** A Sentry
+shell that catches five units arrives here as five (attacker, victim) pairs, so
+drawing one shell each fires five mortars at one tile. Pairs from one attack are
+consecutive, so they are regrouped into a single attack — and which victim the
+shell was _aimed_ at, which the events do not say, is recovered from the
+attacker's facing: `resolveAttackImpact` turns the attacker onto its primary
+target before it gathers anything the blast also reached. See
+`primaryVictimIndex`, and `tests/projectiles.test.ts` for the contract.
+
+Colour follows the same rule as the rest of the palette — hue answers "may I
+shoot that" — by splitting on _where_ an effect is rather than on what fired it.
+Ordnance in flight carries the team colour under a near-white core, because it
+crosses open ground between two armies and has to be readable as whose. What
+happens where it lands is drawn in fire colours for everyone, because it is
+sitting on a unit whose team colour is already right there, and spending hue on
+it would only muddy the one signal that matters. The Fixomatic's green beam and
+the Ice Golem's pale blue shatter are the two deliberate exceptions, and each
+answers a different question: whether this is help, and whether that unit is now
+chilled.
+
+Nothing in here can affect the simulation. Effects are read off `world.events`
+_after_ the tick that produced them, which is why this whole directory is free
+to use wall-clock time, floating point and `Math.random`, all of which are
+banned inside `src/sim/**`.
 
 ### Authored unit models
 
