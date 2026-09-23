@@ -16,9 +16,8 @@
  * of the texture it is on. The vertex shader reads its four bone matrices from
  * that row and skins the vertex.
  *
- * The cost is that animation is quantised to the bake rate and cannot blend
- * between clips. At 30 samples a second, on units a centimetre tall on screen,
- * neither is visible.
+ * The instanced shader interpolates neighbouring baked frames and cross-fades
+ * between clips, without updating a skeleton per unit at runtime.
  */
 
 import * as THREE from 'three';

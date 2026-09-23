@@ -84,7 +84,7 @@ interface CatalogModel {
   skins: [string, string, string, string];
   runSize: [number, number, number];
   runGroundY?: number;
-  clips: Record<'run' | 'attack' | 'die', CatalogClip>;
+  clips: Record<'run' | 'attack' | 'die', CatalogClip> & { idle?: CatalogClip };
 }
 
 interface CatalogClip {
@@ -135,6 +135,7 @@ interface GlbJson {
   skins?: { joints?: number[] }[];
   animations?: {
     name?: string;
+    extras?: { sourceFileByteLength?: number };
     channels?: {
       sampler?: number;
       target?: { node?: number; path?: string };
@@ -223,8 +224,12 @@ describe('Athena2 authored model catalog', () => {
         expect(Number.isFinite(size), `${model.unit} run size`).toBe(true);
         expect(size, `${model.unit} run size`).toBeGreaterThan(0);
       }
-      for (const name of ['run', 'attack', 'die'] as const) {
+      expect(Object.keys(model.clips).sort(), `${model.unit} catalog clips`).toEqual(
+        expectedClipNames(model),
+      );
+      for (const name of expectedClipNames(model)) {
         const clip = model.clips[name];
+        if (!clip) throw new Error(`${model.unit} is missing ${name} metadata`);
         expect(clip.duration, `${model.unit} ${name} duration`).toBeGreaterThan(0);
         expect(clip.static, `${model.unit} ${name} must be animated`).toBe(false);
         expect(clip.frames, `${model.unit} ${name} baked frames`).toBeGreaterThan(1);
@@ -505,8 +510,18 @@ describe('Athena2 authored model catalog', () => {
       const model = catalog.models.find((candidate) => candidate.unit === unit);
       expect(model, unit).toBeDefined();
       const glb = await readFile(join(MODEL_ROOT, model!.file));
-      expect(glb.byteLength, `${unit} compact skeletal size`).toBeLessThanOrEqual(maximumBytes);
       const json = glbJson(glb);
+      if (model!.faction === 'Robot') {
+        // Preserve the existing authored-asset budget and cap the additional
+        // native idle data separately, instead of raising every model's limit.
+        const sourceBytes = json.animations?.find((clip) => clip.name === 'idle')?.extras
+          ?.sourceFileByteLength;
+        expect(sourceBytes, `${unit} original GLB size`).toBeGreaterThan(0);
+        expect(sourceBytes, `${unit} compact authored size`).toBeLessThanOrEqual(maximumBytes);
+        expect(glb.byteLength - sourceBytes!, `${unit} idle overhead`).toBeLessThanOrEqual(65_536);
+      } else {
+        expect(glb.byteLength, `${unit} compact skeletal size`).toBeLessThanOrEqual(maximumBytes);
+      }
       const meshNode = json.nodes?.find(
         (node) =>
           node.mesh !== undefined &&
@@ -524,21 +539,17 @@ describe('Athena2 authored model catalog', () => {
       expect(indices?.componentType, `${unit} 16-bit topology`).toBe(5123);
       expect(mesh?.weights, `${unit} has no morph weights`).toBeUndefined();
       expect(primitive?.targets, `${unit} has no morph targets`).toBeUndefined();
-      expect(meshNode?.extras?.clipFrames).toEqual({
-        run: model!.clips.run.frames,
-        attack: model!.clips.attack.frames,
-        die: model!.clips.die.frames,
-      });
-      expect(json.animations?.map((animation) => animation.name).sort(), `${unit} clips`).toEqual([
-        'attack',
-        'die',
-        'run',
-      ]);
+      expect(meshNode?.extras?.clipFrames).toEqual(
+        Object.fromEntries(Object.entries(model!.clips).map(([name, clip]) => [name, clip.frames])),
+      );
+      expect(json.animations?.map((animation) => animation.name).sort(), `${unit} clips`).toEqual(
+        expectedClipNames(model!),
+      );
     },
   );
 
   it.each(catalog.models)(
-    '$unit has one compatible skinned GLB with all three clips',
+    '$unit has one compatible skinned GLB with its required clips',
     async (model) => {
       const glb = await readFile(join(MODEL_ROOT, model.file));
       const json = glbJson(glb);
@@ -557,7 +568,7 @@ describe('Athena2 authored model catalog', () => {
       expect(
         animations.map((animation) => animation.name).sort(),
         `${model.unit} clip names`,
-      ).toEqual(['attack', 'die', 'run']);
+      ).toEqual(expectedClipNames(model));
       for (const animation of animations) {
         expect(
           animation.channels?.length,
@@ -574,7 +585,7 @@ describe('Athena2 authored model catalog', () => {
           new Set(channelTargets).size,
           `${model.unit} ${animation.name} duplicate animation targets`,
         ).toBe(channelTargets.length);
-        const name = animation.name as 'run' | 'attack' | 'die';
+        const name = animation.name as 'run' | 'attack' | 'die' | 'idle';
         const duration = Math.max(
           ...(animation.samplers ?? []).map((sampler) =>
             sampler.input === undefined
@@ -583,7 +594,7 @@ describe('Athena2 authored model catalog', () => {
           ),
         );
         expect(duration, `${model.unit} ${animation.name} exported duration`).toBeCloseTo(
-          model.clips[name].duration,
+          model.clips[name]!.duration,
           5,
         );
       }
@@ -611,6 +622,10 @@ describe('Athena2 authored model catalog', () => {
 
 async function readCatalog(): Promise<Catalog> {
   return JSON.parse(await readFile(join(MODEL_ROOT, 'all-units.json'), 'utf8')) as Catalog;
+}
+
+function expectedClipNames(model: CatalogModel): ('run' | 'attack' | 'die' | 'idle')[] {
+  return model.faction === 'Robot' ? ['attack', 'die', 'idle', 'run'] : ['attack', 'die', 'run'];
 }
 
 function glbJson(buffer: Buffer): GlbJson {

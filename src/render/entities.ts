@@ -117,6 +117,7 @@ export class EntityRenderer {
    * this is per-entity state touched every frame.
    */
   private readonly poseClip = new Uint8Array(ENTITY_CAPACITY);
+  private readonly poseTime = new Float64Array(ENTITY_CAPACITY);
   private readonly poseFrom = new Uint8Array(ENTITY_CAPACITY);
   /** Simulation-timeline seconds when the current transition started. */
   private readonly poseChangedAt = new Float64Array(ENTITY_CAPACITY).fill(-1e9);
@@ -482,6 +483,9 @@ export class EntityRenderer {
         // walk out of the barracks mid-swing.
         this.attackStartedTick[i] = NEVER_ATTACKED_TICK;
         this.attackImpacted[i] = 0;
+        this.poseClip[i] = 0;
+        this.poseTime[i] = 0;
+        this.poseChangedAt[i] = -1e9;
       } else {
         this.prevX[i] = this.currX[i]!;
         this.prevZ[i] = this.currZ[i]!;
@@ -593,6 +597,7 @@ export class EntityRenderer {
             // Offset each unit's stride by its slot so an army does not march in
             // perfect lockstep, which reads as one object rather than many.
             poseClockS + i * 0.37,
+            animated.model.clips.has('idle'),
           );
 
           const target = framesForPose(animated.model, pose);
@@ -605,10 +610,11 @@ export class EntityRenderer {
           const id = CLIP_IDS[pose.clip] ?? 0;
           if (this.poseClip[i] !== id) {
             this.poseFrom[i] = this.poseClip[i]!;
-            this.poseFromTime[i] = pose.time;
+            this.poseFromTime[i] = this.poseTime[i]!;
             this.poseChangedAt[i] = poseClockS;
             this.poseClip[i] = id;
           }
+          this.poseTime[i] = pose.time;
 
           const fading = poseClockS - this.poseChangedAt[i]!;
           if (fading >= 0 && fading < CROSSFADE_S) {
@@ -619,7 +625,7 @@ export class EntityRenderer {
             const previous = framesForPose(animated.model, {
               clip: CLIP_NAMES[this.poseFrom[i]!] ?? 'run',
               time: this.poseFromTime[i]!,
-              loop: true,
+              loop: this.poseFrom[i] !== CLIP_IDS.attack,
             });
             from = previous.from;
             to = target.from;
@@ -904,8 +910,8 @@ const ACK_PULSE_S = 0.22;
 const ACK_PULSE_SIZE = 0.35;
 
 /** Clip names as small integers, so per-entity pose state stays a typed array. */
-const CLIP_NAMES = ['run', 'attack', 'die'] as const;
-const CLIP_IDS: Record<string, number> = { run: 0, attack: 1, die: 2 };
+const CLIP_NAMES = ['run', 'attack', 'die', 'idle'] as const;
+const CLIP_IDS: Record<string, number> = { run: 0, attack: 1, die: 2, idle: 3 };
 
 /**
  * Choose a unit's clip. Pure, because getting it wrong is invisible in a diff.
@@ -935,12 +941,14 @@ export function poseFor(
   swingDuration: number,
   movedPerTick: number,
   phase: number,
+  hasIdle = false,
 ): Pose {
   if (swingDuration > 0 && sinceAttackStart >= 0 && sinceAttackStart < swingDuration) {
     return { clip: 'attack', time: sinceAttackStart, loop: false };
   }
   if (movedPerTick > MOVING_EPSILON) return { clip: 'run', time: phase, loop: true };
-  // No authored idle clip; a frozen stride reads better than a T-pose.
+  if (hasIdle) return { clip: 'idle', time: phase, loop: true };
+  // Rigs without an idle retain their frozen stride.
   return { clip: 'run', time: 0, loop: true };
 }
 

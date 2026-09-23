@@ -40,26 +40,25 @@ interface CatalogModel {
 /**
  * The clip a card rests in between taps.
  *
- * No unit has an authored idle, so the run cycle stands in for one — it is the
- * only clip that reads as a unit waiting rather than a unit doing something.
+ * Prefer an idle when the model has one; other cards retain their run preview.
  */
-const IDLE_CLIP = 'run';
+type GalleryIdleClip = 'idle' | 'run';
 
 /**
  * The clips a tap plays, one per tap, wrapping back to the first.
  *
- * Deliberately not every clip the model has. The run is already what the card
- * is doing, so a tap that played it would look like a tap that did nothing —
- * the animations worth reaching are the ones the idle loop never shows.
+ * Cards without an idle already preview run. Cards with an idle also offer a
+ * single run cycle after attack and death.
  */
 const TAP_CLIPS = ['attack', 'die'] as const;
 
-export type GalleryTapClip = (typeof TAP_CLIPS)[number];
+export type GalleryTapClip = (typeof TAP_CLIPS)[number] | 'run';
 
 /** What each tap clip is called out loud; `die` reads badly as a noun. */
 const TAP_CLIP_NAMES: Readonly<Record<GalleryTapClip, string>> = {
   attack: 'attack',
   die: 'death',
+  run: 'run',
 };
 
 /** A one-shot in progress: which clip, and when the tap started it. */
@@ -86,7 +85,7 @@ interface GalleryPreview {
 }
 
 export interface GalleryAnimation {
-  clip: typeof IDLE_CLIP | GalleryTapClip;
+  clip: GalleryIdleClip | GalleryTapClip;
   time: number;
   loop: boolean;
   finished: boolean;
@@ -269,6 +268,7 @@ export class UnitGallery {
           preview.playing,
           preview.playing && preview.model.clips.get(preview.playing.clip)?.duration,
           elapsedSeconds,
+          preview.model.clips.has('idle') ? 'idle' : 'run',
         );
         if (animation.finished) preview.playing = null;
         const frame = AnimatedUnitPool.framePairFor(
@@ -506,10 +506,9 @@ export class UnitGallery {
     let texture: THREE.Texture | null = null;
     try {
       model = await loadAnimatedModel(modelAssetUrl(entry.file), {
-        clips: [IDLE_CLIP, ...TAP_CLIPS],
-        // Still the run: adding clips a tap can reach must not let a death
-        // sprawl or an overhead swing decide how the card is framed.
-        boundsClip: IDLE_CLIP,
+        // Bake the native idle too when present. Run still frames every card,
+        // so a death sprawl or overhead swing cannot change its scale.
+        boundsClip: 'run',
       });
       if (session.cancelled) return;
 
@@ -726,7 +725,7 @@ function createPreview(
     camera,
     pool,
     model,
-    taps: TAP_CLIPS.filter((clip) => model.clips.has(clip)),
+    taps: galleryTapClips(model),
     nextTap: 0,
     playing: null,
     texture,
@@ -735,6 +734,13 @@ function createPreview(
     guide,
     matrix,
   };
+}
+
+/** Keep run reachable when a model's default preview is idle. */
+export function galleryTapClips(model: AnimatedModel): readonly GalleryTapClip[] {
+  const clips: GalleryTapClip[] = [...TAP_CLIPS];
+  if (model.clips.has('idle')) clips.push('run');
+  return clips.filter((clip) => model.clips.has(clip));
 }
 
 /**
@@ -768,6 +774,7 @@ export function galleryAnimationAt(
   playing: GalleryPlayback | null,
   duration: number | undefined | null,
   elapsedSeconds: number,
+  idleClip: GalleryIdleClip = 'run',
 ): GalleryAnimation {
   if (playing !== null && duration !== undefined && duration !== null) {
     const time = Math.max(0, elapsedSeconds - playing.startedAt);
@@ -780,14 +787,14 @@ export function galleryAnimationAt(
       };
     }
     return {
-      clip: IDLE_CLIP,
+      clip: idleClip,
       time: elapsedSeconds,
       loop: true,
       finished: true,
     };
   }
   return {
-    clip: IDLE_CLIP,
+    clip: idleClip,
     time: elapsedSeconds,
     loop: true,
     finished: false,

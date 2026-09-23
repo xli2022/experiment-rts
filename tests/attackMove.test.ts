@@ -17,9 +17,9 @@
 import { describe, expect, it } from 'vitest';
 import { defOf, GROUP_PATH_THRESHOLD } from '../src/config/rules.js';
 import { CommandType, type Command } from '../src/sim/commands.js';
-import { fromInt, toFloat } from '../src/sim/fixed.js';
+import { fromFloat, fromInt, toFloat } from '../src/sim/fixed.js';
 import { Simulation } from '../src/sim/tick.js';
-import { EntityType, Order, type PlayerId } from '../src/sim/types.js';
+import { EntityType, Order, Tile, type PlayerId } from '../src/sim/types.js';
 
 const FIX = 65536;
 const RUN = 20;
@@ -103,6 +103,58 @@ function firedThisTick(f: Field): boolean {
   const shots = f.sim.world.events.shots;
   for (let k = 0; k + 1 < shots.length; k += 2) if (shots[k] === f.unit) return true;
   return false;
+}
+
+/** An isolated retreat opposite to the attack-mover's intended advance. */
+function pursuitField(mode: 'private' | 'grouped' | 'flying', player: PlayerId = 0) {
+  const sim = new Simulation(1);
+  const { pool, map } = sim.world;
+  map.tiles.fill(Tile.Ground);
+  map.occupied.fill(0);
+  map.sealTerrain();
+  const type = mode === 'flying' ? EntityType.Beamdrone : EntityType.Burstbot;
+  const point = (x: number, y: number) => ({
+    x: fromFloat(player === 0 ? x : map.width - x),
+    y: fromFloat(player === 0 ? y : map.height - y),
+  });
+  const start = point(40.5, 40.5);
+  const goal = point(40.5, 80.5);
+  const unit = pool.spawn(type, player, start.x, start.y);
+  const foeStart = point(40.5, 34.5);
+  const enemy = pool.spawn(EntityType.Worker, 1 - player, foeStart.x, foeStart.y);
+  pool.order[enemy & 0xffff] = Order.Hold;
+  // A real group command chooses the shared flow field. Its other members are
+  // far away and stopped next tick, so they cannot push the pursuer off its trap.
+  const others: number[] = [];
+  if (mode === 'grouped') {
+    for (let k = 1; k < GROUP_PATH_THRESHOLD; k++) {
+      const at = point(90.5 + k, 40.5);
+      others.push(pool.spawn(type, player, at.x, at.y));
+    }
+  }
+  sim.step([
+    { type: CommandType.AttackMove, player, units: [unit, ...others], x: goal.x, y: goal.y },
+  ]);
+  const index = unit & 0xffff;
+  const foe = enemy & 0xffff;
+  const y = () =>
+    player === 0 ? toFloat(pool.posY[index]!) : map.height - toFloat(pool.posY[index]!);
+  const step = (tick: number) => {
+    // Stage the foe's retreat independently of worker economy and attrition.
+    // The attack-mover receives no further order and is never repositioned.
+    const at = point(40.5, 34.5 - Math.min(6, tick * 0.1));
+    pool.posX[foe] = at.x;
+    pool.posY[foe] = at.y;
+    pool.order[foe] = Order.Hold;
+    pool.hp[index] = defOf(type).maxHp;
+    pool.hp[foe] = defOf(EntityType.Worker).maxHp;
+    sim.step(
+      tick === 1 && others.length ? [{ type: CommandType.Stop, player, units: others }] : [],
+    );
+    expect(pool.isAlive(unit)).toBe(true);
+    expect(pool.isAlive(enemy)).toBe(true);
+  };
+  return { sim, unit, enemy, index, foe, point, goal, y, step };
 }
 
 describe('attack-move', () => {
@@ -219,6 +271,82 @@ describe('attack-move', () => {
     expect(`strayed ${strayed.toFixed(1)} tiles, under 7: ${strayed < 7}`).toBe(
       `strayed ${strayed.toFixed(1)} tiles, under 7: true`,
     );
+  });
+
+  it.each(['private', 'grouped', 'flying'] as const)(
+    'resumes its %s advance after a fleeing enemy stops beyond the pursuit leash',
+    (mode) => {
+      for (const player of [0, 1]) {
+        const f = pursuitField(mode, player);
+        let closestToFoe = f.y();
+        for (let t = 1; t <= 600; t++) {
+          f.step(t);
+          closestToFoe = Math.min(closestToFoe, f.y());
+        }
+        // The old radius-only check moved back inside the leash toward the
+        // objective, then immediately chased outward again in the same tick.
+        // It could spend the rest of the match alive, 46 tiles from its goal.
+        expect(closestToFoe).toBeLessThan(35);
+        expect(f.y()).toBeGreaterThan(80);
+        expect(f.sim.world.pool.order[f.index]).toBe(Order.None);
+      }
+    },
+  );
+
+  it('can pursue a new enemy after leaving the abandoned fight behind', () => {
+    const f = pursuitField('private');
+    let tick = 0;
+    while (tick < 300 && (tick < 60 || f.y() < 45)) f.step(++tick);
+    expect(f.y()).toBeGreaterThanOrEqual(45);
+    const pool = f.sim.world.pool;
+    const encounterX = pool.posX[f.index]!;
+    const next = pool.spawn(EntityType.Worker, 1, encounterX + fromInt(7), pool.posY[f.index]!);
+    const ni = next & 0xffff;
+    pool.order[ni] = Order.Hold;
+    let fought = false;
+    for (let t = 0; t < 100; t++) {
+      pool.hp[ni] = defOf(EntityType.Worker).maxHp;
+      f.step(++tick);
+      const shots = f.sim.world.events.shots;
+      for (let k = 0; k < shots.length; k += 2) {
+        if (shots[k] === f.index && shots[k + 1] === ni) fought = true;
+      }
+    }
+    expect(pool.isAlive(next)).toBe(true);
+    expect(pool.posX[f.index]).toBeGreaterThan(encounterX + FIX / 2);
+    expect(fought).toBe(true);
+  });
+
+  it('still stops to fire if a disengaged target comes into weapon range', () => {
+    const f = pursuitField('private');
+    let previousY = f.y();
+    let resumed = false;
+    for (let t = 1; t <= 150; t++) {
+      f.step(t);
+      if (previousY < 35 && f.y() > previousY) {
+        resumed = true;
+        break;
+      }
+      previousY = f.y();
+    }
+    expect(resumed).toBe(true);
+    const pool = f.sim.world.pool;
+    pool.posY[f.foe] = pool.posY[f.index]! - fromInt(4);
+    f.sim.step([]);
+    const firingY = pool.posY[f.index]!;
+    let fought = false;
+    for (let t = 0; t < 30; t++) {
+      pool.hp[f.foe] = defOf(EntityType.Worker).maxHp;
+      f.sim.step([]);
+      expect(pool.posY[f.index]).toBe(firingY);
+      const shots = f.sim.world.events.shots;
+      for (let k = 0; k < shots.length; k += 2) {
+        if (shots[k] === f.index && shots[k + 1] === f.foe) fought = true;
+      }
+    }
+    expect(pool.isAlive(f.unit)).toBe(true);
+    expect(pool.isAlive(f.enemy)).toBe(true);
+    expect(fought).toBe(true);
   });
 
   it('holds where it arrives and still shoots what comes near', () => {

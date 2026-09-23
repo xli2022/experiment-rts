@@ -188,8 +188,9 @@ export class EntityPool {
    */
   readonly navGoal = new Int32Array(ENTITY_CAPACITY).fill(-1);
   /**
-   * Where a unit stood when it broke off to chase something, and whether it is
-   * chasing at all.
+   * Where a unit stood when it broke off to chase something. Pursuit state is
+   * 0 before a chase, 1 while chasing, and 2 after reaching its leash, until
+   * contact is lost. A disengaged unit can shoot but does not chase again.
    *
    * The leash has to be measured from here rather than from the unit's current
    * position. Recomputed each tick against where it now stands, the window

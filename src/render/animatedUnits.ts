@@ -28,8 +28,7 @@ import type { AnimatedModel } from './models/animated.js';
  * shortens a bone when the two poses differ by a large rotation, and a
  * rotation-correct blend would need a decomposition per bone. Measured by
  * skinning the real geometry both ways: 0.0% shortening between neighbouring
- * frames, and 1.3% at worst for the idle, which mixes opposite ends of a
- * stride. Two texture reads buys that.
+ * frames. Keeping cross-fades brief limits distortion between different clips.
  *
  * Note this is not the same thing the texture's `NearestFilter` forbids. That
  * prevents the *sampler* blending adjacent texels, which would mix one bone's

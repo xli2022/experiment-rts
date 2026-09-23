@@ -9,6 +9,7 @@ import { loadAnimatedModel, type AnimatedModel } from '../src/render/models/anim
 import {
   galleryAnimationAt,
   galleryTapAt,
+  galleryTapClips,
   GALLERY_TEAM_COLOURS,
   parseUnitCatalog,
   previewGroundOffset,
@@ -328,6 +329,39 @@ describe('unit gallery proportional scale', () => {
 });
 
 describe('unit gallery tap playback', () => {
+  it('retains run in the tap cycle for a model that rests in idle', () => {
+    const model = {
+      clips: new Map(['run', 'attack', 'die'].map((clip) => [clip, {}])),
+    } as AnimatedModel;
+    expect(galleryTapClips(model)).toEqual(['attack', 'die']);
+    model.clips.set('idle', { startFrame: 0, frameCount: 90, duration: 3 });
+    expect(galleryTapClips(model)).toEqual(['attack', 'die', 'run']);
+  });
+
+  it('shows an available idle and returns to it after a one-shot', () => {
+    expect(galleryAnimationAt(null, undefined, 3.4, 'idle')).toEqual({
+      clip: 'idle',
+      time: 3.4,
+      loop: true,
+      finished: false,
+    });
+    for (const clip of ['attack', 'die'] as const) {
+      const playing = { clip, startedAt: 2 };
+      expect(galleryAnimationAt(playing, 1, 2.5, 'idle')).toMatchObject({
+        clip,
+        time: 0.5,
+        loop: false,
+        finished: false,
+      });
+      expect(galleryAnimationAt(playing, 1, 3, 'idle')).toMatchObject({
+        clip: 'idle',
+        time: 3,
+        loop: true,
+        finished: true,
+      });
+    }
+  });
+
   it('gives each tap the next animation in turn, then starts the list over', () => {
     // The whole of the interaction: one control per card, and every animation
     // the unit has behind it.

@@ -113,10 +113,25 @@ describe('choosing a clip', () => {
   });
 
   it('holds the first frame of the stride when still and not fighting', () => {
-    // No rig ships an idle clip and none is synthesised, so standing still is
-    // frame zero of the run.
+    // Rigs without an idle keep their original fallback.
     const idle = poseFor(SWING + 0.01, SWING, 0, 99);
     expect(`${idle.clip} @ ${idle.time}`).toBe('run @ 0');
+  });
+
+  it('loops the available idle while stationary, including after a swing', () => {
+    expect(poseFor(1e9, SWING, 0, 2.37, true)).toEqual({
+      clip: 'idle',
+      time: 2.37,
+      loop: true,
+    });
+    expect(poseFor(SWING, SWING, 0, 4.1, true).clip).toBe('idle');
+    expect(poseFor(1e9, SWING, 0, 2.74, true).time).toBe(2.74);
+  });
+
+  it('gives movement and attack priority over an available idle', () => {
+    expect(poseFor(1e9, SWING, RUNNING, 2, true).clip).toBe('run');
+    expect(poseFor(0.2, SWING, 0, 2, true).clip).toBe('attack');
+    expect(poseFor(0.2, SWING, JOSTLE, 2, true).clip).toBe('attack');
   });
 
   it('never asks for a swing a model does not have', () => {

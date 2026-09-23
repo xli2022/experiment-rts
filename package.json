@@ -23,6 +23,7 @@
     "ml:record": "bun run tools/ml/record.ts",
     "smoke:neural": "node scripts/smoke-neural.mjs",
     "import:athena2": "node scripts/import-athena2-models.mjs",
+    "animations:idle": "vite-node scripts/bake-robot-idles.ts",
     "textures": "node scripts/encode-textures.mjs",
     "textures:teams": "node scripts/tint-team-textures.mjs"
   },

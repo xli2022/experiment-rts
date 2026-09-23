@@ -823,8 +823,23 @@ The lerp is componentwise on the matrices, which shortens a bone when the poses
 differ by a large rotation — measured on the real geometry, 0.0% between
 neighbouring frames.
 
-No rig ships an idle clip and none is synthesised: standing still holds frame
-zero of the run.
+All twelve robot GLBs contain a standard `idle` animation alongside `run`,
+`attack`, and `die`. Ground robots keep their support planted while their
+turrets, torsos, arms, or coils make broad movements that read at game scale;
+the two drones visibly bob and bank with their stabilizers. Sentry rests in its
+authored deployed stance. Each unit has its own phase, and movement and attacks
+take priority over idle. The
+gallery shows idle between taps and cycles through attack, death, and run.
+Run bounds still determine scale and grounding.
+
+The idle authoring code lives in `tools/animation/`, outside the game bundle.
+Run `npm run animations:idle` after editing it to write the clips into the GLBs
+and update `public/units/all-units.json`. The model importer runs this step
+automatically. `scripts/bake-robot-idles.ts` appends ordinary glTF animation
+channels and accessors while retaining the original mesh and animation bytes;
+rerunning it replaces only its generated data and produces identical files.
+The runtime treats idle like any other clip, with no procedural rig callbacks.
+Models outside the robot roster retain their existing stationary pose.
 
 #### Pick the clip from events, not from state
 
@@ -1102,7 +1117,12 @@ The scripted bot gets no bonus income or extra units. Enemy composition,
 structure targeting and resource collection use current allied sight; the map's
 starting positions and expansion coordinates supply its scouting plan. Existing
 army orders are retained when their destination is unchanged, so thinking does
-not repeatedly interrupt attack windups. `THINK_INTERVAL` is the same for every bot — every bot must
+not repeatedly interrupt attack windups. The main army's current or completed
+destination also records scouting progress: after inspecting a site it searches
+the next public site, instead of returning to the first one that left sight.
+Defenders approach an observed threat they can engage and inspect its last known
+position before abandoning the defence. This prevents visibility changes from
+repeatedly recalling an advancing army. `THINK_INTERVAL` is the same for every bot — every bot must
 think on the same tick, or whoever thinks first gets a whole interval of head
 start, which measurably decided a mirror matchup — and it is not a strength
 dial either; see "The simulation is rotation-equivariant" for the measurement.
@@ -1307,9 +1327,13 @@ Three pieces fix it, and each is load-bearing:
 **The pursuit leash must be anchored where the chase began.** Measured from the
 unit's current position the window slides along with a retreating enemy and the
 chase ratchets indefinitely — a unit dragged sideways followed a fleeing
-Burstbot 14.6 tiles off its route. Past the leash the anchor is _kept_, so the
-unit turns back and can pick the fight up again on its way past; it resets only
-when the target is dead or gone beyond acquisition. `tests/attackMove.test.ts`.
+Burstbot 14.6 tiles off its route. Past the leash the unit commits to resuming its
+objective until the target dies or leaves acquisition range. Stepping back inside
+the leash must not restart the same chase: those two movements could cancel each
+other within one tick and stall the unit indefinitely. It can still stop to fire
+at a target already in weapon range. `tests/attackMove.test.ts` covers private
+paths, group movement, aircraft and both seats. Multiplayer protocol is 13 for
+this simulation change.
 
 **Do not measure unit behaviour without checking the unit is alive.** A corpse
 keeps its last `order` and its last position, so a dead unit looks exactly like

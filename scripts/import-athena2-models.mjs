@@ -147,6 +147,12 @@ await withTemporaryDirectories(async (createTempDirectory) => {
 });
 
 await writeCatalog(outputRoot, authoredTimings, authoredRunSizes, publishedModels);
+await runProcess(process.execPath, [
+  fileURLToPath(new URL('../node_modules/vite-node/dist/cli.mjs', import.meta.url)),
+  fileURLToPath(new URL('./bake-robot-idles.ts', import.meta.url)),
+  '--out',
+  outputRoot,
+]);
 console.log(
   `\nImported ${selected.length} model${selected.length === 1 ? '' : 's'}. ` +
     'Run `npm run textures` to encode blue/red skins and derive teal/orange before serving the catalog.',

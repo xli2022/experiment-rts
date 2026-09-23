@@ -40,17 +40,27 @@ let assetUrl: string;
 let allClips: AnimatedModel;
 let runOnly: AnimatedModel;
 let runAndAttack: AnimatedModel;
+let authoredOnly: AnimatedModel;
+let withIdle: AnimatedModel;
 let fireDragonAll: AnimatedModel;
 let fireDragonRun: AnimatedModel;
 
 beforeAll(async () => {
   const glb = await readFile(MODEL_PATH);
   assetUrl = `data:model/gltf-binary;base64,${glb.toString('base64')}`;
-  [allClips, runOnly, runAndAttack] = await Promise.all([
+  [allClips, runOnly, runAndAttack, authoredOnly, withIdle] = await Promise.all([
     loadAnimatedModel(assetUrl),
     loadAnimatedModel(assetUrl, 'run'),
     loadAnimatedModel(assetUrl, {
       clips: ['run', 'attack'],
+      boundsClip: 'run',
+    }),
+    loadAnimatedModel(assetUrl, {
+      clips: ['run', 'attack', 'die'],
+      boundsClip: 'run',
+    }),
+    loadAnimatedModel(assetUrl, {
+      clips: ['run', 'attack', 'die', 'idle'],
       boundsClip: 'run',
     }),
   ]);
@@ -67,6 +77,10 @@ afterAll(() => {
   runOnly?.boneTexture.dispose();
   runAndAttack?.geometry.dispose();
   runAndAttack?.boneTexture.dispose();
+  authoredOnly?.geometry.dispose();
+  authoredOnly?.boneTexture.dispose();
+  withIdle?.geometry.dispose();
+  withIdle?.boneTexture.dispose();
   fireDragonAll?.geometry.dispose();
   fireDragonAll?.boneTexture.dispose();
   fireDragonRun?.geometry.dispose();
@@ -74,11 +88,23 @@ afterAll(() => {
 });
 
 describe('animated model clip filtering and bounds', () => {
+  it('bakes the embedded idle without changing authored frames or run framing', () => {
+    expect(withIdle.clips.get('idle')?.duration).toBe(3);
+    expect(withIdle.clips.get('idle')?.frameCount).toBe(90);
+    const authoredData = authoredOnly.boneTexture.image.data as Float32Array;
+    const idleData = withIdle.boneTexture.image.data as Float32Array;
+    expect(idleData.slice(0, authoredData.length)).toEqual(authoredData);
+    expect(withIdle.firstFrameBounds.equals(runOnly.firstFrameBounds)).toBe(true);
+    expect(withIdle.animatedBounds.equals(runOnly.animatedBounds)).toBe(true);
+    expect(withIdle.lowestY).toBe(runOnly.lowestY);
+    expect(withIdle.nodeMatrix.equals(runOnly.nodeMatrix)).toBe(true);
+  });
+
   it('bakes only the requested clip', () => {
     expect([...runOnly.clips.keys()]).toEqual(['run']);
     expect(runOnly.totalFrames).toBe(runOnly.clips.get('run')?.frameCount);
     expect(runOnly.totalFrames).toBeLessThan(allClips.totalFrames);
-    expect([...allClips.clips.keys()].sort()).toEqual(['attack', 'die', 'run']);
+    expect([...allClips.clips.keys()].sort()).toEqual(['attack', 'die', 'idle', 'run']);
   });
 
   it('bakes selected clips while retaining bounds from one framing clip', () => {
@@ -146,13 +172,15 @@ describe('animated model clip filtering and bounds', () => {
   });
 
   it('rejects a requested clip the asset does not contain', async () => {
-    await expect(loadAnimatedModel(assetUrl, 'idle')).rejects.toThrow('contains no idle animation');
+    await expect(loadAnimatedModel(assetUrl, 'missing')).rejects.toThrow(
+      'contains no missing animation',
+    );
     await expect(
       loadAnimatedModel(assetUrl, {
-        clips: ['run', 'idle'],
+        clips: ['run', 'missing'],
         boundsClip: 'run',
       }),
-    ).rejects.toThrow('contains no idle animation');
+    ).rejects.toThrow('contains no missing animation');
   });
 });
 

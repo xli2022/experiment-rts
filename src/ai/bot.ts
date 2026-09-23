@@ -40,6 +40,7 @@ import { CommandType, type Command } from '../sim/commands.js';
 import { FIX_HALF, fromFloat, fromInt, toInt, sqRange, vecLenSqRaw } from '../sim/fixed.js';
 import { mirrorTile } from '../sim/map.js';
 import { mirroredHalf } from '../sim/mapgen.js';
+import { standableTarget } from '../sim/systems/orders.js';
 import {
   BuildState,
   ENTITY_TYPE_COUNT,
@@ -229,6 +230,8 @@ interface Survey {
   depots: number[];
   turrets: number[];
   sites: number[];
+  /** Own structures, including construction sites, in creation order. */
+  buildings: number[];
   /**
    * Observed patches to send an idle worker to: the ones near a base of ours,
    * or other observed patches when none of ours is left.
@@ -261,7 +264,7 @@ interface Survey {
    * pass, so all of them agree on how big it is and where its middle is.
    */
   teamArmy: number[];
-  /** The building of ours a hostile is nearest to, or -1 when none is. */
+  /** An observed armed hostile near our buildings that our army can engage. */
   threatened: number;
   minerals: number;
   supplyUsed: number;
@@ -292,6 +295,7 @@ function survey(world: World, player: PlayerId): Survey {
     depots: [],
     turrets: [],
     sites: [],
+    buildings: [],
     patches: [],
     homePatches: 0,
     livePatches: 0,
@@ -430,6 +434,7 @@ function survey(world: World, player: PlayerId): Survey {
   s.teamArmy.sort(byCreation);
   hostileUnits.sort(byCreation);
   ownBuildings.sort(byCreation);
+  s.buildings = ownBuildings;
   // Patches are neutral and have no creation order of their own: by tile, in
   // this player's canonical frame, which is the same patch seen from either
   // side.
@@ -458,7 +463,7 @@ function survey(world: World, player: PlayerId): Survey {
     for (const p of allPatches) s.patches.push(p);
   }
 
-  s.threatened = nearestThreat(world, hostileUnits, ownBuildings);
+  s.threatened = nearestThreat(world, hostileUnits, ownBuildings, s.army);
   return s;
 }
 
@@ -550,44 +555,55 @@ function distSqBetween(world: World, a: number, b: number): number {
 }
 
 /**
- * The structure of ours a hostile is nearest to, if one is close enough to
- * count as an attack.
+ * The observed hostile nearest one of our structures, if our army can engage it.
  *
  * A lone scouting worker is not an attack, and pulling an army home for one is
- * how a bot gets pulled out of position on purpose. Anything armed is.
- *
- * The *building*, not the attacker, and for two reasons. An enemy position is
- * a moving goal tile, and a grouped order navigates by a flow field cached per
- * goal tile — measured over a four-bot match, aiming at the attacker made 66%
- * of defensive orders a fresh Dijkstra sweep against 22% for the attack orders
- * that aim at buildings, and rebuilding the cache cost about a tenth of total
- * simulation time. It is also the only aim point that is reliably reachable: a
- * flyer parked over a cliff mass has no walkable tile near it, so the order was
- * refused outright by `standableTarget` and the whole army stood still for as
- * long as one drone cared to hover there.
- *
- * Walking home is what defence means anyway; an attack-move picks the attacker
- * up on arrival.
+ * how a bot gets pulled out of position on purpose. Unarmed support and flyers
+ * an entirely melee army cannot hit must not repeatedly recall that army either.
+ * Aim at the threat: aiming at our building can walk away from the enemy until
+ * it leaves sight, then send the army forward to discover the same threat again.
  */
 function nearestThreat(
   world: World,
   hostileUnits: readonly number[],
   ownBuildings: readonly number[],
+  army: readonly number[],
 ): number {
-  if (ownBuildings.length === 0) return -1;
+  if (ownBuildings.length === 0 || army.length === 0) return -1;
   const pool = world.pool;
   let best = -1;
   let bestDist = Number.POSITIVE_INFINITY;
   for (const h of hostileUnits) {
     if (pool.type[h] === EntityType.Worker) continue;
+    const hostile = defOf(pool.type[h]! as EntityType);
+    if (hostile.damage === 0) continue;
     const building = nearestOf(world, h, ownBuildings);
     if (building < 0) continue;
     const distSq = distSqBetween(world, h, building);
-    if (distSq > sqRange(DEFEND_RANGE)) continue;
-    if (distSq < bestDist) {
-      bestDist = distSq;
-      best = building;
-    }
+    if (distSq > sqRange(DEFEND_RANGE) || distSq >= bestDist) continue;
+    if (
+      !army.some((i) => {
+        const def = defOf(pool.type[i]! as EntityType);
+        return def.damage > 0 && (!hostile.flying || def.canHitAir);
+      })
+    )
+      continue;
+    // Do not issue a ground order the executor will reject for a flyer over
+    // deep cliffs. A flying defender can still reach such a target directly.
+    if (
+      hostile.flying &&
+      !standableTarget(world, pool.owner[army[0]!]!, pool.posX[h]!, pool.posY[h]!, {
+        x: 0,
+        y: 0,
+      }) &&
+      !army.some((i) => {
+        const def = defOf(pool.type[i]! as EntityType);
+        return def.flying && def.damage > 0 && def.canHitAir;
+      })
+    )
+      continue;
+    bestDist = distSq;
+    best = h;
   }
   return best;
 }
@@ -1342,6 +1358,22 @@ function manageArmy(
     return;
   }
 
+  // Orders retain the last observed defensive position. Inspect it before
+  // resuming an offensive plan; fog alone does not mean the threat is gone.
+  const defence = armyObjective(world, s.army);
+  if (
+    tuning.defendsHome &&
+    defence &&
+    !pointInAlliedSight(world, player, defence.x, defence.y) &&
+    s.buildings.some(
+      (i) =>
+        vecLenSqRaw(pool.posX[i]! - defence.x, pool.posY[i]! - defence.y) <= sqRange(DEFEND_RANGE),
+    )
+  ) {
+    if (beat % 2 === 0) orderArmy(world, player, s.army, defence.x, defence.y, cmds);
+    return;
+  }
+
   // --- attack -------------------------------------------------------------
 
   // Normally wait for a critical mass before committing. But without observed
@@ -1414,12 +1446,58 @@ function orderArmy(
   if (units.length > 0) cmds.push({ type: CommandType.AttackMove, player, units, x, y });
 }
 
+/** Choose the main march, not a stale order on one unit finishing a swing.
+ * Formation destinations near each other count as the same objective. Lists
+ * arrive in creation order, which also breaks equal-sized group ties.
+ */
+function armyObjective(
+  world: World,
+  army: readonly number[],
+  points: readonly { x: number; y: number }[] = [],
+  includeCompleted = false,
+): { x: number; y: number; index: number; active: boolean } | null {
+  const pool = world.pool;
+  const groups: { x: number; y: number; index: number; count: number; active: boolean }[] = [];
+  for (const i of army) {
+    const active = pool.order[i] === Order.AttackMove;
+    if (!active && !(includeCompleted && pool.order[i] === Order.None)) continue;
+    let x = pool.orderX[i]!,
+      y = pool.orderY[i]!;
+    // New units have never received a destination.
+    if (!active && x === 0 && y === 0) continue;
+    let index = -1;
+    let distance = sqRange(fromInt(8));
+    for (let k = 0; k < points.length; k++) {
+      const d = vecLenSqRaw(x - points[k]!.x, y - points[k]!.y);
+      if (d <= distance && (index < 0 || d < distance)) {
+        index = k;
+        distance = d;
+      }
+    }
+    if (index >= 0) ({ x, y } = points[index]!);
+    else if (!active) continue;
+    const group = groups.find((g) =>
+      index >= 0
+        ? g.index === index
+        : g.index < 0 && vecLenSqRaw(x - g.x, y - g.y) <= sqRange(fromInt(8)),
+    );
+    if (group) {
+      group.count++;
+      group.active ||= active;
+    } else groups.push({ x, y, index, count: 1, active });
+  }
+  let best: (typeof groups)[number] | null = null;
+  for (const group of groups) if (!best || group.count > best.count) best = group;
+  return best;
+}
+
 /** Search public start/expansion positions; never inspect an unseen enemy entity.
- * An existing scout march is allowed to reach sight of its objective before
- * the search schedule advances, so a long cross-map route is not cancelled.
+ * The current (or just completed) order is the search cursor. Advance around
+ * the public sites rather than restarting at the first site that left sight.
+ * Orders carry this progress through command delays without private bot state.
  */
 function scoutingPoint(world: World, player: PlayerId, s: Survey): { x: number; y: number } | null {
-  const { pool, map } = world;
+  const { map } = world;
   const points: { x: number; y: number }[] = [];
   for (let p = 0; p < world.players.length; p++) {
     if (world.areAllied(p, player)) continue;
@@ -1443,17 +1521,13 @@ function scoutingPoint(world: World, player: PlayerId, s: Survey): { x: number; 
       map.tileOfPosFor(b.x, b.y, flip) * (flip ? -1 : 1),
   );
   points.push(...expansions);
-  for (const i of s.teamArmy) {
-    if (pool.order[i] !== Order.AttackMove) continue;
-    for (const point of points) {
-      if (
-        vecLenSqRaw(pool.orderX[i]! - point.x, pool.orderY[i]! - point.y) <= sqRange(fromInt(8)) &&
-        !pointInAlliedSight(world, player, point.x, point.y)
-      )
-        return point;
-    }
-  }
-  const phase = Math.floor(Math.max(0, world.tick - 3600) / 900) % points.length;
+  if (points.length === 0) return null;
+  const scouts = s.teamArmy.length > 0 ? s.teamArmy : s.workers;
+  const objective = armyObjective(world, scouts, points, true);
+  if (objective?.active && !pointInAlliedSight(world, player, objective.x, objective.y))
+    return objective;
+  const cursor = objective?.index ?? -1;
+  const phase = cursor >= 0 ? cursor + 1 : Math.floor(Math.max(0, world.tick - 3600) / 900);
   for (let k = 0; k < points.length; k++) {
     const point = points[(phase + k) % points.length]!;
     if (!pointInAlliedSight(world, player, point.x, point.y)) return point;

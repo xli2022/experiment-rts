@@ -216,10 +216,10 @@ function resumeAdvance(world: World): void {
  * slides along with a retreating enemy and the chase ratchets indefinitely. A
  * unit dragged sideways followed a fleeing Burstbot 14.6 tiles off its route.
  *
- * Beyond the anchor leash this returns false but keeps the anchor, so the unit
- * turns back to its objective and can pick the fight up again if it comes back
- * within range on its way past. The anchor resets only when the fight is
- * genuinely over — target dead, or gone beyond acquisition.
+ * Crossing the anchor leash commits the unit to resuming its objective until
+ * it loses contact. Testing just the radius lets that resumed movement step
+ * back inside the leash, where engagement immediately turns it around again.
+ * It can still stop and shoot anything already in weapon range on its way.
  */
 function shouldPursue(world: World, index: number, def: EntityDef): boolean {
   const pool = world.pool;
@@ -235,12 +235,18 @@ function shouldPursue(world: World, index: number, def: EntityDef): boolean {
   const dx = snapX[ti]! - pool.posX[index]!;
   const dy = snapY[ti]! - pool.posY[index]!;
   const reach = def.attackRange + defOf(pool.type[ti]! as EntityType).radius;
-  if (vecLenSqRaw(dx, dy) > sqRange(reach + ENGAGE_LEASH)) {
+  const targetDistSq = vecLenSqRaw(dx, dy);
+  if (targetDistSq > sqRange(reach + ENGAGE_LEASH)) {
     pool.pursuing[index] = 0;
     return false;
   }
 
   if (pool.order[index] !== Order.AttackMove) return true;
+
+  // Disengagement survives the return inside the anchor radius, including
+  // another call later in this same movement pass. A target that closes into
+  // weapon range may still be fought without starting another chase.
+  if (pool.pursuing[index] === 2) return targetDistSq <= sqRange(reach);
 
   if (pool.pursuing[index] === 0) {
     pool.pursuing[index] = 1;
@@ -253,7 +259,9 @@ function shouldPursue(world: World, index: number, def: EntityDef): boolean {
     pool.pursueX[index]!,
     pool.pursueY[index]!,
   );
-  return strayed <= PURSUE_LEASH;
+  if (strayed <= PURSUE_LEASH) return true;
+  pool.pursuing[index] = 2;
+  return targetDistSq <= sqRange(reach);
 }
 
 /**

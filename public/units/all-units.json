@@ -498,6 +498,12 @@
           "duration": 0.6,
           "frames": 18,
           "frameRate": 30
+        },
+        "idle": {
+          "static": false,
+          "duration": 3.2,
+          "frames": 96,
+          "frameRate": 30
         }
       },
       "runSize": [
@@ -533,6 +539,12 @@
           "static": false,
           "duration": 0.8666666666666667,
           "frames": 26,
+          "frameRate": 30
+        },
+        "idle": {
+          "static": false,
+          "duration": 3.6,
+          "frames": 108,
           "frameRate": 30
         }
       },
@@ -570,6 +582,12 @@
           "duration": 1,
           "frames": 30,
           "frameRate": 30
+        },
+        "idle": {
+          "static": false,
+          "duration": 3,
+          "frames": 90,
+          "frameRate": 30
         }
       },
       "runSize": [
@@ -605,6 +623,12 @@
           "static": false,
           "duration": 0.9666666666666667,
           "frames": 29,
+          "frameRate": 30
+        },
+        "idle": {
+          "static": false,
+          "duration": 4,
+          "frames": 120,
           "frameRate": 30
         }
       },
@@ -642,6 +666,12 @@
           "duration": 1,
           "frames": 30,
           "frameRate": 30
+        },
+        "idle": {
+          "static": false,
+          "duration": 3.6,
+          "frames": 108,
+          "frameRate": 30
         }
       },
       "runSize": [
@@ -677,6 +707,12 @@
           "static": false,
           "duration": 1,
           "frames": 30,
+          "frameRate": 30
+        },
+        "idle": {
+          "static": false,
+          "duration": 4,
+          "frames": 120,
           "frameRate": 30
         }
       },
@@ -714,6 +750,12 @@
           "duration": 1.0333333333333334,
           "frames": 31,
           "frameRate": 30
+        },
+        "idle": {
+          "static": false,
+          "duration": 3.2,
+          "frames": 96,
+          "frameRate": 30
         }
       },
       "runSize": [
@@ -749,6 +791,12 @@
           "static": false,
           "duration": 0.9,
           "frames": 27,
+          "frameRate": 30
+        },
+        "idle": {
+          "static": false,
+          "duration": 3.8,
+          "frames": 114,
           "frameRate": 30
         }
       },
@@ -786,6 +834,12 @@
           "duration": 1,
           "frames": 30,
           "frameRate": 30
+        },
+        "idle": {
+          "static": false,
+          "duration": 4.5,
+          "frames": 135,
+          "frameRate": 30
         }
       },
       "runSize": [
@@ -821,6 +875,12 @@
           "static": false,
           "duration": 0.8333333333333334,
           "frames": 25,
+          "frameRate": 30
+        },
+        "idle": {
+          "static": false,
+          "duration": 3.4,
+          "frames": 102,
           "frameRate": 30
         }
       },
@@ -858,6 +918,12 @@
           "duration": 0.9333333333333333,
           "frames": 28,
           "frameRate": 30
+        },
+        "idle": {
+          "static": false,
+          "duration": 4,
+          "frames": 120,
+          "frameRate": 30
         }
       },
       "runSize": [
@@ -893,6 +959,12 @@
           "static": false,
           "duration": 0.9333333333333333,
           "frames": 28,
+          "frameRate": 30
+        },
+        "idle": {
+          "static": false,
+          "duration": 3.8,
+          "frames": 114,
           "frameRate": 30
         }
       },

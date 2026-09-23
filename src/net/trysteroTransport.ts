@@ -131,8 +131,10 @@ function unorderedPeerConnection(): typeof RTCPeerConnection | undefined {
  *     completion timing when the nearest walkable approach is disconnected.
  * 12: private paths repair blocked steps after new construction, changing
  *     movement instead of leaving units stuck against a new footprint.
+ * 13: attack-movers disengage after exceeding their pursuit leash, changing
+ *     movement instead of resuming the same abandoned chase each tick.
  */
-export const PROTOCOL_VERSION = 12;
+export const PROTOCOL_VERSION = 13;
 
 export interface HostConfig {
   roomCode: string;
